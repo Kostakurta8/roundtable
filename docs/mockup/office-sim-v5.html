@@ -1,0 +1,741 @@
+<meta charset="utf-8">
+<title>Roundtable — Agent Office</title>
+<style>
+  :root {
+    --oak-1: #E3D4B6;
+    --oak-2: #D9C8A6;
+    --plank: rgba(122, 94, 58, .12);
+    --wall: #EFE9DC;
+    --wall-2: #E6DFD0;
+    --base: #CFC7B4;
+    --mat: rgba(122, 94, 58, .10);
+    --rug-round: #D2C9B9;
+    --rug-round-edge: #BFB5A2;
+    --wood-top: #C09468;
+    --wood-front: #976940;
+    --wood-dark: #7C5533;
+    --card: #FFFFFF;
+    --paper: #FAF8F3;
+    --ink: #2E2D29;
+    --ink-soft: #67675F;
+    --ink-dim: #9B998E;
+    --border: #E4DFD1;
+    --t-main: #4A4E56;    --c-main: #3A3E44;
+    --t-explore: #3E9AA8; --c-explore: #1E7280;
+    --t-finder: #7E68C8;  --c-finder: #5A44B0;
+    --t-verifya: #D89440; --c-verifya: #A06A18;
+    --t-verifyb: #D06E88; --c-verifyb: #B04462;
+    --ok: #2E9E5B;
+    --err: #C04848;
+    --shadow-amb: 0 12px 30px rgba(96, 78, 46, .18);
+    --font-mono: "Cascadia Code", ui-monospace, "JetBrains Mono", Consolas, monospace;
+    --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden;
+    background: var(--oak-2);
+    color: var(--ink);
+    font-family: var(--font-ui); font-size: 13px; line-height: 1.5;
+  }
+
+  /* ============ FLOOR & WALL ============ */
+  .floor {
+    position: fixed; inset: 0;
+    background:
+      linear-gradient(to bottom, var(--wall) 0, var(--wall) 11%, var(--wall-2) 11%, var(--wall-2) 12.2%, var(--base) 12.2%, var(--base) 13.1%, transparent 13.1%),
+      repeating-linear-gradient(90deg, var(--plank) 0 2px, transparent 2px 92px),
+      repeating-linear-gradient(0deg, rgba(122, 94, 58, .06) 0 1px, transparent 1px 26px),
+      linear-gradient(180deg, var(--oak-1) 13%, var(--oak-2) 70%, #D2BF9A 100%);
+  }
+  .pool {
+    position: absolute; top: 13%; width: 13%; height: 30%;
+    background: linear-gradient(180deg, rgba(255, 251, 232, .55), transparent 78%);
+    clip-path: polygon(6% 0, 94% 0, 100% 100%, 0 100%);
+    pointer-events: none;
+  }
+
+  /* subtle mat under each workstation */
+  .mat { position: absolute; border-radius: 10px; background: var(--mat); }
+
+  .rug-round {
+    position: absolute; border-radius: 50%;
+    background:
+      radial-gradient(ellipse at center, transparent 52%, rgba(255,255,255,.35) 53%, rgba(255,255,255,.35) 58%, transparent 59%),
+      var(--rug-round);
+    box-shadow: inset 0 0 0 4px var(--rug-round-edge);
+  }
+
+  /* ---- wall fixtures ---- */
+  .wallfix { position: absolute; z-index: 40; }
+  .window {
+    top: 1.4%; width: 12%; height: 8.4%;
+    border: 5px solid #E0DACB; border-radius: 4px;
+    background: linear-gradient(180deg, #B9D9EC, #D3E8F1);
+    box-shadow: 0 3px 9px rgba(96, 78, 46, .18), inset 0 0 12px rgba(255,255,255,.65);
+  }
+  .window::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 4px; background: #E0DACB; transform: translateX(-50%); }
+  .window .sun { position: absolute; left: 12px; top: 7px; width: 14px; height: 14px; border-radius: 50%; background: #F8EDC0; box-shadow: 0 0 14px rgba(248, 237, 180, .95); }
+  .window .cloud { position: absolute; top: 11px; width: 26px; height: 8px; border-radius: 6px; background: rgba(255,255,255,.92); animation: drift 17s linear infinite; }
+
+  .art {
+    top: 5%; width: 44px; height: 54px;
+    background: #FBFAF6; border: 4px solid #B9925F; border-radius: 2px;
+    box-shadow: 0 3px 8px rgba(96,78,46,.2);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .clock {
+    top: 5.5%; width: 40px; height: 40px;
+    border-radius: 50%; background: #FFF; border: 3px solid #C9C6BB;
+    box-shadow: 0 2px 7px rgba(96,78,46,.16);
+  }
+  .clock::before, .clock::after { content: ""; position: absolute; left: 50%; top: 50%; background: #3A3E44; transform-origin: 0 50%; border-radius: 1px; }
+  .clock::before { width: 11px; height: 2px; transform: rotate(-58deg); }
+  .clock::after { width: 8px; height: 2px; transform: rotate(64deg); }
+
+  /* standing whiteboard on casters */
+  .board {
+    position: absolute; width: 220px; z-index: 260;
+    background: #FDFDFB; border: 3px solid #CBCBC5; border-radius: 5px;
+    padding: 8px 12px 10px;
+    box-shadow: 0 26px 18px -8px rgba(96, 78, 46, .2);
+  }
+  .board::after { content: ""; position: absolute; left: 16%; right: 16%; bottom: -8px; height: 4px; border-radius: 2px; background: #CBCBC5; }
+  .board .b-title { font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .18em; color: var(--ink-dim); margin-bottom: 3px; }
+  .board .b-task { font-family: var(--font-mono); font-size: 10.5px; color: #2A5AC8; line-height: 1.45; }
+  .board .b-tally { font-family: var(--font-mono); font-size: 9px; color: var(--ink-soft); margin-top: 5px; }
+  .board .b-tally s { color: var(--err); }
+  .board .b-leg { position: absolute; bottom: -34px; width: 4px; height: 34px; background: #A9A79E; }
+  .board .b-leg.l { left: 15%; } .board .b-leg.r { right: 15%; }
+  .board .b-leg::after { content: ""; position: absolute; left: -3px; bottom: -4px; width: 10px; height: 6px; border-radius: 50%; background: #8E8C84; }
+
+  /* ---- kitchen ---- */
+  .kitchen { position: absolute; z-index: 150; }
+  .kitchen .k-top {
+    height: 20px; border-radius: 6px 6px 0 0;
+    background: linear-gradient(180deg, #DCD9D2, #CBC8C0);
+    border: 1px solid #B9B6AE; position: relative;
+  }
+  .kitchen .k-front {
+    height: 24px; border-radius: 0 0 6px 6px;
+    background: linear-gradient(180deg, #B08252, #97694A);
+    border: 1px solid var(--wood-dark); border-top: 0;
+    box-shadow: 0 10px 14px rgba(96, 78, 46, .22);
+  }
+  .kitchen .sink { position: absolute; right: 12px; top: 4px; width: 32px; height: 12px; border-radius: 4px; background: #C4C4BE; border: 1px solid #A9A9A3; }
+  .machine {
+    position: absolute; left: 10px; top: -32px; width: 30px; height: 34px;
+    background: linear-gradient(180deg, #4A4E54, #34373C); border-radius: 5px 5px 2px 2px;
+    box-shadow: 0 3px 6px rgba(40, 35, 20, .3);
+  }
+  .machine::after { content: ""; position: absolute; left: 6px; right: 6px; top: 6px; height: 5px; border-radius: 2px; background: #22252A; }
+  .machine .led { position: absolute; right: 4px; top: 15px; width: 3.5px; height: 3.5px; border-radius: 50%; background: var(--err); animation: blink 2.4s infinite; }
+  .machine .steam { position: absolute; left: 9px; bottom: 2px; font-size: 8px; color: #D8DCE2; animation: steam 2.6s ease-in-out infinite; }
+  .fridge { position: absolute; right: -50px; top: -16px; width: 42px; }
+  .fridge .f-top { height: 9px; border-radius: 5px 5px 0 0; background: #EDEDE8; border: 1px solid #C6C6C0; }
+  .fridge .f-front { height: 54px; border-radius: 0 0 5px 5px; background: linear-gradient(180deg, #F4F3EE, #DFDED7); border: 1px solid #C6C6C0; border-top: 0; box-shadow: 0 8px 12px rgba(96,78,46,.2); position: relative; }
+  .fridge .f-front::after { content: ""; position: absolute; left: 6px; top: 20px; width: 3.5px; height: 11px; border-radius: 2px; background: #B4B3AC; }
+  .k-label { position: absolute; left: 2px; bottom: -18px; font-family: var(--font-mono); font-size: 8.5px; color: var(--ink-dim); }
+
+  /* ---- desk (compact, person sits below facing screen) ---- */
+  .desk { position: absolute; }
+  .desk .d-top {
+    height: 19px; border-radius: 7px;
+    background: linear-gradient(178deg, #C99C6E 10%, var(--wood-top) 60%, #B0855A 100%);
+    border: 1px solid #A57A4E;
+    position: relative;
+  }
+  .desk .d-front {
+    height: 12px; margin-top: -2px; border-radius: 0 0 6px 6px;
+    background: linear-gradient(180deg, #A5764A, var(--wood-front));
+    border: 1px solid var(--wood-dark); border-top: 0;
+    box-shadow: 0 10px 12px rgba(96, 78, 46, .24);
+  }
+  .mon {
+    position: absolute; top: -25px; width: 48px; height: 32px;
+    background: linear-gradient(180deg, #EAEAE6, #D2D2CC);
+    border: 1px solid #B9B9B3; border-radius: 4px; padding: 3px;
+    box-shadow: 0 4px 8px rgba(96, 78, 46, .22);
+  }
+  .mon::after { content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%); width: 16px; height: 7px; background: #C0C0BA; clip-path: polygon(28% 0, 72% 0, 100% 100%, 0 100%); }
+  .mon .scr { position: absolute; inset: 3px; border-radius: 2.5px; background: #1C2733; overflow: hidden; }
+  .mon .ln { height: 2.5px; border-radius: 2px; margin: 3.5px 4px 0; opacity: .9; }
+  .on .mon .ln { animation: code 1.5s steps(2) infinite; }
+  .mon.small { width: 36px; height: 25px; }
+  .kbd { position: absolute; bottom: 3px; width: 26px; height: 6px; border-radius: 2px; background: #E4E2DA; border: 1px solid #C6C4BA; }
+  .mouse { position: absolute; bottom: 4px; width: 6px; height: 8px; border-radius: 45%; background: #E4E2DA; border: 1px solid #C6C4BA; }
+  .d-mug { position: absolute; top: 4px; width: 8px; height: 8px; border-radius: 50%; background: #FFF; border: 2.5px solid #B87333; }
+  .d-papers { position: absolute; top: 4px; width: 14px; height: 10px; background: #FBFAF5; border: 1px solid #DDD9CC; transform: rotate(-7deg); box-shadow: 1.5px 1.5px 0 #EFEDE4; }
+  .nametag {
+    position: absolute; left: 50%; transform: translateX(-50%); top: -33px; z-index: 4;
+    font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+    padding: 0 6px; border-radius: 3px;
+    background: rgba(255, 253, 246, .92); border: 1px solid #D9CFBA;
+    box-shadow: 0 1px 3px rgba(96,78,46,.12);
+  }
+
+  .chair { position: absolute; width: 26px; z-index: 1; }
+  .chair .c-back { height: 13px; border-radius: 8px 8px 3px 3px; background: #575B63; border: 1px solid #45484F; }
+  .chair .c-seat { height: 9px; margin-top: 1px; border-radius: 4px; background: #4A4E56; border: 1px solid #3C3F46; box-shadow: 0 5px 7px rgba(96,78,46,.25); }
+
+  /* ---- round table ---- */
+  .table { position: absolute; }
+  .table .t-top {
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 30%, #CDA173 0%, var(--wood-top) 55%, #A0754A 100%);
+    border: 2px solid #966C42;
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .table .t-top::after {
+    content: "ROUNDTABLE";
+    font-family: var(--font-mono); font-size: 7px; letter-spacing: .3em; color: rgba(74, 50, 26, .32);
+  }
+  .table .t-rim {
+    height: 11px; margin: -5px 8% 0; border-radius: 0 0 50% 50% / 0 0 100% 100%;
+    background: linear-gradient(180deg, #9A7046, #7C5533);
+    box-shadow: 0 10px 14px rgba(96, 78, 46, .26);
+  }
+  .table .t-laptop { position: absolute; left: 42%; top: 26%; width: 17px; height: 11px; background: #D8D8D2; border: 1px solid #B9B9B3; border-radius: 2px; transform: rotate(9deg); }
+  .table .t-paper { position: absolute; left: 58%; top: 52%; width: 13px; height: 9px; background: #FBFAF5; border: 1px solid #DDD9CC; transform: rotate(-11deg); }
+
+  .plant { position: absolute; z-index: 150; filter: drop-shadow(0 8px 6px rgba(96, 78, 46, .25)); }
+
+  /* ============ PEOPLE ============ */
+  .actor { position: absolute; width: 0; height: 0; }
+  .person { position: absolute; left: 0; bottom: 0; transform: translateX(-50%); width: 30px; height: 54px; }
+  .p-shadow { position: absolute; left: 50%; bottom: -3px; transform: translateX(-50%); width: 26px; height: 7px; border-radius: 50%; background: rgba(96, 70, 34, .28); }
+  .p-legs { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: 16px; height: 14px; }
+  .p-legs i { position: absolute; top: 0; width: 6px; height: 14px; border-radius: 3px; background: #3B3E45; transform-origin: 50% 10%; }
+  .p-legs i::after { content: ""; position: absolute; left: 0; bottom: -1px; width: 7px; height: 4px; border-radius: 2px; background: #26282C; }
+  .p-legs i:first-child { left: 0; } .p-legs i:last-child { right: 0; }
+  .p-arm { position: absolute; bottom: 12px; width: 6px; height: 15px; border-radius: 3px; border: 1px solid rgba(0,0,0,.12); transform-origin: 50% 12%; z-index: 3; }
+  .p-arm.l { left: -2px; } .p-arm.r { right: -2px; }
+  .p-torso { position: absolute; left: 50%; bottom: 11px; transform: translateX(-50%); width: 21px; height: 20px; border-radius: 8px 8px 4px 4px; border: 1px solid rgba(0,0,0,.14); z-index: 2; }
+  .p-torso::after { content: ""; position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: 7px; height: 5px; border-radius: 0 0 4px 4px; background: rgba(255,255,255,.28); }
+  .p-head { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); width: 16px; height: 15px; border-radius: 50% 50% 47% 47%; z-index: 4; }
+  .p-eyes::before, .p-eyes::after { content: ""; position: absolute; top: 6px; width: 2.4px; height: 3px; border-radius: 1.2px; background: #26262A; }
+  .p-eyes::before { left: 3.6px; } .p-eyes::after { right: 3.6px; }
+  .p-hair { position: absolute; left: 50%; bottom: 36.5px; transform: translateX(-50%); width: 17px; height: 8.5px; border-radius: 9px 9px 4px 4px; z-index: 5; }
+
+  .away .p-eyes::before, .away .p-eyes::after { display: none; }
+  .away .p-hair { height: 13px; border-radius: 9px 9px 6px 6px; }
+  .away .p-torso::after { display: none; }
+
+  .sitting .p-legs { display: none; }
+  .sitting .person { height: 46px; }
+  .sitting .p-torso { bottom: 3px; }
+  .sitting .p-arm { bottom: 4px; height: 13px; }
+  .sitting .p-head { bottom: 20px; }
+  .sitting .p-hair { bottom: 28.5px; }
+  .sitting .p-shadow { display: none; }
+  .sitting .person { animation: bob-sit 1.4s ease-in-out infinite; }
+
+  .walking .person { animation: bob-walk .46s ease-in-out infinite; }
+  .walking .p-legs i:first-child { animation: leg-a .46s ease-in-out infinite; }
+  .walking .p-legs i:last-child { animation: leg-b .46s ease-in-out infinite; }
+  .walking .p-arm.l { animation: arm-a .46s ease-in-out infinite; }
+  .walking .p-arm.r { animation: arm-b .46s ease-in-out infinite; }
+  .flip .person { transform: translateX(-50%) scaleX(-1); }
+  .flip.walking .person { animation: bob-walk-f .46s ease-in-out infinite; }
+
+  .say, .think {
+    position: absolute; left: 8px; bottom: 62px; z-index: 999;
+    width: max-content; max-width: 172px;
+    font-size: 10.5px; line-height: 1.45; color: var(--ink);
+    background: #FFF; border: 1.5px solid #D9D3C4; border-radius: 10px;
+    padding: 5px 9px;
+    box-shadow: 0 8px 18px rgba(96, 78, 46, .22);
+    opacity: 0; transform: translateY(6px) scale(.92); transform-origin: bottom left;
+    transition: opacity .22s, transform .22s;
+    pointer-events: none;
+  }
+  .say::after {
+    content: ""; position: absolute; left: 10px; bottom: -7px;
+    border: 7px solid transparent; border-top-color: #FFF; border-bottom: 0; border-left: 0;
+    filter: drop-shadow(0 1.5px 0 #D9D3C4);
+  }
+  .think { font-family: var(--font-mono); font-size: 9.5px; color: #55544E; border-radius: 12px; }
+  .think::before, .think::after { content: ""; position: absolute; border-radius: 50%; background: #FFF; border: 1.5px solid #D9D3C4; }
+  .think::before { width: 8px; height: 8px; left: 3px; bottom: -10px; }
+  .think::after { width: 4px; height: 4px; left: -3px; bottom: -17px; }
+  .say.on, .think.on { opacity: 1; transform: translateY(0) scale(1); }
+
+  /* ============ HUD ============ */
+  .hud { position: fixed; z-index: 1000; font-family: var(--font-mono); }
+  .glass {
+    background: rgba(255, 255, 255, .93);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-amb);
+    backdrop-filter: blur(3px);
+  }
+  .hud-top {
+    top: 12px; left: 12px; right: 396px;
+    display: flex; align-items: center; gap: 13px; padding: 9px 14px;
+    font-size: 11px;
+  }
+  .wordmark { display: flex; align-items: center; gap: 7px; letter-spacing: .2em; font-weight: 700; }
+  .session-pick { display: flex; gap: 6px; padding: 4px 9px; background: var(--paper); border: 1px solid var(--border); border-radius: 6px; color: var(--ink-soft); cursor: pointer; }
+  .session-pick b { color: var(--ink); }
+  .pill-live { display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 6px; color: var(--ok); border: 1px solid #CFE8DA; background: #E9F6EE; font-weight: 700; letter-spacing: .06em; }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); animation: blink 1.6s infinite; }
+  .cost { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .hud-top .demo { margin-left: auto; text-align: right; font-size: 9px; color: var(--ink-dim); letter-spacing: .1em; line-height: 1.5; }
+  .hud-top .loopbar { display: block; margin-top: 3px; width: 130px; height: 3px; border-radius: 2px; background: #EAE6DA; overflow: hidden; }
+  .hud-top .loopbar i { display: block; height: 100%; width: 0; background: var(--t-explore); }
+
+  .hud-agents { left: 12px; bottom: 12px; padding: 10px 12px 9px; font-size: 9.5px; display: grid; gap: 6px; min-width: 252px; }
+  .hud-agents .hd { font-size: 8.5px; letter-spacing: .2em; color: var(--ink-dim); margin-bottom: 2px; }
+  .arow { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); }
+  .arow b { color: var(--ink); font-weight: 700; }
+  .arow .st { margin-left: auto; color: var(--ink-dim); font-size: 8.5px; min-width: 92px; text-align: right; }
+  .mini { position: relative; width: 15px; height: 15px; flex: none; }
+  .mini .mh { position: absolute; inset: 1.5px 1.5px 0; border-radius: 50% 50% 46% 46%; }
+  .mini .mha { position: absolute; left: 1px; right: 1px; top: 0; height: 7px; border-radius: 8px 8px 3px 3px; }
+  .mini .mc { position: absolute; left: 3px; right: 3px; bottom: -1.5px; height: 5px; border-radius: 3px 3px 2px 2px; }
+
+  .chat { position: fixed; top: 12px; right: 12px; bottom: 12px; width: 372px; z-index: 1000; display: flex; flex-direction: column; min-height: 0; }
+  .chat-head { padding: 11px 14px 9px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); }
+  .chat-head .l1 { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .18em; color: var(--ink-dim); }
+  .chat-head .l1 .cnt { margin-left: auto; letter-spacing: 0; color: var(--ink-soft); }
+  .chat-head .l2 { margin-top: 3px; font-size: 10.5px; color: var(--ink); }
+  .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 14px; scroll-behavior: smooth; }
+  .chat-foot { border-top: 1px solid var(--border); padding: 8px 14px; font-family: var(--font-mono); font-size: 9px; color: var(--ink-dim); letter-spacing: .05em; }
+
+  .msg { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 0 8px; padding: 6px 0; animation: msg-in .3s ease; }
+  .msg .mini { margin-top: 4px; justify-self: center; }
+  .msg-card { background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px 8px; min-width: 0; box-shadow: 0 1px 3px rgba(96,78,46,.08); }
+  .msg-card.verdict-err { border-left: 3px solid var(--err); }
+  .msg-card.verdict-ok { border-left: 3px solid var(--ok); }
+  .msg-head { display: flex; align-items: baseline; gap: 7px; font-family: var(--font-mono); font-size: 10px; }
+  .msg-head .who { font-weight: 700; }
+  .msg-head time { margin-left: auto; color: var(--ink-dim); font-size: 9px; font-variant-numeric: tabular-nums; }
+  .msg-body { margin-top: 2px; font-size: 12px; }
+  .msg-body p { margin: 0 0 5px; } .msg-body p:last-child { margin: 0; }
+  .msg-body code { font-family: var(--font-mono); font-size: 10.5px; background: var(--paper); border: 1px solid #EEEBE0; border-radius: 4px; padding: 0 4px; }
+  .msg-user { grid-template-columns: minmax(0, 1fr); }
+  .msg-user .msg-card { background: #EDF2E8; border-color: #DBE3D0; }
+  .msg-sys { text-align: center; font-family: var(--font-mono); font-size: 9px; color: var(--ink-dim); padding: 7px 0; letter-spacing: .06em; animation: msg-in .3s ease; }
+
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .chip { font-family: var(--font-mono); font-size: 8.5px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--ink-soft); background: var(--paper); display: inline-flex; align-items: center; gap: 4px; }
+  .chip--refuted { color: var(--err); border-color: #EBCACA; background: #FBEAEA; font-weight: 700; }
+  .chip--ok { color: var(--ok); border-color: #CFE8DA; background: #E9F6EE; font-weight: 700; }
+
+  details.monologue { margin-top: 5px; }
+  details.monologue summary { font-family: var(--font-mono); font-size: 9px; color: var(--ink-dim); cursor: pointer; list-style: none; display: flex; gap: 5px; align-items: center; }
+  details.monologue summary::before { content: "▸"; transition: transform .15s; }
+  details.monologue[open] summary::before { transform: rotate(90deg); }
+  .monologue-body { margin-top: 4px; padding: 6px 9px; border-left: 2px solid #DCD6CA; background: var(--paper); border-radius: 0 5px 5px 0; font-family: var(--font-mono); font-size: 9.5px; line-height: 1.65; color: var(--ink-soft); }
+
+  /* ============ ANIM ============ */
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  @keyframes steam { 0%, 100% { opacity: .2; transform: translateY(0); } 50% { opacity: .8; transform: translateY(-4px); } }
+  @keyframes drift { from { transform: translateX(-26px); } to { transform: translateX(140px); } }
+  @keyframes code { 50% { opacity: .35; } }
+  @keyframes bob-sit { 0%, 100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-1.3px); } }
+  @keyframes bob-walk { 0%, 100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-2.6px); } }
+  @keyframes bob-walk-f { 0%, 100% { transform: translateX(-50%) scaleX(-1) translateY(0); } 50% { transform: translateX(-50%) scaleX(-1) translateY(-2.6px); } }
+  @keyframes leg-a { 0%, 100% { transform: rotate(20deg); } 50% { transform: rotate(-20deg); } }
+  @keyframes leg-b { 0%, 100% { transform: rotate(-20deg); } 50% { transform: rotate(20deg); } }
+  @keyframes arm-a { 0%, 100% { transform: rotate(-16deg); } 50% { transform: rotate(16deg); } }
+  @keyframes arm-b { 0%, 100% { transform: rotate(16deg); } 50% { transform: rotate(-16deg); } }
+  @keyframes msg-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #D8D3C6; border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @media (max-width: 940px) { .chat { display: none; } .hud-top { right: 12px; } }
+</style>
+
+<div class="floor" id="floor">
+
+  <div class="pool" style="left:15.5%"></div>
+  <div class="pool" style="left:31.5%"></div>
+  <div class="pool" style="left:58%"></div>
+
+  <!-- wall -->
+  <div class="wallfix window" style="left:15%"><span class="sun"></span><span class="cloud" style="left:36px"></span></div>
+  <div class="wallfix window" style="left:31%"><span class="cloud" style="left:8px; animation-duration:21s"></span></div>
+  <div class="wallfix window" style="left:58%"><span class="cloud" style="left:20px; animation-duration:24s"></span></div>
+  <div class="wallfix art" style="left:47%">
+    <svg width="30" height="38" viewBox="0 0 30 38"><rect width="30" height="38" fill="#F3EFE4"/><circle cx="15" cy="14" r="8" fill="#D89440" opacity=".8"/><path d="M0 30 10 20l8 8 6-5 6 6v9H0Z" fill="#3E9AA8" opacity=".75"/></svg>
+  </div>
+  <div class="wallfix clock" style="left:52.6%" aria-hidden="true"></div>
+
+  <!-- kitchen -->
+  <div class="kitchen" style="left:2%; top:13.6%; width:10.5%">
+    <div class="machine"><span class="led"></span><span class="steam">≋</span></div>
+    <div class="k-top"><span class="sink"></span></div>
+    <div class="k-front"></div>
+    <div class="fridge"><div class="f-top"></div><div class="f-front"></div></div>
+    <span class="k-label">kitchen · coffee</span>
+  </div>
+
+  <!-- standing whiteboard -->
+  <div class="board" style="left:39%; top:15%">
+    <div class="b-title">WHITEBOARD</div>
+    <div class="b-task">TASK: flaky scheduler tests → root cause only</div>
+    <div class="b-tally">hypotheses: <s>jitter seed</s> · fake-timer window ◌</div>
+    <span class="b-leg l"></span><span class="b-leg r"></span>
+  </div>
+
+  <!-- mats -->
+  <div class="mat" style="left:11%;   top:27.5%; width:11%; height:11%"></div>
+  <div class="mat" style="left:25%;   top:27.5%; width:11%; height:11%"></div>
+  <div class="mat" style="left:11%;   top:57.5%; width:11%; height:11%"></div>
+  <div class="mat" style="left:25%;   top:57.5%; width:11%; height:11%"></div>
+  <div class="mat" style="left:54%;   top:26%; width:14%; height:11%"></div>
+  <div class="rug-round" style="left:54.5%; top:57%; width:18%; height:29%"></div>
+
+  <!-- pod A -->
+  <div class="desk" style="left:12%; top:29%; width:9%; z-index:330">
+    <span class="nametag" style="color:var(--c-explore)">explore-1</span>
+    <div class="d-top">
+      <div class="mon on" id="mon-explore" style="left:8px"><div class="scr">
+        <div class="ln" style="background:#57C2D2; width:55%"></div><div class="ln" style="background:#3A4A5C; width:70%"></div><div class="ln" style="background:#3A4A5C; width:42%"></div>
+      </div></div>
+      <div class="kbd" style="left:14px"></div>
+      <div class="mouse" style="left:46px"></div>
+      <div class="d-mug" style="right:10px"></div>
+    </div>
+    <div class="d-front"></div>
+  </div>
+  <div class="desk" style="left:26%; top:29%; width:9%; z-index:330">
+    <span class="nametag" style="color:var(--c-finder)">finder-bugs</span>
+    <div class="d-top">
+      <div class="mon on" id="mon-finder" style="left:8px"><div class="scr">
+        <div class="ln" style="background:#A490E0; width:64%"></div><div class="ln" style="background:#3A4A5C; width:52%"></div><div class="ln" style="background:#3A4A5C; width:66%"></div>
+      </div></div>
+      <div class="kbd" style="left:14px"></div>
+      <div class="mouse" style="left:46px"></div>
+      <div class="d-papers" style="right:6px"></div>
+    </div>
+    <div class="d-front"></div>
+  </div>
+
+  <!-- pod B -->
+  <div class="desk" style="left:12%; top:59%; width:9%; z-index:630">
+    <span class="nametag" style="color:var(--c-verifya)">verify-a</span>
+    <div class="d-top">
+      <div class="mon on" id="mon-verifya" style="left:8px"><div class="scr">
+        <div class="ln" style="background:#7AC88A; width:34%"></div><div class="ln" style="background:#D87A7A; width:22%"></div><div class="ln" style="background:#E0B060; width:58%"></div>
+      </div></div>
+      <div class="kbd" style="left:14px"></div>
+      <div class="mouse" style="left:46px"></div>
+      <div class="d-mug" style="right:10px"></div>
+    </div>
+    <div class="d-front"></div>
+  </div>
+  <div class="desk" style="left:26%; top:59%; width:9%; z-index:630">
+    <span class="nametag" style="color:var(--c-verifyb)">verify-b</span>
+    <div class="d-top">
+      <div class="mon on" id="mon-verifyb" style="left:8px"><div class="scr">
+        <div class="ln" style="background:#E08AA0; width:44%"></div><div class="ln" style="background:#3A4A5C; width:58%"></div><div class="ln" style="background:#3A4A5C; width:36%"></div>
+      </div></div>
+      <div class="kbd" style="left:14px"></div>
+      <div class="mouse" style="left:46px"></div>
+      <div class="d-papers" style="right:6px"></div>
+    </div>
+    <div class="d-front"></div>
+  </div>
+
+  <!-- manager desk -->
+  <div class="desk" style="left:55%; top:27%; width:12%; z-index:310">
+    <span class="nametag" style="color:var(--c-main)">fable-main · orchestrator</span>
+    <div class="d-top">
+      <div class="mon on" id="mon-main" style="left:12px"><div class="scr">
+        <div class="ln" style="background:#7AA8D8; width:55%"></div><div class="ln" style="background:#3A4A5C; width:70%"></div><div class="ln" style="background:#3A4A5C; width:46%"></div>
+      </div></div>
+      <div class="mon small on" style="left:68px; top:-20px"><div class="scr">
+        <div class="ln" style="background:#7AC88A; width:48%"></div><div class="ln" style="background:#3A4A5C; width:60%"></div>
+      </div></div>
+      <div class="kbd" style="left:22px"></div>
+      <div class="mouse" style="left:58px"></div>
+      <div class="d-mug" style="right:10px"></div>
+    </div>
+    <div class="d-front"></div>
+  </div>
+
+  <!-- roundtable -->
+  <div class="table" style="left:57.5%; top:63.5%; width:12%; z-index:560">
+    <div class="t-top" style="height:68px"><span class="t-laptop"></span><span class="t-paper"></span></div>
+    <div class="t-rim"></div>
+  </div>
+  <div class="chair" style="left:55%;   top:68.5%; z-index:545"><div class="c-back"></div><div class="c-seat"></div></div>
+  <div class="chair" style="left:70.5%; top:68.5%; z-index:545"><div class="c-back"></div><div class="c-seat"></div></div>
+  <div class="chair" style="left:62.8%; top:59%;   z-index:520"><div class="c-back"></div><div class="c-seat"></div></div>
+
+  <!-- plants -->
+  <svg class="plant" style="left:18.5%; bottom:3.5%" width="56" height="78" viewBox="0 0 54 76" aria-hidden="true">
+    <ellipse cx="27" cy="24" rx="6" ry="17" fill="#4E7A40" transform="rotate(-26 27 28)"/>
+    <ellipse cx="27" cy="20" rx="6" ry="19" fill="#5A8A4A"/>
+    <ellipse cx="27" cy="24" rx="6" ry="17" fill="#4E7A40" transform="rotate(26 27 28)"/>
+    <path d="M15 46h24l-4 27H19Z" fill="#B8674A"/><path d="M14 46h26v5H14Z" fill="#A85A40"/>
+  </svg>
+  <svg class="plant" style="left:36%; top:14.5%" width="40" height="56" viewBox="0 0 54 76" aria-hidden="true">
+    <ellipse cx="27" cy="24" rx="6" ry="17" fill="#4E7A40" transform="rotate(-26 27 28)"/>
+    <ellipse cx="27" cy="20" rx="6" ry="19" fill="#5A8A4A"/>
+    <ellipse cx="27" cy="24" rx="6" ry="17" fill="#4E7A40" transform="rotate(26 27 28)"/>
+    <path d="M15 46h24l-4 27H19Z" fill="#B8674A"/><path d="M14 46h26v5H14Z" fill="#A85A40"/>
+  </svg>
+  <svg class="plant" style="right:26%; bottom:5%" width="48" height="66" viewBox="0 0 54 76" aria-hidden="true">
+    <ellipse cx="27" cy="24" rx="6" ry="17" fill="#4E7A40" transform="rotate(-26 27 28)"/>
+    <ellipse cx="27" cy="20" rx="6" ry="19" fill="#5A8A4A"/>
+    <ellipse cx="27" cy="24" rx="6" ry="17" fill="#4E7A40" transform="rotate(26 27 28)"/>
+    <path d="M15 46h24l-4 27H19Z" fill="#B8674A"/><path d="M14 46h26v5H14Z" fill="#A85A40"/>
+  </svg>
+
+  <!-- people -->
+  <div class="actor" id="ac-main"><div class="say"></div><div class="think"></div>
+    <div class="person"><span class="p-shadow"></span><span class="p-legs"><i></i><i></i></span>
+      <span class="p-arm l" style="background:var(--t-main)"></span><span class="p-arm r" style="background:var(--t-main)"></span>
+      <span class="p-torso" style="background:var(--t-main)"></span>
+      <span class="p-head p-eyes" style="background:#E2A87C"></span><span class="p-hair" style="background:#2E2A26"></span>
+    </div>
+  </div>
+  <div class="actor" id="ac-explore"><div class="say"></div><div class="think"></div>
+    <div class="person"><span class="p-shadow"></span><span class="p-legs"><i></i><i></i></span>
+      <span class="p-arm l" style="background:var(--t-explore)"></span><span class="p-arm r" style="background:var(--t-explore)"></span>
+      <span class="p-torso" style="background:var(--t-explore)"></span>
+      <span class="p-head p-eyes" style="background:#B97C50"></span><span class="p-hair" style="background:#1F1C19"></span>
+    </div>
+  </div>
+  <div class="actor" id="ac-finder"><div class="say"></div><div class="think"></div>
+    <div class="person"><span class="p-shadow"></span><span class="p-legs"><i></i><i></i></span>
+      <span class="p-arm l" style="background:var(--t-finder)"></span><span class="p-arm r" style="background:var(--t-finder)"></span>
+      <span class="p-torso" style="background:var(--t-finder)"></span>
+      <span class="p-head p-eyes" style="background:#F0C29E"></span><span class="p-hair" style="background:#C8A45C"></span>
+    </div>
+  </div>
+  <div class="actor" id="ac-verifya"><div class="say"></div><div class="think"></div>
+    <div class="person"><span class="p-shadow"></span><span class="p-legs"><i></i><i></i></span>
+      <span class="p-arm l" style="background:var(--t-verifya)"></span><span class="p-arm r" style="background:var(--t-verifya)"></span>
+      <span class="p-torso" style="background:var(--t-verifya)"></span>
+      <span class="p-head p-eyes" style="background:#8E5A38"></span><span class="p-hair" style="background:#14110E; height:10px; border-radius:50% 50% 4px 4px"></span>
+    </div>
+  </div>
+  <div class="actor" id="ac-verifyb"><div class="say"></div><div class="think"></div>
+    <div class="person"><span class="p-shadow"></span><span class="p-legs"><i></i><i></i></span>
+      <span class="p-arm l" style="background:var(--t-verifyb)"></span><span class="p-arm r" style="background:var(--t-verifyb)"></span>
+      <span class="p-torso" style="background:var(--t-verifyb)"></span>
+      <span class="p-head p-eyes" style="background:#F2CBA8"></span><span class="p-hair" style="background:#8C4A33; height:11px"></span>
+    </div>
+  </div>
+</div>
+
+<!-- HUD -->
+<div class="hud hud-top glass">
+  <span class="wordmark">
+    <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="5.6" fill="none" stroke="#3E9AA8" stroke-width="1.6"/><circle cx="7" cy="7" r="2" fill="#3E9AA8"/></svg>
+    ROUNDTABLE
+  </span>
+  <span class="session-pick">C--Users-dev / <b>a2c2ce06</b> ▾</span>
+  <span class="pill-live"><span class="live-dot"></span>LIVE</span>
+  <span class="cost">Σ 148.2k tok · $1.87</span>
+  <span class="demo">DEMO LOOP · FAKE DATA<span class="loopbar"><i id="loopbar"></i></span></span>
+</div>
+
+<div class="hud hud-agents glass">
+  <div class="hd">AGENTS · 5</div>
+  <div class="arow" id="row-main"></div>
+  <div class="arow" id="row-explore"></div>
+  <div class="arow" id="row-finder"></div>
+  <div class="arow" id="row-verifya"></div>
+  <div class="arow" id="row-verifyb"></div>
+</div>
+
+<aside class="chat glass">
+  <div class="chat-head">
+    <div class="l1">GROUP CHAT <span class="cnt" id="chat-cnt">live</span></div>
+    <div class="l2">TASK · flaky scheduler tests — root cause only</div>
+  </div>
+  <div class="chat-scroll" id="chat"></div>
+  <div class="chat-foot">observer mode · read-only · tailing ~/.claude/projects</div>
+</aside>
+
+<script>
+(function () {
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const chatEl = document.getElementById('chat');
+  const cnt = document.getElementById('chat-cnt');
+
+  const META = {
+    main:    { name: 'fable-main',  role: 'orchestrator', color: 'var(--c-main)',    tint: 'var(--t-main)',    skin: '#E2A87C', hair: '#2E2A26' },
+    explore: { name: 'explore-1',   role: 'scout',        color: 'var(--c-explore)', tint: 'var(--t-explore)', skin: '#B97C50', hair: '#1F1C19' },
+    finder:  { name: 'finder-bugs', role: 'fixer',        color: 'var(--c-finder)',  tint: 'var(--t-finder)',  skin: '#F0C29E', hair: '#C8A45C' },
+    verifya: { name: 'verify-a',    role: 'skeptic',      color: 'var(--c-verifya)', tint: 'var(--t-verifya)', skin: '#8E5A38', hair: '#14110E' },
+    verifyb: { name: 'verify-b',    role: 'skeptic',      color: 'var(--c-verifyb)', tint: 'var(--t-verifyb)', skin: '#F2CBA8', hair: '#8C4A33' },
+  };
+  const mini = id => {
+    const m = META[id];
+    return '<span class="mini"><span class="mh" style="background:' + m.skin + '"></span><span class="mha" style="background:' + m.hair + '"></span><span class="mc" style="background:' + m.tint + '"></span></span>';
+  };
+  Object.keys(META).forEach(id => {
+    const m = META[id];
+    document.getElementById('row-' + id).innerHTML =
+      mini(id) + '<b style="color:' + m.color + '">' + m.name + '</b> · ' + m.role + '<span class="st" id="st-' + id + '">—</span>';
+  });
+
+  const A = {};
+  Object.keys(META).forEach(id => {
+    const el = document.getElementById('ac-' + id);
+    A[id] = { id, el, x: 0, y: 0, say: el.querySelector('.say'), think: el.querySelector('.think') };
+  });
+
+  const SEAT = {
+    explore: { x: 16.5, y: 34.2 },
+    finder:  { x: 30.5, y: 34.2 },
+    verifya: { x: 16.5, y: 64.2 },
+    verifyb: { x: 30.5, y: 64.2 },
+    main:    { x: 61,   y: 32.2 },
+  };
+  const SPOT = {
+    nearFinder: { x: 36.5, y: 40 },
+    tableW: { x: 55, y: 74 },
+    tableE: { x: 72, y: 74 },
+    tableN: { x: 63.5, y: 62 },
+    tableS: { x: 63.5, y: 79 },
+    coffee: { x: 6.5, y: 25 },
+  };
+
+  function place(a, x, y) {
+    a.x = x; a.y = y;
+    a.el.style.left = x + '%';
+    a.el.style.top = y + '%';
+    a.el.style.zIndex = Math.round(400 + y * 10);
+  }
+  function pose(a, cls) {
+    a.el.classList.remove('walking', 'sitting', 'away', 'flip');
+    if (cls) cls.split(' ').forEach(c => a.el.classList.add(c));
+  }
+  const sit = a => pose(a, 'sitting away');
+
+  function seg(a, to, spd) {
+    return new Promise(res => {
+      const from = { x: a.x, y: a.y };
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const distPx = Math.hypot(dx * innerWidth / 100, dy * innerHeight / 100);
+      const ms = reduced ? 0 : distPx / spd * 1000;
+      if (ms < 40) { place(a, to.x, to.y); res(); return; }
+      a.el.classList.remove('away', 'flip');
+      if (Math.abs(dx) >= Math.abs(dy)) { if (dx < 0) a.el.classList.add('flip'); }
+      else if (dy < 0) a.el.classList.add('away');
+      const t0 = performance.now();
+      (function stepFrame(t) {
+        const k = Math.min(1, (t - t0) / ms);
+        place(a, from.x + dx * k, from.y + dy * k);
+        if (k < 1) requestAnimationFrame(stepFrame); else res();
+      })(t0);
+    });
+  }
+  async function walk(a, waypoints, opts) {
+    pose(a, 'walking');
+    for (const wp of waypoints) await seg(a, wp, 150);
+    pose(a, (opts && opts.pose) || null);
+  }
+  const say = (a, t, ms) => { a.say.textContent = t; a.say.classList.add('on'); setTimeout(() => a.say.classList.remove('on'), ms); };
+  const think = (a, t, ms) => { a.think.textContent = t; a.think.classList.add('on'); setTimeout(() => a.think.classList.remove('on'), ms); };
+  const setSt = (id, t) => { const el = document.getElementById('st-' + id); if (el) el.textContent = t; };
+
+  function msg(o) {
+    const d = document.createElement('div');
+    if (o.sys) { d.className = 'msg-sys'; d.textContent = o.sys; }
+    else if (o.user) {
+      d.className = 'msg msg-user';
+      d.innerHTML = '<div class="msg-card"><div class="msg-head"><span class="who" style="color:var(--ink-soft)">dev</span><time>' + o.time + '</time></div><div class="msg-body">' + o.html + '</div></div>';
+    } else {
+      const m = META[o.id];
+      d.className = 'msg';
+      d.innerHTML = mini(o.id) +
+        '<div class="msg-card' + (o.verdict ? ' verdict-' + o.verdict : '') + '"><div class="msg-head"><span class="who" style="color:' + m.color + '">' + m.name +
+        '</span><time>' + o.time + '</time></div><div class="msg-body">' + o.html + '</div></div>';
+    }
+    chatEl.appendChild(d);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+  const chip = (t, cls) => '<span class="chip ' + (cls || '') + '">' + t + '</span>';
+
+  const CYCLE = 42000;
+  let timers = [];
+  const at = (t, fn) => timers.push(setTimeout(fn, t));
+
+  function run() {
+    timers.forEach(clearTimeout); timers = [];
+    chatEl.innerHTML = '';
+    Object.keys(SEAT).forEach(id => { place(A[id], SEAT[id].x, SEAT[id].y); sit(A[id]); });
+    const bar = document.getElementById('loopbar');
+    if (bar && !reduced) { bar.style.transition = 'none'; bar.style.width = '0'; requestAnimationFrame(() => { bar.style.transition = 'width ' + CYCLE + 'ms linear'; bar.style.width = '100%'; }); }
+
+    msg({ user: true, time: '21:36', html: 'scheduler tests flaky again, ~15% of CI runs. find the real root cause — no band-aid.' });
+    msg({ id: 'main', time: '21:36', html: '<p>Plan: scout the test surface, one fixer proposes a root cause, two skeptics try to break it.</p><div class="chips">' + chip('spawned ×4') + chip('workflow: find → verify') + '</div>' });
+    setSt('main', 'orchestrating'); setSt('explore', 'scanning'); setSt('finder', 'reading'); setSt('verifya', 'idle'); setSt('verifyb', 'idle');
+
+    at(1600, () => think(A.explore, 'grep retryWithBackoff → 11 call sites…', 3600));
+    at(5300, () => {
+      say(A.explore, '3 suites touch retry paths — scheduler.spec mixes fake timers + real clock.', 4200);
+      msg({ id: 'explore', time: '21:38', html: '<p>3 suites touch retry paths. <code>scheduler.spec.ts</code> is the only one mixing fake timers with real <code>Date.now</code>. Flake 7/50 local.</p><details class="monologue"><summary>internal monologue · 1.2k tok</summary><div class="monologue-body">grep retryWithBackoff → 11 call sites, 3 under test<br>rerun 50× for stable flake rate before reporting</div></details><div class="chips">' + chip('Grep ×4') + chip('Read ×7') + chip('Bash') + '</div>' });
+      setSt('explore', 'done ✓');
+    });
+
+    at(9200, () => { setSt('finder', 'thinking…'); think(A.finder, 'jitter(seed) constant across attempts… collision ≈184ms?', 4600); });
+    at(14000, () => {
+      say(A.finder, 'Root cause: jitter seeded once — identical delays. Fix drafted.', 4400);
+      msg({ id: 'finder', time: '21:41', html: '<p>Root cause candidate: jitter computed <em>once</em> from seed — identical delay every attempt, colliding with the spec’s 1000ms fake-timer window. Fix drafted in <code>src/retry.ts</code>.</p><div class="chips">' + chip('Edit src/retry.ts ×2') + chip('Read ×5') + '</div>' });
+      setSt('finder', 'fix drafted'); setSt('verifya', 'running tests'); setSt('verifyb', 'reproducing');
+    });
+
+    at(19000, async () => {
+      setSt('verifyb', 'challenging');
+      await walk(A.verifyb, [{ x: 36.5, y: 64.2 }, { x: 39, y: 50 }, SPOT.nearFinder]);
+      say(A.verifyb, 'Seed pinned, 50 reruns — still 6 red. Your jitter math is stale.', 4200);
+      setTimeout(() => {
+        say(A.finder, 'v2.3 reseeds?… checking blame', 2800);
+        msg({ id: 'verifyb', time: '21:43', verdict: 'err', html: '<div class="chips" style="margin:0 0 5px">' + chip('✕ REFUTED', 'chip--refuted') + '</div><p>Seed pinned, 50 reruns — still 6 failures. <code>seedJitter</code> re-randomizes since v2.3 (<code>8f1c2aa</code>). Real flake = the fake-timer window itself.</p><div class="chips">' + chip('Bash ×3') + '</div>' });
+        setSt('verifyb', 'refuted claim'); setSt('finder', 'rethinking…');
+      }, 2500);
+    });
+
+    at(26000, async () => {
+      msg({ sys: '— huddle @ roundtable: fable-main · verify-b · finder-bugs —' });
+      setSt('main', 'huddle');
+      walk(A.verifyb, [{ x: 42, y: 52 }, { x: 51, y: 68 }, SPOT.tableW]);
+      walk(A.finder, [{ x: 40, y: 46 }, { x: 50, y: 62 }, SPOT.tableS]);
+      await walk(A.main, [{ x: 61, y: 42 }, SPOT.tableN], { pose: 'away' });
+      pose(A.main, null);
+      say(A.main, 'So it’s the window, not the seed. verify-a — numbers?', 3600);
+      setTimeout(() => say(A.verifyb, 'widen the spec window → flake gone', 3200), 2000);
+      setTimeout(() => think(A.finder, 'agreed. reverting my reseed patch…', 3000), 3600);
+    });
+
+    at(30500, async () => {
+      setSt('verifya', 'coffee ☕');
+      await walk(A.verifya, [{ x: 8, y: 64.2 }, { x: 6.5, y: 44 }, SPOT.coffee], { pose: 'away' });
+      think(A.verifya, '☕ while 50 reruns finish…', 2400);
+      await new Promise(r => setTimeout(r, 2600));
+      await walk(A.verifya, [{ x: 6.5, y: 44 }, { x: 8, y: 64.2 }, SEAT.verifya], { pose: 'sitting away' });
+      say(A.verifya, '50/50 green with the window fix. CONFIRMED.', 3600);
+      msg({ id: 'verifya', time: '21:47', verdict: 'ok', html: '<div class="chips" style="margin:0 0 5px">' + chip('✓ CONFIRMED', 'chip--ok') + '</div><p>Window fix: 50/50 reruns green. Root cause = spec’s 1000ms fake-timer window, not jitter.</p><div class="chips">' + chip('Bash · npm test ×2') + '</div>' });
+      setSt('verifya', 'confirmed ✓');
+    });
+
+    at(37600, async () => {
+      walk(A.finder, [{ x: 50, y: 62 }, { x: 40, y: 46 }, SEAT.finder], { pose: 'sitting away' });
+      walk(A.verifyb, [{ x: 51, y: 68 }, { x: 42, y: 52 }, { x: 36.5, y: 64.2 }, SEAT.verifyb], { pose: 'sitting away' });
+      await walk(A.main, [{ x: 61, y: 42 }, SEAT.main], { pose: 'sitting away' });
+      msg({ id: 'main', time: '21:48', html: '<p>Shipping: spec window widened, reseed patch reverted. Closing the task.</p><div class="chips">' + chip('Edit test/scheduler.spec.ts') + chip('✓ task done', 'chip--ok') + '</div>' });
+      setSt('main', 'shipping'); setSt('finder', 'reverting patch'); setSt('verifyb', 'idle');
+    });
+
+    at(CYCLE, run);
+  }
+
+  let n = 0;
+  setInterval(() => { cnt.textContent = 'demo loop · ' + (n = (n + 1) % (CYCLE / 1000)) + 's'; }, 1000);
+  run();
+})();
+</script>
