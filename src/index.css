@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 /*
- * Ported from docs/mockup/office-sim-v5.html — the approved look. Only the shell, the top HUD
- * and the chat panel live here; the office furniture and its people arrive with the office view.
+ * Ported from docs/mockup/office-sim-v5.html — the approved look. The shell, the HUD and the
+ * chat panel live here; the room itself — floor, furniture, people — is in office/scene.css.
  * Natural-office palette throughout: the only saturated colours in the UI are the two verdicts.
  */
 :root {
@@ -41,45 +41,6 @@ body {
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1.5;
-}
-
-/* ============================================================== shell ==== */
-
-/* Stands in for the room until the office view fills it; same floor/wall wash as the mockup. */
-.office {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background:
-    linear-gradient(
-      to bottom,
-      var(--wall) 0,
-      var(--wall) 11%,
-      var(--wall-2) 11%,
-      var(--wall-2) 12.2%,
-      var(--base) 12.2%,
-      var(--base) 13.1%,
-      transparent 13.1%
-    ),
-    repeating-linear-gradient(90deg, var(--plank) 0 2px, transparent 2px 92px),
-    repeating-linear-gradient(0deg, rgba(122, 94, 58, 0.06) 0 1px, transparent 1px 26px),
-    linear-gradient(180deg, var(--oak-1) 13%, var(--oak-2) 70%, #d2bf9a 100%);
-}
-.office-note {
-  margin-right: 384px;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  color: rgba(122, 94, 58, 0.5);
-}
-.office-note span {
-  display: block;
-  margin-top: 5px;
-  letter-spacing: 0.08em;
-  color: rgba(122, 94, 58, 0.38);
 }
 
 /* ================================================================ HUD ==== */
@@ -235,6 +196,57 @@ body {
   letter-spacing: 0.1em;
   color: var(--ink-dim);
   white-space: nowrap;
+}
+
+/* Mockup 290-294: the roster legend, bottom left, one row per agent. The mockup has five
+   agents; a real session can have twenty, so the panel is capped and scrolls rather than
+   growing up the screen and covering the room it is describing. */
+.hud-agents {
+  left: 12px;
+  bottom: 12px;
+  padding: 10px 12px 9px;
+  font-size: 9.5px;
+  display: grid;
+  gap: 6px;
+  min-width: 252px;
+  max-width: 320px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.hud-agents .hd {
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  color: var(--ink-dim);
+  margin-bottom: 2px;
+}
+.arow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+.arow b {
+  color: var(--ink);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arow .model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-dim);
+}
+.arow .st {
+  margin-left: auto;
+  padding-left: 6px;
+  flex: none;
+  color: var(--ink-dim);
+  font-size: 8.5px;
+  min-width: 92px;
+  text-align: right;
 }
 
 /* =============================================================== chat ==== */
@@ -525,10 +537,8 @@ details.monologue[open] summary::before {
     left: 12px;
     width: auto;
   }
-  .hud-top {
-    display: none;
-  }
-  .office-note {
+  .hud-top,
+  .hud-agents {
     display: none;
   }
 }

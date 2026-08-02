@@ -13,5 +13,14 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src", "shared", "server", "tests", "vite.config.ts", "vitest.config.mts"]
+  "include": [
+    "src",
+    "shared",
+    "server",
+    "tests",
+    "e2e",
+    "vite.config.ts",
+    "vitest.config.mts",
+    "playwright.config.ts"
+  ]
 }

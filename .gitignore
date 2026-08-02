@@ -1,3 +1,5 @@
 node_modules
 dist
 .playwright-mcp
+e2e/artifacts
+playwright-report

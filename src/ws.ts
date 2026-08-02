@@ -5,7 +5,7 @@
  * a backlog replay followed by live events, one JSON frame each. Control frames carry no `seq`,
  * which is exactly what `isEv` keys on, so events and control messages never get confused.
  */
-import { useEffect, useReducer, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { isEv, type Ev } from '../shared/events';
 import type { FollowCmd, SessionSummary } from '../server/hub';
 import { initialState, reduce, type RtState } from './store';
@@ -22,6 +22,19 @@ export type RtStream = {
   /** Events the hub could no longer replay for the followed session; 0 when nothing was lost. */
   truncatedDropped: number;
   connected: boolean;
+};
+
+/**
+ * A second consumer of the same socket, for state that is not a pure fold of the events.
+ *
+ * The office simulation is exactly that: it queues walks and holds bubbles on a clock, so it
+ * has to *see* each event rather than be recomputed from the resulting state. `reset` fires
+ * wherever the reducer's own `reset` does — a reconnect or a session switch replays the whole
+ * backlog, and a sink that missed the notice would act on that history twice.
+ */
+export type EvSink = {
+  ev: (ev: Ev) => void;
+  reset: () => void;
 };
 
 /** Reconnect backoff: quick enough to feel instant on a server restart, slow enough to be polite. */
@@ -43,12 +56,18 @@ const streamReducer = (state: RtState, action: Action): RtState =>
  * fresh one: the replay that follows is the whole history of the new session, so the previous
  * session's state has to go with it — and a socket that is thrown away cannot deliver a late
  * frame from the stream it used to carry.
+ *
+ * `sink`, when given, sees every event this hook folds, in the same order and the same batch.
+ * It is read through a ref so that passing a fresh closure on every render cannot cycle the
+ * socket — only `sessionId` may do that.
  */
-export function useRtStream(sessionId: string | null): RtStream {
+export function useRtStream(sessionId: string | null, sink?: EvSink): RtStream {
   const [state, dispatch] = useReducer(streamReducer, initialState);
   const [sessions, setSessions] = useState<RtSession[]>([]);
   const [truncatedDropped, setTruncatedDropped] = useState(0);
   const [connected, setConnected] = useState(false);
+  const sinkRef = useRef(sink);
+  sinkRef.current = sink;
 
   useEffect(() => {
     let stopped = false;
@@ -64,6 +83,8 @@ export function useRtStream(sessionId: string | null): RtStream {
       const evs = buffered;
       buffered = [];
       dispatch({ kind: 'events', evs });
+      const observer = sinkRef.current;
+      if (observer) for (const ev of evs) observer.ev(ev);
     };
 
     /** Coalesces a burst of frames into one fold, so a 2000-event replay is not 2000 renders. */
@@ -112,6 +133,7 @@ export function useRtStream(sessionId: string | null): RtStream {
         // The hub replays the full backlog to every new follower, so the fold restarts from
         // empty here — otherwise a reconnect would count the whole history a second time.
         dispatch({ kind: 'reset' });
+        sinkRef.current?.reset();
         setTruncatedDropped(0);
         const follow: FollowCmd = { cmd: 'follow', sessionId }; // typed, so a protocol typo fails the build
         s.send(JSON.stringify(follow));
