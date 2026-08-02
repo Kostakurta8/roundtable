@@ -1,11 +1,11 @@
 import { once } from 'node:events';
-import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { isEv, type Ev } from '../shared/events';
-import { startServer, type StopServer } from '../server/hub';
+import { startServer, type HubOptions, type StopServer } from '../server/hub';
 
 /** Polling makes the watcher deterministic on Windows and keeps the tests fast. */
 const WATCH_OPTS = { usePolling: true, interval: 200 } as const;
@@ -33,9 +33,16 @@ const assistantLine = (text: string, agentId?: string): string =>
 // ---------------------------------------------------------------- test harness
 
 type Hello = { kind: 'hello'; sessions: { sessionId: string; slug: string; mtime: number }[] };
+type Truncated = { kind: 'backlogTruncated'; dropped: number };
 
 const isHello = (m: unknown): m is Hello =>
   !!m && typeof m === 'object' && (m as { kind?: unknown }).kind === 'hello';
+
+const isTruncated = (m: unknown): m is Truncated =>
+  !!m &&
+  typeof m === 'object' &&
+  (m as { kind?: unknown }).kind === 'backlogTruncated' &&
+  typeof (m as { dropped?: unknown }).dropped === 'number';
 
 /** Type guard for one `Ev` kind, with an optional extra predicate on the narrowed event. */
 const evOf =
@@ -85,6 +92,8 @@ const delay = (ms: number): Promise<void> =>
 
 const stops: StopServer[] = [];
 const sockets: WebSocket[] = [];
+/** Every hub in the suite reports here, so any test can assert it ran without failures. */
+const errors: { err: unknown; ctx: string }[] = [];
 
 afterEach(async () => {
   for (const sock of sockets.splice(0)) {
@@ -93,35 +102,48 @@ afterEach(async () => {
     sock.terminate();
   }
   for (const stop of stops.splice(0)) await stop();
+  errors.splice(0);
 });
 
-function makeRoot(opts: { subagents?: boolean } = {}): {
+function makeRoot(opts: { subagents?: boolean; sessionDir?: boolean } = {}): {
   root: string;
   slugDir: string;
   mainFile: string;
+  sessionDir: string;
   subagentsDir: string;
 } {
   const withSubagents = opts.subagents !== false;
   const root = mkdtempSync(join(tmpdir(), 'rt-hub-'));
   const slugDir = join(root, 'projects', 'demo');
-  const subagentsDir = join(slugDir, 'fix-sess', 'subagents');
-  mkdirSync(withSubagents ? subagentsDir : slugDir, { recursive: true });
+  const sessionDir = join(slugDir, 'fix-sess');
+  const subagentsDir = join(sessionDir, 'subagents');
+  if (withSubagents) mkdirSync(subagentsDir, { recursive: true });
+  else mkdirSync(opts.sessionDir ? sessionDir : slugDir, { recursive: true });
   const mainFile = join(slugDir, 'fix-sess.jsonl');
   copyFileSync(join('fixtures', 'main-session.jsonl'), mainFile);
   if (withSubagents) {
     copyFileSync(join('fixtures', 'agent-abc123.jsonl'), join(subagentsDir, 'agent-abc123.jsonl'));
   }
-  return { root, slugDir, mainFile, subagentsDir };
+  return { root, slugDir, mainFile, sessionDir, subagentsDir };
 }
+
+const seedAgent = (subagentsDir: string, name = 'agent-abc123.jsonl'): void => {
+  copyFileSync(join('fixtures', 'agent-abc123.jsonl'), join(subagentsDir, name));
+};
 
 const isPortTaken = (err: unknown): boolean =>
   !!err && typeof err === 'object' && (err as { code?: unknown }).code === 'EADDRINUSE';
 
 /** Starts a hub on the first free port and registers its shutdown with afterEach. */
-async function start(root: string): Promise<number> {
+async function start(root: string, extra: Partial<HubOptions> = {}): Promise<number> {
+  const options: HubOptions = {
+    ...WATCH_OPTS,
+    onError: (err, ctx) => errors.push({ err, ctx }),
+    ...extra,
+  };
   for (let port = FIRST_PORT; port < FIRST_PORT + PORT_TRIES; port++) {
     try {
-      stops.push(await startServer(root, port, WATCH_OPTS));
+      stops.push(await startServer(root, port, options));
       return port;
     } catch (err) {
       if (!isPortTaken(err)) throw err; // only a busy port is worth retrying
@@ -232,24 +254,75 @@ describe('hub', () => {
 
       writeFileSync(join(subagentsDir, 'agent-def456.jsonl'), assistantLine(NEW_AGENT_TEXT, 'def456'));
       await client.wait(evOf('agentText', (e) => e.ref.agentId === 'def456'), 6000);
+      expect(errors).toEqual([]); // watching a live directory reports no failures
     },
     25_000,
   );
 
+  // A subagent can be spawned, work and finish while the parent transcript stays silent, so the
+  // attach must not wait for main-file activity — that would turn a live run into one retroactive
+  // burst at completion. Neither test below writes to the main file after the follow.
   it(
-    'picks up a subagents directory created after the session is followed',
+    'attaches a subagents directory created after the follow, with no main-file activity',
     async () => {
       const { root, mainFile, subagentsDir } = makeRoot({ subagents: false });
       const client = await connect(await start(root));
       await client.wait(isHello);
       client.send({ cmd: 'follow', sessionId: 'fix-sess' });
       await client.wait(evOf('userMessage'));
+      const untouched = statSync(mainFile).mtimeMs;
+
+      mkdirSync(subagentsDir, { recursive: true }); // session dir did not exist either
+      seedAgent(subagentsDir);
+
+      const ev = await client.wait(evOf('agentText', (e) => e.ref.agentId === 'abc123'));
+      expect(ev.text).toContain('3 suites');
+      expect(statSync(mainFile).mtimeMs).toBe(untouched); // nothing nudged the main transcript
+      expect(errors).toEqual([]);
+    },
+    25_000,
+  );
+
+  it(
+    'attaches when only the subagents directory appears under an existing session directory',
+    async () => {
+      const { root, subagentsDir } = makeRoot({ subagents: false, sessionDir: true });
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('userMessage'));
 
       mkdirSync(subagentsDir, { recursive: true });
-      copyFileSync(join('fixtures', 'agent-abc123.jsonl'), join(subagentsDir, 'agent-abc123.jsonl'));
-      appendFileSync(mainFile, assistantLine(LIVE_TEXT)); // main-file activity triggers the rescan
+      seedAgent(subagentsDir);
 
-      await client.wait(evOf('agentText', (e) => e.ref.agentId === 'abc123'), 8000);
+      await client.wait(evOf('agentText', (e) => e.ref.agentId === 'abc123'));
+      expect(errors).toEqual([]);
+    },
+    25_000,
+  );
+
+  it(
+    'tells a follower on the wire when the backlog cap dropped history',
+    async () => {
+      const capped = await connect(await start(makeRoot().root, { backlogLimit: 2 }));
+      await capped.wait(isHello);
+      capped.send({ cmd: 'follow', sessionId: 'fix-sess' });
+
+      const notice = await capped.wait(isTruncated);
+      expect(notice.dropped).toBeGreaterThan(0);
+      // the warning precedes the replay, so a client knows about the gap before it reads events
+      expect(capped.seen.indexOf(notice)).toBeLessThan(capped.seen.findIndex((m) => isEv(m)));
+      await delay(SETTLE_MS);
+      expect(capped.events()).toHaveLength(2); // only the retained tail
+
+      // control run over identical fixtures: dropped + retained must account for every event
+      const full = await connect(await start(makeRoot().root, { backlogLimit: 1000 }));
+      await full.wait(isHello);
+      full.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await full.wait(evOf('userMessage'));
+      await delay(SETTLE_MS);
+      expect(full.seen.some(isTruncated)).toBe(false); // nothing dropped, nothing announced
+      expect(notice.dropped + capped.events().length).toBe(full.events().length);
     },
     25_000,
   );
