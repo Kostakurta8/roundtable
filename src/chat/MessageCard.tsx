@@ -24,6 +24,18 @@ const paragraphs = (text: string): string[] => {
   return parts.length > 0 ? parts : [text];
 };
 
+/**
+ * The mockup counts repeats instead of listing them — "Grep ×4", not four Grep chips. It matters
+ * on real data: tools called without a file or pattern (Bash, TodoWrite…) all label as the bare
+ * tool name, so a busy turn would otherwise read "Bash Bash Bash Bash". Purely a display tally;
+ * the store keeps every call, in order, for anything that needs them individually.
+ */
+export const tally = (chips: readonly string[]): string[] => {
+  const counts = new Map<string, number>();
+  for (const c of chips) counts.set(c, (counts.get(c) ?? 0) + 1); // Map keeps first-seen order
+  return [...counts].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label));
+};
+
 const displayName = (msg: RtMsg, agent?: RtAgent): string => {
   const name = agent?.label ?? msg.agentId;
   return name.length > NAME_MAX ? `${name.slice(0, NAME_MAX - 1)}…` : name;
@@ -71,8 +83,8 @@ export function MessageCard({ msg, agent }: { msg: RtMsg; agent?: RtAgent }) {
 
         {msg.chips.length > 0 && (
           <div className="chips">
-            {msg.chips.map((c, i) => (
-              <span className="chip" key={i}>
+            {tally(msg.chips).map((c) => (
+              <span className="chip" key={c}>
                 {c}
               </span>
             ))}

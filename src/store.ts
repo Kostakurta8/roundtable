@@ -215,10 +215,14 @@ export function reduce(state: RtState, ev: Ev): RtState {
     }
 
     case 'fileEdit': {
+      // Derived from a tool_use the normalizer already reported as `toolStart`, never a separate
+      // action — so the chip for it exists by the time this arrives. Adding a second one printed
+      // every edit twice, and for Write printed one action under two names ("Write x", "Edit x").
+      // The status is still set here: it is the signal that survives if a truncated backlog ate
+      // the toolStart, and it is what the office view reads to know a file is being changed.
       const id = ev.ref.agentId;
-      const label = `Edit ${ev.path}`;
       const s = ensureAgent(state, id);
-      return attachChip({ ...s, agents: withAgent(s.agents, id, { status: clip(label, STATUS_MAX) }) }, id, label);
+      return { ...s, agents: withAgent(s.agents, id, { status: clip(`Edit ${ev.path}`, STATUS_MAX) }) };
     }
 
     case 'toolResult': {

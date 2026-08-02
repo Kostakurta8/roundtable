@@ -115,13 +115,55 @@ describe('reduce — rules', () => {
     const st = fold([
       toolStart('a', 'Grep', 'retryWithBackoff'), // no message open yet → buffered
       text('a', 'found it'),
-      fileEdit('a', 'src/retry.ts'), // message already open → appended
+      toolStart('a', 'Bash', 'npm test'), // message already open → appended
       text('b', 'unrelated'),
     ]);
     const a = st.msgs.find((m) => m.agentId === 'a');
-    expect(a?.chips).toEqual(['Grep retryWithBackoff', 'Edit src/retry.ts']);
+    expect(a?.chips).toEqual(['Grep retryWithBackoff', 'Bash npm test']);
     expect(st.msgs.find((m) => m.agentId === 'b')?.chips).toEqual([]);
-    expect(st.agents.a.status).toContain('Edit');
+    expect(st.agents.a.status).toContain('Bash');
+  });
+
+  it('repeats a genuinely repeated tool call — chips are a log, not a set', () => {
+    const st = fold([text('a', 'rerunning'), toolStart('a', 'Bash', 'npm test'), toolStart('a', 'Bash', 'npm test')]);
+    expect(st.msgs[0].chips).toEqual(['Bash npm test', 'Bash npm test']);
+  });
+
+  // A file-editing tool_use makes the normalizer emit BOTH toolStart and fileEdit, so the store
+  // is fed the same action twice and must still show it once. Driven through the real Normalizer
+  // rather than hand-built events, so the coupling stays honest if the normalizer ever changes.
+  const editLine = (tool: string, path: string): Ev[] =>
+    new Normalizer('s', 'main').feed({
+      type: 'assistant',
+      timestamp: '2026-08-02T10:00:00.000Z',
+      message: {
+        role: 'assistant',
+        model: 'm',
+        content: [
+          { type: 'text', text: 'patching it' },
+          { type: 'tool_use', id: 'tu1', name: tool, input: { file_path: path } },
+        ],
+      },
+    });
+
+  it('shows one chip per file edit, not one per event', () => {
+    const evs = editLine('Edit', 'src/retry.ts');
+    // guard: the double emission this test exists for is really there
+    expect(evs.filter((e) => e.kind === 'toolStart' || e.kind === 'fileEdit')).toHaveLength(2);
+
+    expect(fold(evs).msgs[0].chips).toEqual(['Edit src/retry.ts']);
+  });
+
+  it('keeps the precise tool name when a Write reports a file edit', () => {
+    // Write emits toolStart 'Write <path>' and fileEdit 'Edit <path>' — two different labels for
+    // one action, so equal-label dedup would not have been enough.
+    expect(fold(editLine('Write', 'src/new.ts')).msgs[0].chips).toEqual(['Write src/new.ts']);
+  });
+
+  it('still reports a file edit in the agent status', () => {
+    const st = fold([text('a', 'writing'), fileEdit('a', 'src/x.ts')]);
+    expect(st.msgs[0].chips).toEqual([]); // the chip is the tool call's, not this event's
+    expect(st.agents.a.status).toBe('Edit src/x.ts');
   });
 
   it('reads verdicts out of the text, REFUTED winning a tie', () => {
