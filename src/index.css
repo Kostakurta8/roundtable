@@ -1,3 +1,534 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Ported from docs/mockup/office-sim-v5.html — the approved look. Only the shell, the top HUD
+ * and the chat panel live here; the office furniture and its people arrive with the office view.
+ * Natural-office palette throughout: the only saturated colours in the UI are the two verdicts.
+ */
+:root {
+  --oak-1: #e3d4b6;
+  --oak-2: #d9c8a6;
+  --plank: rgba(122, 94, 58, 0.12);
+  --wall: #efe9dc;
+  --wall-2: #e6dfd0;
+  --base: #cfc7b4;
+  --card: #ffffff;
+  --paper: #faf8f3;
+  --ink: #2e2d29;
+  --ink-soft: #67675f;
+  --ink-dim: #9b998e;
+  --border: #e4dfd1;
+  --ok: #2e9e5b;
+  --err: #c04848;
+  --shadow-amb: 0 12px 30px rgba(96, 78, 46, 0.18);
+  --font-mono: 'Cascadia Code', ui-monospace, 'JetBrains Mono', Consolas, monospace;
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--oak-2);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ============================================================== shell ==== */
+
+/* Stands in for the room until the office view fills it; same floor/wall wash as the mockup. */
+.office {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(
+      to bottom,
+      var(--wall) 0,
+      var(--wall) 11%,
+      var(--wall-2) 11%,
+      var(--wall-2) 12.2%,
+      var(--base) 12.2%,
+      var(--base) 13.1%,
+      transparent 13.1%
+    ),
+    repeating-linear-gradient(90deg, var(--plank) 0 2px, transparent 2px 92px),
+    repeating-linear-gradient(0deg, rgba(122, 94, 58, 0.06) 0 1px, transparent 1px 26px),
+    linear-gradient(180deg, var(--oak-1) 13%, var(--oak-2) 70%, #d2bf9a 100%);
+}
+.office-note {
+  margin-right: 384px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: rgba(122, 94, 58, 0.5);
+}
+.office-note span {
+  display: block;
+  margin-top: 5px;
+  letter-spacing: 0.08em;
+  color: rgba(122, 94, 58, 0.38);
+}
+
+/* ================================================================ HUD ==== */
+
+.hud {
+  position: fixed;
+  z-index: 1000;
+  font-family: var(--font-mono);
+}
+.glass {
+  background: rgba(255, 255, 255, 0.93);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-amb);
+  backdrop-filter: blur(3px);
+}
+.hud-top {
+  top: 12px;
+  left: 12px;
+  right: 396px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 9px 14px;
+  font-size: 11px;
+}
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+  flex: none;
+}
+
+.session-menu {
+  position: relative;
+  min-width: 0;
+}
+.session-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 9px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+}
+.session-pick:hover {
+  border-color: #d5cdb8;
+}
+.session-pick b {
+  color: var(--ink);
+}
+.session-pick .slug {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 1;
+  width: 340px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 5px;
+  margin: 0;
+  list-style: none;
+}
+.session-list button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  color: var(--ink-soft);
+  text-align: left;
+  cursor: pointer;
+}
+.session-list button:hover {
+  background: var(--paper);
+}
+.session-list button.on {
+  background: #edf2e8;
+}
+.session-list b {
+  color: var(--ink);
+  flex: none;
+}
+.session-list .slug {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-list time {
+  margin-left: auto;
+  flex: none;
+  color: var(--ink-dim);
+}
+.session-list .empty {
+  padding: 6px 7px;
+  font-size: 10px;
+  color: var(--ink-dim);
+}
+
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.pill-live {
+  color: var(--ok);
+  border: 1px solid #cfe8da;
+  background: #e9f6ee;
+}
+.pill-off {
+  color: var(--ink-dim);
+  border: 1px solid var(--border);
+  background: var(--paper);
+}
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: blink 1.6s infinite;
+}
+.cost {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hud-top .roster {
+  margin-left: auto;
+  flex: none;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+/* =============================================================== chat ==== */
+
+.chat {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: 372px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.chat-head {
+  padding: 11px 14px 9px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+.chat-head .l1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--ink-dim);
+}
+.chat-head .l1 .cnt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  letter-spacing: 0;
+  color: var(--ink-soft);
+}
+.chat-head .l2 {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+  scroll-behavior: smooth;
+}
+.chat-foot {
+  border-top: 1px solid var(--border);
+  padding: 8px 14px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-dim);
+  letter-spacing: 0.05em;
+}
+
+/* The 1fr column must be minmax(0, 1fr): an auto column sizes to the longest unbroken string
+   in the card, which pushes a real file path straight through the edge of the panel. */
+.msg {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 0 8px;
+  padding: 6px 0;
+  animation: msg-in 0.3s ease;
+}
+.msg .mini {
+  margin-top: 4px;
+  justify-self: center;
+}
+.msg-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 10px 8px;
+  min-width: 0;
+  box-shadow: 0 1px 3px rgba(96, 78, 46, 0.08);
+}
+.msg-card.verdict-err {
+  border-left: 3px solid var(--err);
+}
+.msg-card.verdict-ok {
+  border-left: 3px solid var(--ok);
+}
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.msg-head .who {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-head time {
+  margin-left: auto;
+  flex: none;
+  color: var(--ink-dim);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.msg-body {
+  margin-top: 2px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.msg-body p {
+  margin: 0 0 5px;
+  white-space: pre-wrap;
+}
+.msg-body p:last-child {
+  margin: 0;
+}
+/* The human's own turn spans the full width — no avatar column to leave room for. */
+.msg-user {
+  grid-template-columns: minmax(0, 1fr);
+}
+.msg-user .msg-card {
+  background: #edf2e8;
+  border-color: #dbe3d0;
+}
+.msg-sys {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-dim);
+  padding: 7px 0;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+  animation: msg-in 0.3s ease;
+}
+
+/* Mini-head: skin, hair and a sliver of torso, in the agent's own tints. */
+.mini {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.mini .mh {
+  position: absolute;
+  inset: 1.5px 1.5px 0;
+  border-radius: 50% 50% 46% 46%;
+}
+.mini .mha {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 0;
+  height: 7px;
+  border-radius: 8px 8px 3px 3px;
+}
+.mini .mc {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: -1.5px;
+  height: 5px;
+  border-radius: 3px 3px 2px 2px;
+}
+
+.chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.chips-verdict {
+  margin: 0 0 5px;
+}
+.chip {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+  background: var(--paper);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.chip--refuted {
+  color: var(--err);
+  border-color: #ebcaca;
+  background: #fbeaea;
+  font-weight: 700;
+}
+.chip--ok {
+  color: var(--ok);
+  border-color: #cfe8da;
+  background: #e9f6ee;
+  font-weight: 700;
+}
+
+details.monologue {
+  margin-top: 5px;
+}
+details.monologue summary {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-dim);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+details.monologue summary::-webkit-details-marker {
+  display: none;
+}
+details.monologue summary::before {
+  content: '▸';
+  transition: transform 0.15s;
+}
+details.monologue[open] summary::before {
+  transform: rotate(90deg);
+}
+.monologue-body {
+  margin-top: 4px;
+  padding: 6px 9px;
+  border-left: 2px solid #dcd6ca;
+  background: var(--paper);
+  border-radius: 0 5px 5px 0;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* =============================================================== misc ==== */
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .chat-scroll {
+    scroll-behavior: auto;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d8d3c6;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Narrow window: the feed is the observer's whole point, so it takes the room instead of hiding. */
+@media (max-width: 940px) {
+  .chat {
+    left: 12px;
+    width: auto;
+  }
+  .hud-top {
+    display: none;
+  }
+  .office-note {
+    display: none;
+  }
+}
