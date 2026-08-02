@@ -27,13 +27,23 @@ const paragraphs = (text: string): string[] => {
 /**
  * The mockup counts repeats instead of listing them — "Grep ×4", not four Grep chips. It matters
  * on real data: tools called without a file or pattern (Bash, TodoWrite…) all label as the bare
- * tool name, so a busy turn would otherwise read "Bash Bash Bash Bash". Purely a display tally;
- * the store keeps every call, in order, for anything that needs them individually.
+ * tool name, so a busy turn would otherwise read "Bash Bash Bash Bash".
+ *
+ * Only *consecutive* repeats collapse, because only those actually happened consecutively.
+ * Grouping every occurrence of a label would move later calls back to the first one's position
+ * and quietly rewrite the order of the turn: `Bash, Read x, Bash` is three things that happened,
+ * not two. Purely a display tally — the store keeps every call, in order, for anything that
+ * needs them individually.
  */
 export const tally = (chips: readonly string[]): string[] => {
-  const counts = new Map<string, number>();
-  for (const c of chips) counts.set(c, (counts.get(c) ?? 0) + 1); // Map keeps first-seen order
-  return [...counts].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label));
+  const out: string[] = [];
+  for (let i = 0; i < chips.length; ) {
+    let n = 1;
+    while (i + n < chips.length && chips[i + n] === chips[i]) n += 1;
+    out.push(n > 1 ? `${chips[i]} ×${n}` : chips[i]);
+    i += n;
+  }
+  return out;
 };
 
 const displayName = (msg: RtMsg, agent?: RtAgent): string => {
@@ -83,8 +93,10 @@ export function MessageCard({ msg, agent }: { msg: RtMsg; agent?: RtAgent }) {
 
         {msg.chips.length > 0 && (
           <div className="chips">
-            {tally(msg.chips).map((c) => (
-              <span className="chip" key={c}>
+            {/* A label can legitimately appear twice now (one run, then another), so the key
+                has to carry the position — the label alone would collide. */}
+            {tally(msg.chips).map((c, i) => (
+              <span className="chip" key={`${i}-${c}`}>
                 {c}
               </span>
             ))}
