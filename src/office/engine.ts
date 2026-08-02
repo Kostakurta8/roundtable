@@ -34,6 +34,8 @@ export type ActorState = {
   flip: boolean;
   away: boolean;
   say?: string;
+  /** Set only while a confront's line is on screen, so the renderer can tint that bubble. */
+  verdict?: 'ok' | 'err';
   think?: string;
   status: string;
   deskIndex: number;
@@ -61,8 +63,23 @@ export const SETTLE_MS = 600;
 /** `main` sits at the manager desk, which is not part of the pod grid. */
 export const MANAGER_DESK_INDEX = -1;
 
-/** Pod slots past the fourth repeat the same x pattern one row further down the room. */
-export const POD_ROW_STEP_Y = 30;
+/**
+ * Pod slots past the mockup's four run as a 2-wide grid down the room. The pitch clears the
+ * ~54px actor height (`.person`, mockup line 208) so rows never overlap.
+ */
+export const POD_ROW_PITCH_Y = 90;
+
+/** The lowest a desk may sit — below this an actor would walk off the bottom of the scene. */
+export const POD_ROW_MAX_Y = 780;
+
+/**
+ * Rows that would fall past `POD_ROW_MAX_Y` all share that row, so they are fanned sideways
+ * instead. 54px because two clamped rows are separated by the fan alone and the grid must stay
+ * ≥50px apart; and because the column gap (224px) is not a whole multiple of it, so column 0 of
+ * one overflow row can never land exactly on column 1 of another. Past ~12 actors this is a
+ * holding pattern, not a layout — design spec §3.3 calls for a hot-desk overflow there.
+ */
+export const POD_OVERFLOW_FAN_X = 54;
 
 /** The orchestrator's id, as `mapping.ts` emits it. */
 const MAIN_ID = 'main';
@@ -125,13 +142,24 @@ export const WAYPOINTS = {
 } as const;
 
 /**
- * The seat for pod slot `i`. The mockup's four chairs are the first row; every further row of
- * four repeats their x pattern `POD_ROW_STEP_Y` further down the room, per the brief.
+ * The seat for pod slot `slot`, 0-based.
+ *
+ * Slots 0-3 are the mockup's own four chairs, verbatim. Past those the pods continue as the
+ * same two columns (`col = slot % 2`) one row at a time (`row = slot / 2`), each row a pitch
+ * below the mockup's second row — which is exactly how slots 0-3 are already laid out, so the
+ * grid reads as one grid. Rows that would fall off the bottom of the room are pinned to the
+ * last usable row and fanned sideways instead, so a big roster crowds rather than stacks.
  */
 export function podSeat(slot: number): Pt {
-  const row = Math.floor(slot / WAYPOINTS.podSeats.length);
-  const base = WAYPOINTS.podSeats[slot % WAYPOINTS.podSeats.length];
-  return { x: base.x, y: base.y + row * POD_ROW_STEP_Y };
+  const seats = WAYPOINTS.podSeats;
+  if (slot < seats.length) return seats[slot];
+
+  const col = slot % 2;
+  const row = Math.floor(slot / 2);
+  const base = seats[2 + col]; // the mockup's second row, which is row 1 of the grid
+  const y = base.y + (row - 1) * POD_ROW_PITCH_Y;
+  const clampedRows = Math.max(0, Math.ceil((y - POD_ROW_MAX_Y) / POD_ROW_PITCH_Y));
+  return { x: base.x + clampedRows * POD_OVERFLOW_FAN_X, y: Math.min(y, POD_ROW_MAX_Y) };
 }
 
 // --- routing -----------------------------------------------------------------------------
@@ -186,10 +214,12 @@ export function route(from: Pt, to: Pt): Pt[] {
 
 // --- actors ------------------------------------------------------------------------------
 
+type Verdict = 'ok' | 'err';
+
 type Step =
   | { readonly kind: 'walk'; readonly to: Pt }
   | { readonly kind: 'hold'; ms: number }
-  | { readonly kind: 'say'; readonly text: string }
+  | { readonly kind: 'say'; readonly text: string; readonly verdict?: Verdict }
   | { readonly kind: 'pose'; readonly pose: Pose };
 
 type Actor = {
@@ -202,6 +232,7 @@ type Actor = {
   away: boolean;
   status: string;
   say?: string;
+  verdict?: Verdict;
   sayUntil: number;
   think?: string;
   thinkUntil: number;
@@ -280,18 +311,25 @@ export class Engine {
         return;
       case 'deliver':
       case 'confront':
-        this.trip(a, this.ensure(cmd.to), cmd.text);
+        // A delivery is just a report; only a confront carries a verdict to colour.
+        this.trip(a, this.ensure(cmd.to), cmd.text, cmd.op === 'confront' ? cmd.verdict : undefined);
         return;
     }
   }
 
   tick(dtMs: number): ActorState[] {
-    const dt = Math.max(0, dtMs);
+    // A non-finite delta is unrecoverable if it lands: NaN or Infinity poisons the clock, and
+    // from then on every position, every bubble deadline, and every future tick is ruined. A
+    // dropped frame is the honest reading of "no usable delta", so treat it as no time passing.
+    const dt = Number.isFinite(dtMs) ? Math.max(0, dtMs) : 0;
     const t0 = this.clock;
     for (const a of this.order) this.advance(a, t0, dt);
     this.clock = t0 + dt;
     for (const a of this.order) {
-      if (a.say !== undefined && a.sayUntil <= this.clock) a.say = undefined;
+      if (a.say !== undefined && a.sayUntil <= this.clock) {
+        a.say = undefined;
+        a.verdict = undefined; // the tint belongs to the bubble, not to the actor
+      }
       if (a.think !== undefined && a.thinkUntil <= this.clock) a.think = undefined;
     }
     return this.order.map((a) => ({
@@ -302,6 +340,7 @@ export class Engine {
       flip: a.flip,
       away: a.away,
       say: a.say,
+      verdict: a.verdict,
       think: a.think,
       status: a.status,
       deskIndex: a.deskIndex,
@@ -338,10 +377,11 @@ export class Engine {
    * one's own chair. Trips queue behind whatever the actor is already doing, so a burst of
    * events never teleports anyone mid-stride.
    */
-  private trip(a: Actor, target: Actor, text: string): void {
+  private trip(a: Actor, target: Actor, text: string, verdict?: Verdict): void {
     if (a === target) {
       // Nobody walks a note to their own desk; they just say it where they sit.
       a.say = text;
+      a.verdict = verdict;
       a.sayUntil = this.clock + BUBBLE_MS;
       return;
     }
@@ -351,7 +391,7 @@ export class Engine {
       { kind: 'walk', to: front },
       ...walkSteps(route(front, stand)),
       { kind: 'pose', pose: 'stand' },
-      { kind: 'say', text },
+      { kind: 'say', text, verdict },
       { kind: 'hold', ms: SPEAK_HOLD_MS },
       ...walkSteps(route(stand, front)),
       ...sitDown(a),
@@ -381,6 +421,7 @@ export class Engine {
       }
       if (step.kind === 'say') {
         a.say = step.text;
+        a.verdict = step.verdict;
         a.sayUntil = t0 + used + BUBBLE_MS;
         a.queue.shift();
         continue;

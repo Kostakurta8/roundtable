@@ -4,7 +4,7 @@ import {
   BUBBLE_MS,
   Engine,
   MANAGER_DESK_INDEX,
-  POD_ROW_STEP_Y,
+  POD_ROW_MAX_Y,
   SETTLE_MS,
   WAYPOINTS,
   podSeat,
@@ -95,10 +95,40 @@ describe('Engine — desk assignment', () => {
     expectAt(stateOf(settled, 'main'), WAYPOINTS.managerSeat);
   });
 
-  it('extends the pod grid by rows past the fourth slot', () => {
-    expect(podSeat(4)).toEqual({ x: podSeat(0).x, y: podSeat(0).y + POD_ROW_STEP_Y });
-    expect(podSeat(5)).toEqual({ x: podSeat(1).x, y: podSeat(1).y + POD_ROW_STEP_Y });
-    expect(podSeat(8)).toEqual({ x: podSeat(0).x, y: podSeat(0).y + 2 * POD_ROW_STEP_Y });
+  it('puts slot 4 on an absolute seat one pitch below the mockup’s second row', () => {
+    // Pinned to literal scene pixels on purpose: deriving this from the same constants the
+    // implementation uses would assert nothing. Second mockup row is 64.2% of 900 = 577.8,
+    // plus one 90px pitch.
+    expect(podSeat(4).x).toBeCloseTo(264, 6);
+    expect(podSeat(4).y).toBeCloseTo(667.8, 6);
+    expect(podSeat(5).x).toBeCloseTo(488, 6);
+    expect(podSeat(5).y).toBeCloseTo(667.8, 6);
+    // First clamped row: pinned to the floor of the room and fanned one step right.
+    expect(podSeat(8).x).toBeCloseTo(318, 6);
+    expect(podSeat(8).y).toBeCloseTo(780, 6);
+  });
+
+  it('keeps every desk at least 50px from every other with a dozen agents', () => {
+    const seats = [...Array(12).keys()].map(podSeat).concat([WAYPOINTS.managerSeat]);
+    for (let i = 0; i < seats.length; i++) {
+      for (let j = i + 1; j < seats.length; j++) {
+        const gap = Math.hypot(seats[i].x - seats[j].x, seats[i].y - seats[j].y);
+        expect(gap, `slots ${i} and ${j} are ${gap.toFixed(1)}px apart`).toBeGreaterThanOrEqual(50);
+      }
+    }
+  });
+
+  it('lays the overflow out as a 2-wide grid — pairs share a row, columns alternate', () => {
+    expect(podSeat(4).y).toBe(podSeat(5).y); // row = floor(slot / 2)
+    expect(podSeat(6).y).toBe(podSeat(7).y);
+    expect(podSeat(4).x).toBe(podSeat(6).x); // col = slot % 2
+    expect(podSeat(5).x).toBe(podSeat(7).x);
+    expect(podSeat(4).x).not.toBe(podSeat(5).x);
+    expect(podSeat(6).y).toBeGreaterThan(podSeat(4).y);
+  });
+
+  it('never lets a desk fall off the bottom of the room', () => {
+    for (let slot = 0; slot < 40; slot++) expect(podSeat(slot).y).toBeLessThanOrEqual(POD_ROW_MAX_Y);
   });
 });
 
@@ -171,6 +201,37 @@ describe('Engine — confront', () => {
     expect(s.pose).toBe('sit');
     expect(s.say).toBe('CONFIRMED');
     expectAt(s, podSeat(0));
+  });
+
+  it('lets the newer line replace the one already on screen', () => {
+    const e = officeOf('main', 'alpha');
+    e.apply({ op: 'confront', agentId: 'alpha', to: 'alpha', text: 'first', verdict: 'err' });
+    e.apply({ op: 'confront', agentId: 'alpha', to: 'alpha', text: 'second', verdict: 'ok' });
+
+    const s = stateOf(e.tick(STEP_MS), 'alpha');
+    expect(s.say).toBe('second');
+    expect(s.verdict).toBe('ok');
+  });
+
+  it('carries the verdict for as long as the bubble is up, and no longer', () => {
+    const e = officeOf('main', 'alpha', 'beta');
+    e.apply({ op: 'confront', agentId: 'alpha', to: 'beta', text: 'REFUTED', verdict: 'err' });
+
+    const arrived = stateOf(tickUntil(e, 30_000, poseIs('alpha', 'stand')), 'alpha');
+    expect(arrived.say).toBe('REFUTED');
+    expect(arrived.verdict).toBe('err');
+
+    const spent = stateOf(tickUntil(e, 30_000, (st) => stateOf(st, 'alpha').say === undefined), 'alpha');
+    expect(spent.verdict).toBeUndefined();
+  });
+
+  it('leaves a delivery untinted', () => {
+    const e = officeOf('main', 'alpha');
+    e.apply({ op: 'deliver', agentId: 'alpha', to: 'main', text: 'found it' });
+
+    const arrived = stateOf(tickUntil(e, 30_000, poseIs('alpha', 'stand')), 'alpha');
+    expect(arrived.say).toBe('found it');
+    expect(arrived.verdict).toBeUndefined();
   });
 });
 
@@ -297,6 +358,25 @@ describe('Engine — determinism', () => {
 
   it('produces identical states for the same command and tick sequence', () => {
     expect(script(new Engine())).toEqual(script(new Engine()));
+  });
+
+  it('shrugs off a non-finite delta instead of being poisoned by it', () => {
+    // A dropped rAF frame or a bad clock read must not be able to end the simulation: NaN or
+    // Infinity through the clock would make every position NaN from then on, with no recovery.
+    const withGarbage = new Engine();
+    const clean = new Engine();
+    for (const e of [withGarbage, clean]) {
+      e.apply({ op: 'ensureActor', agentId: 'main' });
+      e.apply({ op: 'ensureActor', agentId: 'alpha' });
+      e.apply({ op: 'deliver', agentId: 'alpha', to: 'main', text: 'found it' });
+    }
+    withGarbage.tick(NaN);
+    withGarbage.tick(Number.POSITIVE_INFINITY);
+    withGarbage.tick(Number.NEGATIVE_INFINITY);
+
+    expect(withGarbage.tick(16)).toEqual(clean.tick(16));
+    expect(withGarbage.tick(4000)).toEqual(clean.tick(4000));
+    expect(stateOf(withGarbage.tick(0), 'alpha').x).not.toBeNaN();
   });
 
   it('lands exactly on an anchor whatever the tick granularity', () => {
