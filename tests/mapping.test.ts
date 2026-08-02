@@ -168,6 +168,76 @@ describe('mapEvent — agentText, verdicts (confront)', () => {
         },
       ]);
     });
+
+    // Real agent ids are hex-like, and verdict prose in this domain routinely carries commit
+    // SHAs, artifact ids, and other alphanumeric tokens — a bare substring check would let a
+    // roster id fire from inside a longer run of letters/digits it was never actually named in.
+    describe('word-boundary matching (not a bare substring test)', () => {
+      it('does not match a roster id embedded inside a longer alphanumeric token', () => {
+        const roster = new Set(['ok']);
+        expect(mapEvent(evText('reviewer', 'okay, REFUTED — see the log.'), roster)).toEqual([
+          {
+            op: 'confront',
+            agentId: 'reviewer',
+            to: 'main',
+            text: 'okay, REFUTED — see the log.',
+            verdict: 'err',
+          },
+        ]);
+      });
+
+      it('does not match a roster id embedded inside a longer hex-like token', () => {
+        const roster = new Set(['abc123']);
+        expect(mapEvent(evText('reviewer', 'REFUTED by xabc1234def, recheck.'), roster)).toEqual([
+          {
+            op: 'confront',
+            agentId: 'reviewer',
+            to: 'main',
+            text: 'REFUTED by xabc1234def, recheck.',
+            verdict: 'err',
+          },
+        ]);
+      });
+
+      it('matches a roster id flanked by a space and the start of the text', () => {
+        const roster = new Set(['abc123']);
+        expect(mapEvent(evText('reviewer', 'abc123 REFUTED the claim.'), roster)).toEqual([
+          {
+            op: 'confront',
+            agentId: 'reviewer',
+            to: 'abc123',
+            text: 'abc123 REFUTED the claim.',
+            verdict: 'err',
+          },
+        ]);
+      });
+
+      it('matches a roster id flanked by the end of the text', () => {
+        const roster = new Set(['abc123']);
+        expect(mapEvent(evText('reviewer', 'the claim was REFUTED by abc123'), roster)).toEqual([
+          {
+            op: 'confront',
+            agentId: 'reviewer',
+            to: 'abc123',
+            text: 'the claim was REFUTED by abc123',
+            verdict: 'err',
+          },
+        ]);
+      });
+
+      it('matches a roster id flanked by punctuation', () => {
+        const roster = new Set(['abc123']);
+        expect(mapEvent(evText('reviewer', 'REFUTED (abc123) — recheck.'), roster)).toEqual([
+          {
+            op: 'confront',
+            agentId: 'reviewer',
+            to: 'abc123',
+            text: 'REFUTED (abc123) — recheck.',
+            verdict: 'err',
+          },
+        ]);
+      });
+    });
   });
 });
 

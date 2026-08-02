@@ -44,17 +44,31 @@ function firstSentence(text: string): string {
   return cap(cut.trim(), SENTENCE_MAX);
 }
 
+/** Escapes regex metacharacters so a roster id can be dropped into a pattern literally. */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * True when `id` occurs in `text` as its own token, not embedded inside a longer run of
+ * letters/digits. Real agent ids are hex-like, and verdict prose in this domain routinely
+ * carries commit SHAs, artifact ids, and other alphanumeric tokens — a bare substring check
+ * would let id `'ok'` fire on "okay", or `'abc123'` fire on `'xabc1234def'`. A boundary is
+ * anything that is not `[A-Za-z0-9]` — punctuation, whitespace, or the start/end of the text.
+ */
+function isNamed(text: string, id: string): boolean {
+  if (!id) return false;
+  return new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(id)}(?![A-Za-z0-9])`).test(text);
+}
+
 /**
  * The roster agent named in `text`, if any — scanned in the roster's own (insertion) order so
  * the result is deterministic. `main` is never returned here: it is already the fallback, and
- * counting it as a match would let the literal substring "main" (present in ordinary words like
- * "domain" or "remains", and in phrases like "main branch") shadow a genuinely named agent
- * whenever main happens to be first in the roster — which it usually is, being the first agent
- * seen.
+ * counting it as a match would let the literal word "main" (present whole in ordinary phrases
+ * like "main branch") shadow a genuinely named agent whenever main happens to be first in the
+ * roster — which it usually is, being the first agent seen.
  */
 function namedInRoster(text: string, roster: ReadonlySet<string>): string | undefined {
   for (const id of roster) {
-    if (id && id !== 'main' && text.includes(id)) return id;
+    if (id !== 'main' && isNamed(text, id)) return id;
   }
   return undefined;
 }
