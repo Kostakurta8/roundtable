@@ -170,6 +170,20 @@ export type Ev =
       prompt: string;
       /** The `tool_use` id of the `Task` call, so the child's sidecar can be matched to it later. */
       toolUseId?: string;
+      /**
+       * Whether the caller launched this agent in the background.
+       *
+       * It decides what the parent's eventual `tool_result` actually means. For a foreground spawn
+       * the parent blocks until the child is finished, so the result *is* the end. For a background
+       * one it comes back the instant the agent is launched, and the child then works for minutes
+       * or tens of minutes afterwards — 246 spawns on this machine reported the child done while it
+       * was still writing, by as much as 995 seconds.
+       *
+       * Only 43% of real spawns record the flag at all (102 true, 43 false, 189 absent out of 334),
+       * so it is a fast path and never the only test: absent is treated as "cannot rely on the
+       * result", which is the safe direction.
+       */
+      background?: boolean;
       ts: number;
       seq: number;
     }

@@ -69,6 +69,12 @@ export type HubOptions = {
   /** How often the session roster is re-scanned and pushed to clients. 0 disables the push. */
   rosterMs?: number;
   /**
+   * How still a subagent's transcript must be before it is reported finished. Defaults to
+   * `AGENT_QUIET_MS`; tests shorten it so they can assert the behaviour in real time rather than
+   * by forging file timestamps, which cannot express "it wrote again *after* we said it was done".
+   */
+  quietMs?: number;
+  /**
    * How many read passes one drain round makes before yielding to the event loop. Lowering it
    * makes a catch-up read finer-grained, never incomplete: the round that runs out of passes
    * schedules its own continuation. Defaults to `MAX_DRAIN_PASSES`.
@@ -102,6 +108,20 @@ const SUBAGENT_RESCAN_MS = 500;
  * nothing — a stale entry from a crashed process would otherwise be reported as running forever.
  */
 const LIVE_WINDOW_MS = 90_000;
+/**
+ * How long a subagent's transcript must stay still before the hub believes it has finished.
+ *
+ * The parent's `tool_result` is not that evidence. For a background spawn it comes back the moment
+ * the agent is *launched*: 246 spawns on this machine reported the child done while it was still
+ * writing, by as much as 995 seconds. Acting on it put a working agent in the break corner with its
+ * desk given away, and — since the result arrives exactly once — nothing ever said it had really
+ * stopped, so the room filled up with agents who had finished hours ago and would never leave.
+ *
+ * Long enough to sit through a slow tool call or a long think, which are the gaps that would
+ * otherwise be mistaken for the end. Wrong guesses are survivable in both directions: a child that
+ * writes again after being reported done is simply reported done again once it stops.
+ */
+const AGENT_QUIET_MS = 45_000;
 /**
  * Passes a single `pump` will make before yielding. A first read of a long transcript can be tens
  * of megabytes and the tailer hands back one bounded batch per call, so the loop has to run — but
@@ -159,6 +179,15 @@ const originAllowed = (origin: string | undefined): boolean =>
 /** Windows paths compare case-insensitively; chokidar echoes whatever casing the FS reports. */
 const samePath = (a: string, b: string): boolean =>
   process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+
+/** When a file was last written, or `undefined` if it cannot be stat'd right now. */
+function mtimeOf(path: string): number | undefined {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return undefined; // gone, or racing a write
+  }
+}
 
 function isDir(path: string): boolean {
   try {
@@ -218,8 +247,28 @@ type Watch = {
    * a map entry per tool call for the life of the session.
    */
   spawnIds: Set<string>;
-  /** Spawn tool ids whose `tool_result` has already been seen, so `agentDone` fires once. */
+  /** Spawn tool ids whose `tool_result` has already been seen, so the result is joined once. */
   spawnDone: Set<string>;
+  /**
+   * Spawn tool id → whether the caller launched it in the background, where the transcript said.
+   *
+   * `false` is the only value that licenses reporting the child finished the moment its parent's
+   * result lands. Absent means the flag was not recorded, which is most spawns, and is treated the
+   * same as `true`: wait and see.
+   */
+  spawnBg: Map<string, boolean>;
+  /**
+   * agentId → the outcome its parent reported, kept rather than consumed.
+   *
+   * The parent's `tool_result` says what the child's work *was worth*; it does not say the child
+   * has stopped. Holding on to it lets the same outcome be reported again if the child turns out to
+   * still be going.
+   */
+  doneResult: Map<string, { ok: boolean; ts: number }>;
+  /** agentId → when its transcript was last seen to grow. */
+  lastWrite: Map<string, number>;
+  /** agentId → when `agentDone` was last emitted for it, so a repeat needs new work first. */
+  doneAt: Map<string, number>;
   /** Idle-eviction timer, armed when the last follower leaves. */
   evict: NodeJS.Timeout | null;
   /** Recent events, replayed verbatim to anyone who follows later. */
@@ -252,6 +301,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   const interval = opts.interval ?? DEFAULT_INTERVAL;
   const backlogLimit = opts.backlogLimit ?? DEFAULT_BACKLOG;
   const rosterMs = opts.rosterMs ?? DEFAULT_ROSTER_MS;
+  const quietMs = opts.quietMs ?? AGENT_QUIET_MS;
   const drainPasses = Math.max(1, opts.drainPasses ?? MAX_DRAIN_PASSES);
 
   const watches = new Map<string, Watch>();
@@ -368,22 +418,31 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   function derive(w: Watch, evs: Ev[]): Ev[] {
     const extra: Ev[] = [];
 
+    /**
+     * The parent's result has arrived for this child. Whether that means the child has *stopped*
+     * is a different question, and it is the one `sweepDone` answers.
+     */
     const finish = (toolUseId: string, child: string, ok: boolean, ts: number): void => {
       if (w.spawnDone.has(toolUseId)) return;
       w.spawnDone.add(toolUseId);
       w.spawnPending.delete(toolUseId);
-      extra.push({
-        kind: 'agentDone',
-        ref: { sessionId: w.sessionId, agentId: child },
-        ok,
-        ts,
-        seq: nextSeq(),
-      });
+      // Remembered, not consumed: the child can be told to finish more than once, because it can
+      // turn out not to have finished the first time.
+      w.doneResult.set(child, { ok, ts });
+      if (w.spawnBg.get(toolUseId) === false) {
+        // A foreground spawn blocks its parent until the child is finished, so the result really is
+        // the end and there is nothing to wait for.
+        w.doneAt.set(child, Date.now());
+        extra.push({ kind: 'agentDone', ref: { sessionId: w.sessionId, agentId: child }, ok, ts, seq: nextSeq() });
+      }
     };
 
     for (const ev of evs) {
       if (ev.kind === 'agentSpawn') {
-        if (ev.toolUseId) w.spawnIds.add(ev.toolUseId);
+        if (ev.toolUseId) {
+          w.spawnIds.add(ev.toolUseId);
+          if (ev.background !== undefined) w.spawnBg.set(ev.toolUseId, ev.background);
+        }
         continue;
       }
       if (ev.kind === 'agentSeen' && ev.parentToolUseId) {
@@ -571,6 +630,10 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         continue;
       }
 
+      // This agent's transcript just grew, which is the only real evidence that it is still going.
+      // `sweepDone` measures from here.
+      if (agentId !== 'main') w.lastWrite.set(agentId, Date.now());
+
       const evs: Ev[] = [];
       for (const line of lines) {
         try {
@@ -659,6 +722,42 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   }
 
   /**
+   * Reports the agents whose parent has returned a result *and* whose own transcript has stopped
+   * growing — which, unlike the result on its own, is evidence that they have finished.
+   *
+   * Re-armable on purpose. If a child writes again after being reported done it will be reported
+   * done a second time once it goes quiet again, because the alternative — reporting it once and
+   * never revisiting it — is what left the room full of agents that had finished hours earlier and
+   * would never leave. `doneAt` is what makes the repeat require new work rather than just time.
+   */
+  function sweepDone(w: Watch): void {
+    const now = Date.now();
+    const out: Ev[] = [];
+    for (const [file, entry] of w.agents) {
+      const agentId = entry.agentId;
+      const result = w.doneResult.get(agentId);
+      if (!result) continue;
+      // The file's own mtime, not when this process happened to read it. Reading is the wrong
+      // clock: pointing the observer at a session that finished last week would start every
+      // agent's quiet window at the moment of the catch-up sweep, and the whole room would stand
+      // about looking busy for the next forty-five seconds before admitting it was over.
+      const wrote = mtimeOf(file) ?? w.lastWrite.get(agentId) ?? 0;
+      const told = w.doneAt.get(agentId) ?? 0;
+      if (wrote <= told) continue; // nothing new since we last said so
+      if (now - wrote < quietMs) continue; // still going
+      w.doneAt.set(agentId, now);
+      out.push({
+        kind: 'agentDone',
+        ref: { sessionId: w.sessionId, agentId },
+        ok: result.ok,
+        ts: result.ts,
+        seq: nextSeq(),
+      });
+    }
+    if (out.length > 0) publish(w, out);
+  }
+
+  /**
    * A subagent can be spawned, run and finish while the parent transcript stays silent, so a
    * followed session polls for new subagent directories on its own.
    */
@@ -667,6 +766,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
     const timer = setInterval(() => {
       try {
         syncSubagents(w);
+        sweepDone(w);
       } catch (err) {
         report(err, `rescan:${w.sessionId}`);
       }
@@ -831,6 +931,10 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         spawnPending: new Map(),
         spawnIds: new Set(),
         spawnDone: new Set(),
+        spawnBg: new Map(),
+        doneResult: new Map(),
+        lastWrite: new Map(),
+        doneAt: new Map(),
         evict: null,
         backlog: [],
         dropped: 0,

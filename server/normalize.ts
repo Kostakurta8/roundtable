@@ -403,6 +403,9 @@ export class Normalizer {
               childAgentId: 'pending',
               prompt: input.prompt,
               toolUseId: b.id,
+              ...(typeof input.run_in_background === 'boolean'
+                ? { background: input.run_in_background }
+                : {}),
               ts,
             });
           }

@@ -430,6 +430,111 @@ describe('hub', () => {
     20_000,
   );
 
+  /**
+   * `agentDone` — never covered before, which is how it stayed wrong.
+   *
+   * The shipped fixtures cannot exercise it: `agent-abc123.meta.json` is a stub with no
+   * `toolUseId`, so the parent's `Task` call and the child's sidecar are never joined and the
+   * event is never derived. These build the join themselves.
+   */
+  describe('finishing', () => {
+    /** A root whose main transcript spawns one subagent and later records its result. */
+    function spawnRoot(opts: { background?: boolean } = {}): { root: string; childFile: string } {
+      const root = mkdtempSync(join(tmpdir(), 'rt-done-'));
+      const slugDir = join(root, 'projects', 'demo');
+      const subagentsDir = join(slugDir, 'fix-sess', 'subagents');
+      mkdirSync(subagentsDir, { recursive: true });
+
+      const input: Record<string, unknown> = { prompt: 'go and look', subagent_type: 'Explore' };
+      if (opts.background !== undefined) input.run_in_background = opts.background;
+      writeFileSync(
+        join(slugDir, 'fix-sess.jsonl'),
+        `${JSON.stringify({
+          type: 'assistant',
+          timestamp: '2026-08-03T10:00:00.000Z',
+          message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'tool_use', id: 'tuS', name: 'Task', input }] },
+        })}\n${JSON.stringify({
+          type: 'user',
+          timestamp: '2026-08-03T10:00:01.000Z',
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tuS' }] },
+        })}\n`,
+      );
+
+      const childFile = join(subagentsDir, 'agent-kid.jsonl');
+      writeFileSync(
+        childFile,
+        `${JSON.stringify({
+          type: 'assistant',
+          isSidechain: true,
+          agentId: 'kid',
+          timestamp: '2026-08-03T10:00:02.000Z',
+          message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'on it' }] },
+        })}\n`,
+      );
+      // The sidecar is what ties the child back to the `Task` call that made it.
+      writeFileSync(join(subagentsDir, 'agent-kid.meta.json'), JSON.stringify({ agentId: 'kid', toolUseId: 'tuS' }));
+      return { root, childFile };
+    }
+
+    const donesFor = (client: TestClient): Ev[] => client.events().filter((e) => e.kind === 'agentDone');
+
+    it('does not call a background agent finished while its transcript is still warm', async () => {
+      // The parent's `tool_result` comes back the instant a background agent is *launched*. Acting
+      // on it put a working agent in the break corner with its desk given away — 246 real spawns
+      // reported the child done while it was still writing, by as much as 995 seconds.
+      const { root } = spawnRoot({ background: true });
+      const client = await connect(await start(root, { quietMs: 30_000 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('agentText', (e) => e.text === 'on it'));
+      await delay(SETTLE_MS * 3);
+      expect(donesFor(client)).toEqual([]);
+    }, 20_000);
+
+    it('calls it finished once its transcript goes quiet', async () => {
+      const { root } = spawnRoot({ background: true });
+      const client = await connect(await start(root, { quietMs: 300 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      const done = await client.wait(evOf('agentDone'), 8000);
+      expect(done.ref.agentId).toBe('kid');
+      expect(done.ok).toBe(true);
+    }, 20_000);
+
+    it('trusts the result immediately for a foreground spawn, which really does block', async () => {
+      // No quiet window is waited out here at all: `quietMs` is set high enough that the only way
+      // this can pass is the foreground fast path.
+      const { root } = spawnRoot({ background: false });
+      const client = await connect(await start(root, { quietMs: 60_000 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      const done = await client.wait(evOf('agentDone'), 8000);
+      expect(done.ref.agentId).toBe('kid');
+    }, 20_000);
+
+    it('calls it finished again if it turns out not to have been', async () => {
+      // The event used to fire exactly once per spawn, so an agent reported done too early was
+      // never corrected: it came back to a desk on its next line and stayed there for the rest of
+      // the session, looking alive. This is the correction, and it is the whole reason the room
+      // does not fill up with agents that finished hours ago.
+      const { root, childFile } = spawnRoot({ background: true });
+      const client = await connect(await start(root, { quietMs: 300 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('agentDone'), 8000);
+      expect(donesFor(client)).toHaveLength(1);
+
+      // It was not finished after all.
+      appendFileSync(childFile, assistantLine(NEW_AGENT_TEXT, 'kid'));
+      await client.wait(evOf('agentText', (e) => e.text === NEW_AGENT_TEXT), 8000);
+      await client.wait(
+        (m): m is Ev => isEv(m) && m.kind === 'agentDone' && donesFor(client).length >= 2,
+        8000,
+      );
+      expect(donesFor(client)).toHaveLength(2);
+    }, 25_000);
+  });
+
   it(
     'still answers a follow for a session it is already streaming',
     async () => {
