@@ -97,4 +97,15 @@ export type FollowCmd = { cmd: 'follow'; sessionId: string };
 /** client → server: stop streaming, without dropping the socket (the picker is open, say). */
 export type UnfollowCmd = { cmd: 'unfollow' };
 
-export type ClientCmd = FollowCmd | UnfollowCmd;
+/**
+ * client → server: look for sessions that have started since you last checked, now.
+ *
+ * Not a repair for anything — the hub sweeps for new sessions on its own every few seconds, and
+ * attaches whatever is running without being asked. This is for the person watching: starting a
+ * second session in another window and then staring at a screen that has not caught up yet is a
+ * few seconds of not knowing whether the thing is broken. A button that answers immediately is
+ * worth more than the seconds it saves.
+ */
+export type RescanCmd = { cmd: 'rescan' };
+
+export type ClientCmd = FollowCmd | UnfollowCmd | RescanCmd;

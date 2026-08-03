@@ -428,6 +428,45 @@ describe('hub', () => {
   );
 
   it(
+    'answers a rescan immediately instead of making the viewer wait for the sweep',
+    async () => {
+      // The sweep would find it anyway; this is about the person who has just started a second
+      // session in another window and is looking at a screen that has not caught up yet.
+      const { root, slugDir } = makeRoot();
+      // A long roster interval, so anything that arrives can only have come from the rescan.
+      const client = await connect(await start(root, { rosterMs: 120_000 }));
+      await client.wait(isHello);
+
+      copyFileSync(join('fixtures', 'main-session.jsonl'), join(slugDir, 'late-sess.jsonl'));
+      register(root, 'late-sess');
+
+      client.send({ cmd: 'rescan' });
+      const seen = await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'late-sess'), 5000);
+      expect(seen.live).toBe(true);
+    },
+    20_000,
+  );
+
+  it(
+    'treats a repeated rescan as the no-op it is',
+    async () => {
+      const { root } = makeRoot();
+      register(root, 'fix-sess');
+      const client = await connect(await start(root, { rosterMs: 120_000 }));
+      await client.wait(isHello);
+      await client.wait(evOf('sessionSeen'));
+
+      const before = client.events().length;
+      for (let i = 0; i < 5; i++) client.send({ cmd: 'rescan' });
+      await delay(SETTLE_MS);
+      // Attaching a session already streaming returns immediately, so a held-down button costs a
+      // directory listing per press and republishes nothing.
+      expect(client.events().length).toBe(before);
+    },
+    20_000,
+  );
+
+  it(
     'ignores malformed, unknown and traversal-shaped client messages without dying',
     async () => {
       const { root, mainFile } = makeRoot();

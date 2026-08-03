@@ -14,11 +14,11 @@
  * rather than an observer. The socket is now opened once and lives as long as the app; `follow`
  * only tells the hub which session the picker chose, and nothing about switching resets anything.
  */
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { evSession, isEv, type Ev } from '../shared/events';
 // From `shared/`, never from `server/hub`: the hub pulls in node:fs, chokidar and ws, and an
 // `import type` is only one careless edit away from becoming a value import that bundles them.
-import type { FollowCmd, SessionSummary } from '../shared/protocol';
+import type { FollowCmd, RescanCmd, SessionSummary } from '../shared/protocol';
 import { initialState, reduce, type RtState } from './store';
 
 /** Loopback, always. The observer reads one machine's transcripts: its own. */
@@ -49,6 +49,14 @@ export type RtStream = {
   connected: boolean;
   /** The directory the hub is observing, so the UI can name it rather than assume it. */
   root: string;
+  /**
+   * Ask the hub to look for sessions that have started since it last checked.
+   *
+   * It already does this by itself every few seconds, so this changes nothing about what the app
+   * eventually shows — it only shortens the wait, and gives someone who has just started a second
+   * session something to press instead of wondering whether it is working.
+   */
+  rescan: () => void;
 };
 
 /**
@@ -324,5 +332,12 @@ export function useRtStream(pinned: string | null, sink?: EvSink): RtStream {
     s.send(JSON.stringify(follow));
   }, [pinned]);
 
-  return { states, sessions, dropped, replaying, notices, connected, root };
+  const rescan = useCallback(() => {
+    const s = sockRef.current;
+    if (s?.readyState !== WebSocket.OPEN) return; // nothing to ask; the reconnect will sweep anyway
+    const cmd: RescanCmd = { cmd: 'rescan' };
+    s.send(JSON.stringify(cmd));
+  }, []);
+
+  return { states, sessions, dropped, replaying, notices, connected, root, rescan };
 }

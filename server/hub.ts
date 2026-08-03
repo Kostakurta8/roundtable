@@ -1025,6 +1025,15 @@ export async function startServer(root: string, port: number, opts: HubOptions =
       const was = pinned.get(sock) ?? null;
       pinned.set(sock, null);
       if (was && !roster().some((s) => s.sessionId === was && s.live)) detach(sock, was);
+    } else if (msg.cmd === 'rescan') {
+      // The same sweep the roster timer runs, on demand. Nothing here is idempotence-sensitive:
+      // `attach` returns immediately for a session already streaming, so a viewer holding the
+      // button down costs a directory listing per press and nothing else.
+      syncLive(sock);
+      const fresh: RosterMsg = { kind: 'roster', sessions: roster() };
+      const json = JSON.stringify(fresh);
+      lastRosterJson = json; // the timer must not re-send what this just sent
+      sendJson(sock, json);
     }
     // every other command is ignored on purpose
   }

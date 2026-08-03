@@ -76,6 +76,10 @@
 
   /* --- layout --- */
   --dock-w: 400px;
+  /* The dock's *row*, which is what it occupies once the shell stacks at ≤900px. A token for the
+     same reason as `--dock-w`: hiding the panel has to collapse whichever axis it is laid out on,
+     and a rule that knows which one is a rule that goes stale when the layout changes. */
+  --dock-row: minmax(0, 1fr);
   --top-h: 46px;
   --time-h: 62px;
   --rail-w: 244px;
@@ -165,11 +169,22 @@ body {
   padding: 8px;
   background: var(--bg);
 }
+/*
+ * Collapsing a region sets its size token to zero rather than restating the whole track list.
+ *
+ * Restating it is a trap, and it had already sprung: `.app.dock-hidden` and `.app.time-hidden`
+ * each wrote out a three-track grid, while the `max-width: 900px` layout stacks into *four*. At a
+ * viewport that is both narrow and short, the short-window rule's three tracks won on source order
+ * and the `dock` area landed on the zero track — chat, agents and tools collapsed to two pixels
+ * while the toggle still reported the panel as open. A token cannot fall out of step with a track
+ * list it is not a copy of.
+ */
 .app.dock-hidden {
-  grid-template-columns: minmax(0, 1fr) 0;
+  --dock-w: 0px;
+  --dock-row: 0px;
 }
 .app.time-hidden {
-  grid-template-rows: var(--top-h) minmax(0, 1fr) 0;
+  --time-h: 0px;
 }
 .app.dock-hidden .dock,
 .app.time-hidden .timeline {
@@ -1579,16 +1594,15 @@ kbd {
   }
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--top-h) minmax(0, 1fr) minmax(0, 1fr) var(--time-h);
+    grid-template-rows: var(--top-h) minmax(0, 1fr) var(--dock-row) var(--time-h);
     grid-template-areas:
       'top'
       'stage'
       'dock'
       'time';
   }
-  .app.dock-hidden {
-    grid-template-columns: minmax(0, 1fr);
-  }
+  /* No `.app.dock-hidden` override here any more: this layout is already one column, and hiding
+     the panel now collapses `--dock-row`, which is the axis it actually occupies once stacked. */
   .rail {
     display: none; /* the Agents tab carries the same roster, with more room for it */
   }
@@ -1607,10 +1621,14 @@ kbd {
     display: none;
   }
 }
+/*
+ * A short window drops the activity strip. Only its token, so this composes with whichever layout
+ * is in force rather than replacing it — at 800x600 both this and the stacked layout above apply,
+ * and the old three-track restatement here silently took the dock's row away from it.
+ */
 @media (max-height: 620px) {
-  .app,
-  .app.time-hidden {
-    grid-template-rows: var(--top-h) minmax(0, 1fr) 0;
+  .app {
+    --time-h: 0px;
   }
   .timeline {
     display: none;

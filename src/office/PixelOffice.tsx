@@ -835,9 +835,14 @@ export const PixelOffice = memo(function PixelOffice({
       if (b.destY > 0) {
         const step = Math.max(1, Math.round(b.scale)) * 2;
         const snap = (v: number): number => Math.round(v / step) * step;
-        ctx.fillStyle = PAL.shd;
-        ctx.fillRect(0, 0, canvas.width, snap(b.destY / 2));
+        // Darkest at the top, and it has to be written in that order: `PAL.shd` (#0d1017) is
+        // darker than `PAL.out` (#141821), so painting `shd` over the top half and `out` over the
+        // top quarter put the darkest band in the *middle* of the ceiling and lightened again
+        // above it. The bands read as a void rather than as headroom for exactly that reason —
+        // nothing in a room gets darker halfway up and brighter again at the top.
         ctx.fillStyle = PAL.out;
+        ctx.fillRect(0, 0, canvas.width, snap(b.destY / 2));
+        ctx.fillStyle = PAL.shd;
         ctx.fillRect(0, 0, canvas.width, snap(b.destY / 4));
       }
       ctx.drawImage(buffer.current!, b.srcX, b.srcY, b.viewW, b.viewH, b.destX, b.destY, b.destW, b.destH);

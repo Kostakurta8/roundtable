@@ -140,7 +140,7 @@ export default function App() {
   const now = useNow(5000);
   const office = useOffice();
   const { feed } = office;
-  const { states, sessions, dropped, replaying, notices, connected } = useRtStream(sessionId, feed);
+  const { states, sessions, dropped, replaying, notices, connected, rescan } = useRtStream(sessionId, feed);
 
   /**
    * The session on screen. One selection drives everything: the picker sets it, a tab sets it, and
@@ -321,6 +321,7 @@ export default function App() {
         onOpenPalette={() => setPaletteOpen(true)}
         seekTs={seekTs}
         onResumeLive={resumeLive}
+        onRescan={rescan}
       />
 
       <main className="stage" ref={stageRef}>

@@ -40,6 +40,8 @@ export type TopBarProps = {
   /** The instant the room is replaying, or `null` when it is showing now. */
   seekTs: number | null;
   onResumeLive: () => void;
+  /** Ask the hub to look for newly started sessions right now, instead of on its own schedule. */
+  onRescan: () => void;
 };
 
 /** One row of the picker. Live sessions read differently from the historical ones below them. */
@@ -78,6 +80,20 @@ export function TopBar(props: TopBarProps) {
 
   const current = sessions.find((s) => s.sessionId === sessionId);
   const liveCount = sessions.filter((s) => s.live).length;
+
+  /**
+   * A brief spin, so pressing it is visibly a thing that happened.
+   *
+   * The answer usually arrives in a millisecond — the hub reads one directory — and a control that
+   * completes faster than the eye can follow reads as a control that is broken. The delay is in
+   * the *acknowledgement*, never in the work: the rescan is sent immediately.
+   */
+  const [rescanning, setRescanning] = useState(false);
+  const rescan = useCallback(() => {
+    props.onRescan();
+    setRescanning(true);
+    setTimeout(() => setRescanning(false), 450);
+  }, [props]);
 
   const pick = (id: string): void => {
     onPick(id);
@@ -187,6 +203,18 @@ export function TopBar(props: TopBarProps) {
 
       <span className="sep" />
 
+      {/* The hub finds new sessions by itself every few seconds; this only asks it to look now.
+          It says so in the tooltip rather than pretending to be a repair, and it reports back —
+          a button that does something invisible is indistinguishable from one that does nothing. */}
+      <button
+        type="button"
+        className={rescanning ? 'btn icon on' : 'btn icon'}
+        onClick={rescan}
+        title="look for newly started sessions now (they are picked up automatically anyway)"
+        aria-label="look for newly started sessions now"
+      >
+        {rescanning ? '⟳' : '⟲'}
+      </button>
       <button type="button" className="btn icon" onClick={props.onOpenPalette} title="commands (Ctrl+K)">
         ⌘K
       </button>
