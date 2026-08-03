@@ -15,6 +15,30 @@ npm start
 That is the whole thing. It opens `http://localhost:5173` and starts showing whatever session ran
 most recently. If you have a session running right now, you are watching it live.
 
+### The desktop icon
+
+```
+npm run desktop
+```
+
+Puts a **Claude Agents** shortcut on the Desktop. Clicking it starts the observer if it is not
+already up, opens the room in your browser, brings Claude Code up to date, and hands the window over
+to a Claude session — so one click gets you both halves of what you were going to open anyway.
+
+Clicking it twice is safe: the servers are only started when nothing is listening on their ports, so
+a second click just opens another tab and another session. The servers get their own minimized
+window called *Roundtable servers*, which is where to look if something does not come up and what to
+close when you are finished.
+
+The session starts in your home directory, because that is where sessions normally run and so it is
+the one the observer opens on. `$StartIn` at the top of `desktop\claude-agents.ps1` changes that.
+`desktop\claude-agents.ps1 -SkipClaude` does everything except open the session, which is how to
+check the shortcut without spending one.
+
+The icon is drawn by `scripts/desktopIcon.mjs` rather than checked in as an opaque binary — edit the
+geometry there and re-run `npm run desktop`. If you move or rename the project, re-run it too: the
+shortcut points into the checkout.
+
 ---
 
 ## What you are looking at

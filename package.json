@@ -9,7 +9,8 @@
     "e2e": "playwright test",
     "room": "tsx scripts/room.ts",
     "sheet": "tsx scripts/sheet.ts",
-    "room:bless": "tsx scripts/bless.ts"
+    "room:bless": "tsx scripts/bless.ts",
+    "desktop": "node scripts/desktopIcon.mjs && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installShortcut.ps1"
   },
   "dependencies": {
     "chokidar": "^5.0.0",
