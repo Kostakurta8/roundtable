@@ -1,12 +1,12 @@
 import { once } from 'node:events';
-import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { evSession, isEv, type Ev } from '../shared/events';
 import { MAX_BATCH_BYTES } from '../server/tail';
-import type { ResetMsg, TailNoticeMsg } from '../shared/protocol';
+import type { ReadyMsg, ResetMsg, TailNoticeMsg } from '../shared/protocol';
 import { startServer, type HubOptions, type StopServer } from '../server/hub';
 
 /** Polling makes the watcher deterministic on Windows and keeps the tests fast. */
@@ -75,6 +75,9 @@ const isTruncated = (m: unknown): m is Truncated =>
   typeof m === 'object' &&
   (m as { kind?: unknown }).kind === 'backlogTruncated' &&
   typeof (m as { dropped?: unknown }).dropped === 'number';
+
+const isReady = (m: unknown): m is ReadyMsg =>
+  !!m && typeof m === 'object' && (m as { kind?: unknown }).kind === 'ready';
 
 const isReset = (m: unknown): m is ResetMsg =>
   !!m && typeof m === 'object' && (m as { kind?: unknown }).kind === 'reset';
@@ -425,6 +428,66 @@ describe('hub', () => {
       expect(firstOtherEv).toBeGreaterThan(resetAt);
     },
     20_000,
+  );
+
+  it(
+    'still answers a follow for a session it is already streaming',
+    async () => {
+      // The normal path once two sessions are running: the live sweep has already attached them
+      // both, so a tab click asks for something the hub is already sending. Answering with silence
+      // left the client's "loading" flag raised for the rest of the connection — the top bar read
+      // LOADING for ever while events arrived perfectly normally behind it.
+      const { root } = makeRoot();
+      register(root, 'fix-sess');
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+      await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'fix-sess')); // auto-attached
+      const before = client.seen.filter(isReady).length;
+
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait((m): m is ReadyMsg => isReady(m) && client.seen.filter(isReady).length > before, 5000);
+      const last = client.seen.filter(isReady).at(-1);
+      expect(last).toMatchObject({ sessionId: 'fix-sess', replayed: 0 }); // nothing replayed, but an answer
+    },
+    20_000,
+  );
+
+  it(
+    'releases a session that has stopped running, so the cap counts what is live',
+    async () => {
+      // `syncLive` only ever added, so the cap became a count of every session the observer had
+      // *ever* seen: after STREAM_CAP of them a newly started session never appeared again, while
+      // the finished ones each kept a watcher, a rescan interval and a full backlog resident.
+      const { root, slugDir } = makeRoot();
+      copyFileSync(join('fixtures', 'main-session.jsonl'), join(slugDir, 'other-sess.jsonl'));
+      register(root, 'other-sess');
+      const client = await connect(await start(root, { rosterMs: 300 }));
+      await client.wait(isHello);
+      await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'other-sess'));
+
+      // It stops running: the registry entry goes stale.
+      register(root, 'other-sess', { updatedAt: Date.now() - 10 * 60_000 });
+      // Make its transcript's mtime old too — liveness is the later of the two.
+      const old = new Date(Date.now() - 10 * 60_000);
+      utimesSync(join(slugDir, 'other-sess.jsonl'), old, old);
+
+      const resetsFor = (): number =>
+        client.seen.filter((m) => isReset(m) && (m as ResetMsg).sessionId === 'other-sess').length;
+      const before = resetsFor(); // one, from the sweep that attached it while it was running
+
+      client.send({ cmd: 'rescan' });
+      await delay(SETTLE_MS);
+
+      // Asking for it again now produces a *fresh* replay, and a replay is preceded by a `reset`.
+      // That only happens on a genuine attach: a session still being streamed answers a `follow`
+      // with a bare `ready` and no reset at all. So a second reset is the proof it was released.
+      // (Appending to its transcript would not prove anything — it would refresh the file's mtime
+      //  and the session would simply be live again.)
+      client.send({ cmd: 'follow', sessionId: 'other-sess' });
+      await client.wait((m): m is ResetMsg => isReset(m) && resetsFor() > before, 5000);
+      expect(resetsFor()).toBe(before + 1);
+    },
+    25_000,
   );
 
   it(

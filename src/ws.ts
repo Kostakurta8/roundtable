@@ -274,7 +274,6 @@ export function useRtStream(pinned: string | null, sink?: EvSink): RtStream {
         pendingDropped = 0;
         const id = pinRef.current;
         if (!id) return; // connected for the roster and whatever is running; nothing pinned yet
-        setReplaying({ [id]: true });
         const follow: FollowCmd = { cmd: 'follow', sessionId: id }; // typed, so a typo fails the build
         s.send(JSON.stringify(follow));
       };
@@ -327,7 +326,11 @@ export function useRtStream(pinned: string | null, sink?: EvSink): RtStream {
   useEffect(() => {
     const s = sockRef.current;
     if (!pinned || !s || s.readyState !== WebSocket.OPEN) return;
-    setReplaying((prev) => (prev[pinned] ? prev : { ...prev, [pinned]: true }));
+    // Deliberately not raising the "loading" flag here. Whether a replay is coming is the hub's
+    // answer to give, and it gives it: a `reset` frame precedes every replay and raises the flag,
+    // and a `ready` lowers it. Raising it optimistically meant a `follow` the hub answered with a
+    // bare `ready` — the normal path for a session the live sweep had already attached — left the
+    // top bar reading LOADING for the rest of the connection.
     const follow: FollowCmd = { cmd: 'follow', sessionId: pinned };
     s.send(JSON.stringify(follow));
   }, [pinned]);

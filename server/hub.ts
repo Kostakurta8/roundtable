@@ -461,7 +461,11 @@ export async function startServer(root: string, port: number, opts: HubOptions =
     w.spawnIds.clear();
     w.spawnDone.clear();
     // The re-read encounters the same oversized lines and the same catch-up, and will count them
-    // again. Zeroed silently: the `reset` frame already tells the client to forget the old count.
+    // again. The counters go back to zero — but *not* silently, which was the mistake: the client's
+    // reset handler drops the session's events, not the notice it is showing, so zeroing the
+    // high-water marks here meant the next `syncNotice` compared 0 against 0, found nothing had
+    // changed, and never sent the all-clear. A rewind that happened while the tail was behind left
+    // "still catching up" on screen for ever, over a hub that had long since caught up.
     w.skipped = 0;
     w.behind.clear();
     w.noticeSkipped = 0;
@@ -469,6 +473,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
 
     const msg: ResetMsg = { kind: 'reset', sessionId: w.sessionId, reason: 'rewound' };
     toStreamers(w.sessionId, JSON.stringify(msg));
+    toStreamers(w.sessionId, JSON.stringify(noticeFrame(w))); // the retraction, said out loud
 
     if (w.restart) clearImmediate(w.restart);
     w.restart = setImmediate(() => {
@@ -943,7 +948,17 @@ export async function startServer(root: string, port: number, opts: HubOptions =
    */
   function attach(sock: WebSocket, sessionId: string): void {
     const ids = streamed.get(sock);
-    if (!ids || ids.has(sessionId)) return; // already streaming it; never double-replay
+    if (!ids) return;
+    if (ids.has(sessionId)) {
+      // Already streaming it, so there is no replay to send — but the client asked, and silence is
+      // not an answer it can act on. It raises its "loading" flag on every `follow` and lowers it
+      // only on `ready`, so a tab click for a session the live sweep had already attached — which
+      // is the *normal* path the moment two sessions are running — left the top bar reading LOADING
+      // for the rest of the connection while events arrived perfectly normally behind it.
+      const ready: ReadyMsg = { kind: 'ready', sessionId, replayed: 0 };
+      sendJson(sock, JSON.stringify(ready));
+      return;
+    }
     const entry = findSession(sessionId);
     if (!entry) return; // unknown id: ignored, so no client string ever becomes a path segment
 
@@ -984,17 +999,32 @@ export async function startServer(root: string, port: number, opts: HubOptions =
    * running is the only source of that answer, so the hub tails it and the client decides what is
    * worth a tab.
    *
-   * Only `live` sessions, and never a detach: a session that goes quiet keeps streaming to the
-   * sockets that already have it, so switching to its tab still shows the whole session rather
-   * than the moment it stopped. `STREAM_CAP` is the backstop against an observer left open across
-   * a day of starting and stopping sessions.
+   * Only `live` sessions, and a session that stops running is released — except the pinned one,
+   * which is the session actually on screen (clicking a tab pins it) and the whole reason the
+   * picker exists. Holding on to the rest was the first design and it was wrong: the sweep only
+   * ever added, so `STREAM_CAP` became a count of every session the observer had *ever* seen, and
+   * after twelve of them a newly started session never appeared again — while twelve finished ones
+   * each kept a watcher, a half-second rescan interval and a 4000-event backlog resident.
    */
   function syncLive(sock?: WebSocket): void {
-    const live = roster().filter((s) => s.live);
+    const all = roster();
+    const live = all.filter((s) => s.live);
+    const liveIds = new Set(live.map((s) => s.sessionId));
     const socks = sock ? [sock] : [...streamed.keys()];
     for (const s of socks) {
       const ids = streamed.get(s);
       if (!ids) continue;
+      // Release first, or the cap becomes a count of every session ever seen rather than of the
+      // ones running now. `syncLive` used to only ever add, so leaving the observer open across a
+      // day of work filled all twelve slots with sessions that had ended — and the thirteenth
+      // session never appeared in the tab strip again, ever. Each of those held a chokidar watcher,
+      // a half-second rescan interval and a backlog of up to 4000 events, all unreachable.
+      //
+      // The pin is exempt: the picker exists precisely to watch a session that is not running.
+      const keep = pinned.get(s) ?? null;
+      for (const id of [...ids]) {
+        if (!liveIds.has(id) && id !== keep) detach(s, id);
+      }
       for (const entry of live) {
         if (ids.size >= STREAM_CAP && !ids.has(entry.sessionId)) continue;
         attach(s, entry.sessionId);
@@ -1016,6 +1046,10 @@ export async function startServer(root: string, port: number, opts: HubOptions =
       // attach on its own, so it is remembered separately and released only when it changes.
       const was = pinned.get(sock) ?? null;
       if (was === msg.sessionId) return;
+      // Checked before anything is given up. `attach` refuses an unknown id, so without this a
+      // `follow` naming a transcript that has been deleted or rotated away would still detach the
+      // session the viewer was watching and leave the pin naming nothing at all.
+      if (!findSession(msg.sessionId)) return;
       pinned.set(sock, msg.sessionId);
       attach(sock, msg.sessionId);
       // The session it replaces keeps streaming if it is running; if it is not, nothing else is
@@ -1031,9 +1065,11 @@ export async function startServer(root: string, port: number, opts: HubOptions =
       // button down costs a directory listing per press and nothing else.
       syncLive(sock);
       const fresh: RosterMsg = { kind: 'roster', sessions: roster() };
-      const json = JSON.stringify(fresh);
-      lastRosterJson = json; // the timer must not re-send what this just sent
-      sendJson(sock, json);
+      // Sent to this socket only, and `lastRosterJson` is deliberately *not* touched: it is the
+      // module-wide record of what every socket was last told, and setting it from a one-socket
+      // send made one viewer pressing Rescan suppress the next broadcast to everybody else, who
+      // would then sit on a stale picker until the roster happened to change again.
+      sendJson(sock, JSON.stringify(fresh));
     }
     // every other command is ignored on purpose
   }

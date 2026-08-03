@@ -352,6 +352,49 @@ describe('Normalizer tool targets', () => {
     );
   });
 
+  /**
+   * The shapes a credential actually appears in.
+   *
+   * The first version of the redactor opened with `\b`, which fails after an underscore — so
+   * `DB_PASSWORD=`, `MYSQL_PWD=` and `ANTHROPIC_API_KEY=` were all missed, which is to say the
+   * env-var form, which is the form these keys almost always take. Scanning 400 real transcripts
+   * on this machine through the real Normalizer found 45 occurrences across 23 files that the
+   * regex written specifically to catch them let straight through.
+   */
+  it.each([
+    ['export DB_PASSWORD=hunter2ABC && ./deploy.sh', 'hunter2ABC'],
+    ['MYSQL_PWD=s3cretPass mysql -u root', 's3cretPass'],
+    ['export ANTHROPIC_API_KEY=zzzTOPSECRETzzz', 'zzzTOPSECRETzzz'],
+    ['export MY_CLIENT_SECRET="a-b-c-d"', 'a-b-c-d'],
+    ['curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abcdefgh" https://x', 'eyJhbGciOiJIUzI1NiJ9'],
+    ['mysql -uroot -pR00tPassword localdb', 'R00tPassword'],
+    ['npm config set _authToken=npm_aaaaaaaaaaaaaaaaaaaaaaaa', 'npm_aaaaaaaaaaaaaaaaaaaaaaaa'],
+    ['export KEY=sk-proj-aaaaaaaaaaaaaaaaaaaaaaaa', 'sk-proj-aaaaaaaaaaaaaaaaaaaaaaaa'],
+  ])('never puts %j on the wire', (command, secret) => {
+    const target = targetFor('Bash', { command });
+    expect(target).toBeDefined();
+    expect(target).not.toContain(secret);
+    expect(target).toContain('***');
+  });
+
+  it('redacts without eating the character in front of the key', () => {
+    // The pattern has to consume the character before the key to prove it is not part of a longer
+    // word, so it has to put it back — otherwise the line it is protecting comes out corrupted.
+    expect(targetFor('Bash', { command: 'export DB_PASSWORD=hunter2 && ls' })).toBe(
+      'export DB_PASSWORD=*** && ls',
+    );
+  });
+
+  it('leaves an ordinary command alone', () => {
+    // The redactor runs on every target, so a false positive costs every reader of the tools panel.
+    expect(targetFor('Bash', { command: 'git commit -m "fix the password reset flow"' })).toBe(
+      'git commit -m "fix the password reset flow"',
+    );
+    expect(targetFor('Bash', { command: 'npm test -- --reporter=verbose' })).toBe(
+      'npm test -- --reporter=verbose',
+    );
+  });
+
   it('still reports an Agent spawn while naming it', () => {
     const evs = new Normalizer('s', 'main').feed(
       toolUse('Agent', { description: 'Map the office layout', subagent_type: 'Explore', prompt: 'go and look' }),
@@ -453,7 +496,19 @@ describe('Normalizer tool errors', () => {
   });
 
   it('redacts a token that needs no key beside it to be recognizable', () => {
+    // Two rules can both claim this line — the `Authorization:` header shape and the `sk-ant-`
+    // prefix — and the header one runs first, so the whole credential goes rather than its tail.
+    // The assertion is therefore on what must be true (the secret is not on the wire, and the
+    // reader can see something was removed) rather than on which rule got there first.
     const err = resultOf({ is_error: true, content: 'HTTP 401 for Authorization: Bearer sk-ant-api03-AAAABBBBCCCCDDDD' }).error;
+    expect(err).not.toContain('AAAABBBBCCCCDDDD');
+    expect(err).not.toContain('sk-ant-api03');
+    expect(err).toContain('***');
+    expect(err).toContain('HTTP 401'); // everything that is not the secret still reads
+  });
+
+  it('redacts a bare token with no header in front of it', () => {
+    const err = resultOf({ is_error: true, content: 'bad key sk-ant-api03-AAAABBBBCCCCDDDD rejected' }).error;
     expect(err).not.toContain('AAAABBBBCCCCDDDD');
     expect(err).toContain('sk-ant-***');
   });

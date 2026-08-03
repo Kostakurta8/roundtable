@@ -612,14 +612,40 @@ export function reduce(state: RtState, ev: Ev): RtState {
       // The child's id is only known once its sidecar lands, so remember which `Task` call this
       // was; `agentSeen` carries the same id back and the two halves are joined then.
       const spawns = ev.toolUseId ? { ...s.spawns, [ev.toolUseId]: parent } : s.spawns;
+      // The join has to work from both directions. A child's sidecar is read by its own timer,
+      // independent of the main transcript's pump, so `agentSeen` genuinely can be folded before
+      // the spawn line that explains it — and the `agentSeen` case can only look the parent up in
+      // a `spawns` map that does not have it yet. Handled only there, the edge was lost for good:
+      // the child rendered as a root of the tree rather than under its parent, and the Inspector's
+      // PARENT row was simply absent.
+      const orphan = ev.toolUseId
+        ? s.order.find((aid) => s.agents[aid]?.parentToolUseId === ev.toolUseId && !s.agents[aid]?.parentId)
+        : undefined;
+      const joined = orphan ? withAgent(s, orphan, { parentId: parent }) : s;
       const known = ev.childAgentId && ev.childAgentId !== 'pending' ? ev.childAgentId : undefined;
       const who = known ?? 'a subagent';
-      return addMsg({ ...s, spawns }, { agentId: SYSTEM, text: `spawned ${who} · ${oneLine(ev.prompt)}`, ts: ev.ts });
+      return addMsg(
+        { ...joined, spawns },
+        { agentId: SYSTEM, text: `spawned ${who} · ${oneLine(ev.prompt)}`, ts: ev.ts },
+      );
     }
 
     case 'agentDone': {
       const id = ev.ref.agentId;
-      const s = touch(s0, id, ev.ts, { phase: 'done', status: ev.ok ? 'done' : 'failed', activeTools: 0 });
+      const s1 = touch(s0, id, ev.ts, { phase: 'done', status: ev.ok ? 'done' : 'failed', activeTools: 0 });
+      // Its open calls are never going to be answered — the agent that would have written those
+      // results has stopped. Zeroing `activeTools` without settling them left the tools panel
+      // counting a finished agent's calls as RUNNING and its chips spinning for the rest of the
+      // session: the app waiting for something that will never arrive, with nothing on screen
+      // saying so. They are closed as unsuccessful, because from here that is exactly what they
+      // are — with the reason spelled out rather than a cause invented for them.
+      const s = Object.entries(s1.pending.open)
+        .filter(([, t]) => t.agentId === id)
+        .reduce(
+          (acc, [toolUseId]) =>
+            resolveTool(acc, toolUseId, false, ev.ts, 'the agent finished before this call reported back'),
+          s1,
+        );
       const a = s.agents[id];
       return addMsg(s, {
         agentId: SYSTEM,

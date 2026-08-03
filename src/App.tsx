@@ -344,7 +344,9 @@ export default function App() {
                   title={s.cwd ?? s.slug}
                   onClick={() => setSessionId(s.sessionId)}
                 >
-                  <span className="dot live" />
+                  {/* The session being watched keeps its tab even after it goes quiet, so the tab
+                      is not always a running one and must not always claim to be. */}
+                  <span className={s.live ? 'dot live' : 'dot'} />
                   <b>{s.name ?? s.sessionId.slice(0, 8)}</b>
                   {/* The count is the reason the tab is here, so it is the thing on the tab. */}
                   <span className="n" title={`${busy} agent${busy === 1 ? '' : 's'} working`}>
@@ -412,6 +414,11 @@ export default function App() {
               <Nothing connected={connected} sessions={sessions.length} />
             ) : (
               <FeedPanel
+                // Remounted per session. The search term, the lane chips and the render window are
+                // the panel's own state, and carrying them across a switch meant a filter typed for
+                // one session silently hid another: the new session's feed rendered completely
+                // empty with a stale search term still sitting in the box.
+                key={sessionId ?? ''}
                 state={state}
                 title={title}
                 live={connected}
@@ -424,7 +431,8 @@ export default function App() {
               />
             ))}
           {tab === 'agents' && <AgentsTab rows={rows} selected={selected} now={now} onSelect={select} />}
-          {tab === 'tools' && <ToolsTab state={state} filterAgent={selected} />}
+          {/* Same reason as the feed: its search text and outcome filters are its own state. */}
+          {tab === 'tools' && <ToolsTab key={sessionId ?? ''} state={state} filterAgent={selected} />}
         </div>
 
         <div className="dock-foot">

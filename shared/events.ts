@@ -74,6 +74,21 @@ export const subUse = (a: TokenUse, b: TokenUse): TokenUse => ({
   cacheWrite: a.cacheWrite - b.cacheWrite,
 });
 
+/**
+ * The larger of each field.
+ *
+ * A response's usage is meant to only grow as its lines are written, and almost always does — but
+ * one response in 400 sampled transcripts reported its cache figures *down* on a later line. Since
+ * what crosses the wire is a difference and the store adds differences, that would publish a
+ * negative delta and the session's totals would visibly fall mid-run.
+ */
+export const maxUse = (a: TokenUse, b: TokenUse): TokenUse => ({
+  in: Math.max(a.in, b.in),
+  out: Math.max(a.out, b.out),
+  cacheRead: Math.max(a.cacheRead, b.cacheRead),
+  cacheWrite: Math.max(a.cacheWrite, b.cacheWrite),
+});
+
 /** True when every field is zero — a delta worth publishing has at least one that is not. */
 export const isZeroUse = (u: TokenUse): boolean =>
   u.in === 0 && u.out === 0 && u.cacheRead === 0 && u.cacheWrite === 0;

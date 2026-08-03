@@ -223,6 +223,18 @@ body {
 
 .topbar {
   grid-area: top;
+  /*
+   * Positioned, and above the stage.
+   *
+   * `.panel` gives the bar a `backdrop-filter`, which makes it a stacking context — so the session
+   * picker's `z-index: 60` was confined *inside* the bar and meant nothing against the rest of the
+   * shell. `.stage` is `position: relative`, which paints it after every statically positioned
+   * sibling, so the dropdown opened underneath the opaque room canvas: it was there, it had the
+   * right size, `aria-expanded` said open, and not one row could be clicked. The picker is how the
+   * app expects you to choose a session, and the empty state tells you to use it.
+   */
+  position: relative;
+  z-index: 70;
   display: flex;
   align-items: center;
   gap: 10px;

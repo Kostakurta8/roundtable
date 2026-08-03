@@ -537,6 +537,60 @@ describe('workingAgents', () => {
   });
 });
 
+describe('reduce — the spawn tree joins from either side', () => {
+  const spawn = (parent: string, toolUseId: string, ts = 1000): Ev => ({
+    kind: 'agentSpawn', ref: ref(parent), childAgentId: 'pending', prompt: 'go and look', toolUseId, ts, seq: next(),
+  });
+  const seenWithParent = (agentId: string, parentToolUseId: string, ts = 1000): Ev => ({
+    kind: 'agentSeen', ref: ref(agentId), parentToolUseId, ts, seq: next(),
+  });
+
+  it('links the child when the spawn line is folded first', () => {
+    const st = fold([spawn('main', 'tu9'), seenWithParent('kid', 'tu9')]);
+    expect(st.agents['kid'].parentId).toBe('main');
+  });
+
+  it('links the child when the sidecar is folded first', () => {
+    // Not a contrived order: the hub reads sidecars on their own 500ms timer, independent of the
+    // main transcript's pump, so the child can genuinely introduce itself before the `Task` call
+    // that made it. Handled on one side only, the edge was lost for good — the subagent rendered
+    // as a root of the tree instead of under its parent.
+    const st = fold([seenWithParent('kid', 'tu9'), spawn('main', 'tu9')]);
+    expect(st.agents['kid'].parentId).toBe('main');
+  });
+
+  it('does not hand a child to the wrong parent', () => {
+    const st = fold([seenWithParent('kid', 'tu9'), spawn('other', 'tuX'), spawn('main', 'tu9')]);
+    expect(st.agents['kid'].parentId).toBe('main');
+  });
+});
+
+describe('reduce — a finished agent stops waiting on its tools', () => {
+  it('settles calls that will never report back, and says why', () => {
+    const st = fold([
+      text('abc', 'starting'),
+      toolStart('abc', 'Bash', 'npm test'),
+      { kind: 'agentDone', ref: ref('abc'), ok: true, ts: 2000, seq: next() },
+    ]);
+    // Zeroing `activeTools` alone left the tools panel counting this as RUNNING and its chip
+    // spinning for the rest of the session — the app waiting on something that cannot arrive.
+    const call = st.tools.find((t) => t.tool === 'Bash');
+    expect(call?.ok).toBe(false);
+    expect(call?.error).toContain('finished before');
+    expect(Object.keys(st.pending.open)).toHaveLength(0);
+    expect(st.agents['abc'].activeTools).toBe(0);
+  });
+
+  it('leaves the other agents\' calls alone', () => {
+    const st = fold([
+      text('abc', 'a'), toolStart('abc', 'Bash', 'x'),
+      text('def', 'b'), toolStart('def', 'Read', 'y'),
+      { kind: 'agentDone', ref: ref('abc'), ok: true, ts: 2000, seq: next() },
+    ]);
+    expect(st.tools.find((t) => t.tool === 'Read')?.ok).toBeUndefined();
+  });
+});
+
 describe('agentLook', () => {
   it('is stable per id and keeps main on its own tint', () => {
     expect(agentLook('abc123')).toEqual(agentLook('abc123'));

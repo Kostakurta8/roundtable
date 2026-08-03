@@ -7,6 +7,7 @@
  */
 import {
   isZeroUse,
+  maxUse,
   subUse,
   ZERO_USE,
   type AgentMeta,
@@ -115,13 +116,33 @@ const TOOL_USE_ERROR = /^\s*<tool_use_error>([\s\S]*)<\/tool_use_error>\s*$/;
  * kept and only the value is replaced, so the message still reads.
  */
 const SECRET_KV =
-  /\b(password|passwd|pwd|secret|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret)(\s*[=:]\s*)(["']?)([^\s,;"')]+)\3/gi;
+  /(^|[^A-Za-z0-9])((?:[A-Za-z0-9]+[_-])*(?:password|passwd|pwd|secret|api[_-]?key|apikey|access[_-]?token|auth[_-]?token|client[_-]?secret))(\s*[=:]\s*)(["']?)([^\s,;"')]+)\4/gi;
+
+/**
+ * `Authorization: Bearer …` and `-p<password>`, which carry no key to match on.
+ *
+ * The header form is a fixed phrase rather than a `key=value`, so `SECRET_KV` cannot see it; the
+ * MySQL form is worse — `-p` is glued to the password with no separator at all, which is why it is
+ * matched as its own shape rather than by a general rule.
+ */
+const SECRET_HEADER = /\b(Authorization\s*:\s*)(Bearer|Basic)\s+\S+/gi;
+const SECRET_MYSQL_P = /(\s-p)(?!assword\b)([^\s'"]+)/g;
 
 /** The token formats that are recognizable on sight, so a leaked one never needs a `key=` beside it. */
-const SECRET_TOKEN = /\b(sk-ant-|gh[pousr]_|AKIA|xox[abposr]-)[A-Za-z0-9_-]{8,}/g;
+const SECRET_TOKEN = /\b(sk-ant-|sk-proj-|sk-|gh[pousr]_|AKIA|xox[abposr]-|npm_)[A-Za-z0-9_-]{16,}/g;
 
 const redact = (s: string): string =>
-  s.replace(SECRET_KV, (_m, key: string, sep: string, quote: string) => `${key}${sep}${quote}***${quote}`).replace(SECRET_TOKEN, '$1***');
+  s
+    // `lead` is captured and put back: the pattern has to consume the character before the key to
+    // prove it is not part of a longer word, and dropping it would silently corrupt the line —
+    // `export DB_PASSWORD=x` would come out as `exportDB_PASSWORD=***`.
+    .replace(
+      SECRET_KV,
+      (_m, lead: string, key: string, sep: string, quote: string) => `${lead}${key}${sep}${quote}***${quote}`,
+    )
+    .replace(SECRET_HEADER, '$1$2 ***')
+    .replace(SECRET_MYSQL_P, '$1***')
+    .replace(SECRET_TOKEN, '$1***');
 
 /** Whitespace runs — including newlines — collapsed to single spaces, then trimmed. */
 const flatten = (s: string): string => s.replace(/\s+/g, ' ').trim();
@@ -411,14 +432,22 @@ export class Normalizer {
         // transcripts, across 35 101 usage-bearing lines, an id never resumed after another id
         // appeared — responses are written contiguously — so this is the only place a response
         // ends other than the end of a read batch.
-        if (this.usageId !== undefined && this.usageId !== usageId) {
+        const continuing = this.usageId === usageId;
+        if (this.usageId !== undefined && !continuing) {
           out.push(...this.flush());
           // `flush` leaves `usageSent` holding the *previous* response's total. The accumulator is
           // about to point at a different response, which has reported nothing yet.
           this.usageSent = ZERO_USE;
         }
         this.usageId = usageId;
-        this.usageSeen = reported;
+        // Field-wise max, not a straight overwrite. A response's usage almost always only grows,
+        // but not quite always: one response in 400 sampled transcripts reported its cache figures
+        // *down* on a later line (cacheRead 246 389 → 228 908, cacheWrite 4 975 → 0). Overwriting
+        // made the next delta negative, and the store adds deltas — so the session's token total
+        // and its cost visibly fell mid-run before recovering. Taking the maximum keeps the total
+        // identical to last-wins for every response that behaves, and monotonic for the one that
+        // does not.
+        this.usageSeen = continuing ? maxUse(this.usageSeen, reported) : reported;
         this.usageModel = hasModel ? model : this.usageModel;
         this.usageTs = ts;
       }
