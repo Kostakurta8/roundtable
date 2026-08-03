@@ -820,6 +820,13 @@
   opacity: 1;
   transform: translateY(0) scale(1);
 }
+/* NEW: live streams can light both bubbles on one actor at once (the mockup's scripted loop
+   never does). Bubble heights vary with text, so no fixed vertical lift can guarantee
+   clearance — park the thought beside the speech bubble instead (8px gap past say's
+   172px max-width + 8px left inset). */
+.say.on + .think.on {
+  left: 188px;
+}
 
 /* NEW: a verdict tints the bubble it was spoken in, in the same two washes the chat's verdict
    chips use (mockup 325-326) — readable across the room, and still the only saturated colours
