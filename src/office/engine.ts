@@ -85,6 +85,8 @@ export type ActorState = {
   lounging?: boolean;
   /** Which place in the corner it was given — the renderer reads it to know stool from couch. */
   loungeSlot?: number;
+  /** It has walked out of the door. Off the floor entirely, and no longer in the cast. */
+  gone?: boolean;
 };
 
 /** The scene basis every coordinate below is expressed in. */
@@ -200,6 +202,28 @@ export const LOUNGE_DESK_INDEX = -3;
  * still counted, still named, still nothing pretending they never existed.
  */
 export const LOUNGE_CAPACITY = 12;
+
+/**
+ * How long a finished agent stays in the break corner before it goes home.
+ *
+ * The corner exists so that work completing is something you can *see* — an office that deleted
+ * people the instant they finished would end a successful session as an empty room, which looks
+ * exactly like a session that never started. But it was the end of the line, and over a couple of
+ * hours that turned the room into a group photograph: ten finished agents still standing about,
+ * answering "who is here" with a list of who once was.
+ *
+ * Two minutes is long enough to watch a fan-out land and read who came back, short enough that the
+ * room a few minutes later is only the people still working.
+ *
+ * Deliberately longer than `IDLE_COFFEE_MS`, and not equal to it. A finished agent is already
+ * excluded from the coffee round twice over, but if the two durations matched, the moment it is
+ * allowed to leave would be the same moment the idle timer fires — and no test could tell a
+ * correct departure from a stroll it should never have been sent on.
+ */
+export const LOUNGE_STAY_MS = 120_000;
+
+/** Spread over the stay, so six agents finishing together do not file out in one rank. */
+export const LOUNGE_STAY_SPREAD_MS = 30_000;
 
 /**
  * The beat a finished agent holds at its desk before it stands up and goes.
@@ -549,9 +573,10 @@ type Step =
   | { readonly kind: 'pose'; readonly pose: Pose }
   /** The last step of a huddle or a coffee break: back in the chair, free to be sent on another. */
   | { readonly kind: 'unstroll' }
-  /** The last step of a life: reached the door, off the floor, seat released. */
-  /** Arrived in the break corner. From here they stay put and the renderer takes over. */
-  | { readonly kind: 'settle' };
+  /** Arrived in the break corner. Stays put there, and the renderer takes over, until `leave`. */
+  | { readonly kind: 'settle' }
+  /** The last step of a life: reached the door, off the floor, break-corner place released. */
+  | { readonly kind: 'leave' };
 
 type Actor = {
   readonly id: string;
@@ -630,6 +655,14 @@ type Actor = {
   loungeSlot?: number;
   /** It has arrived there and stopped walking. */
   lounging?: boolean;
+  /**
+   * It has walked out of the door and is off the floor.
+   *
+   * Kept in `byId` rather than deleted, because `usage` and stray `agentText` keep arriving for an
+   * agent after it has gone, and a map that forgot it would walk a stranger in for each one. This
+   * is how `ensure` tells "has left" from "has never been here".
+   */
+  gone?: boolean;
   /**
    * How fast this person walks, as a multiple of the room's own speed.
    *
@@ -805,7 +838,7 @@ export class Engine {
     // that evidence and never revisiting it parks a working agent in the break corner for the rest
     // of the session, with its desk given away. So the decision is reversible, and the only
     // evidence that settles it is the agent itself doing something.
-    if (a.retired && BACK_TO_WORK.has(cmd.op)) this.unretire(a);
+    if ((a.retired || a.gone) && BACK_TO_WORK.has(cmd.op)) this.unretire(a);
     switch (cmd.op) {
       case 'ensureActor':
         if (cmd.parentToolUseId !== undefined) this.joinSpawn(a, cmd.parentToolUseId);
@@ -1133,7 +1166,15 @@ export class Engine {
    * anybody else. That is the honest picture: they are working, and there is nowhere to sit.
    */
   private unretire(a: Actor): void {
-    if (!a.retired) return;
+    if (!a.retired && !a.gone) return;
+    // Somebody who had already left comes back in through the door, because that is what actually
+    // happened — they were not in the building. Somebody still in the corner walks back from there.
+    const returning = a.gone === true;
+    a.gone = false;
+    if (returning) {
+      a.x = WAYPOINTS.door.x;
+      a.y = WAYPOINTS.door.y;
+    }
     if (a.loungeSlot !== undefined && this.lounge[a.loungeSlot] === a.id) this.lounge[a.loungeSlot] = null;
     a.loungeSlot = undefined;
     a.retired = false;
@@ -1161,6 +1202,31 @@ export class Engine {
       if (!this.order.includes(a)) this.order.push(a);
     }
     this.rev += 1;
+  }
+
+  /**
+   * Takes an agent off the floor for good — the end of the walk out of the door.
+   *
+   * Kept in `byId`, because `usage` and stray `agentText` keep arriving for an agent long after it
+   * has gone and a map that forgot it would walk a stranger back in through the door for each one.
+   * `gone` is what makes that different from having simply never arrived, and it is what `ensure`
+   * checks when an agent turns out to have more to do after all.
+   */
+  private depart(a: Actor): void {
+    a.gone = true;
+    a.lounging = false;
+    a.queue.length = 0;
+    if (a.loungeSlot !== undefined && this.lounge[a.loungeSlot] === a.id) this.lounge[a.loungeSlot] = null;
+    a.loungeSlot = undefined;
+    const at = this.order.indexOf(a);
+    if (at !== -1) this.order.splice(at, 1);
+    const onBench = this.bench.indexOf(a);
+    if (onBench !== -1) this.bench.splice(onBench, 1);
+    a.deskIndex = OFFSITE_DESK_INDEX;
+    this.rev += 1;
+    // Its chair was released when it retired, but somebody may have been waiting for the *corner*
+    // rather than a desk, and this is the moment a place in it came free.
+    this.fillSeats();
   }
 
   /** Hands every free chair to whoever has been waiting longest for one. */
@@ -1399,12 +1465,32 @@ export class Engine {
         continue;
       }
       if (step.kind === 'settle') {
-        // Arrived in the break corner. Nothing more is queued for this actor ever again: what it
-        // does from here — perch on a stool, hold a mug, have a cigarette, talk to whoever else is
-        // over there — is a presentation decision, and the renderer makes it from the position and
-        // the seed rather than the simulation scripting it.
+        // Arrived in the break corner. What it does from here — perch on a stool, hold a mug, have
+        // a cigarette, talk to whoever else is over there — is a presentation decision, and the
+        // renderer makes it from the position and the seed rather than the simulation scripting it.
+        //
+        // It does not stay for ever. The corner used to be the end of the line, and over a long
+        // session that turned the room into a group photograph of everyone who had ever worked
+        // there: ten finished agents still standing about hours later, which answers "who is here"
+        // with a list of who *was*. So the settle is a pause, and `LOUNGE_STAY_MS` later they go.
         a.lounging = true;
         a.queue.length = 0;
+        a.queue.push(
+          // Seeded, so a burst of agents finishing together does not leave in single file.
+          { kind: 'hold', ms: LOUNGE_STAY_MS + (jitter(a.id) % LOUNGE_STAY_SPREAD_MS) },
+          { kind: 'pose', pose: 'walk' },
+          ...walkSteps(route({ x: a.x, y: a.y }, WAYPOINTS.door)),
+          { kind: 'leave' },
+        );
+        return;
+      }
+
+      if (step.kind === 'leave') {
+        // Out of the door. Off the floor, out of the cast, and the break-corner place goes back —
+        // it is the only thing they were still holding. They stay in `byId`, so a stray late event
+        // cannot walk a stranger in from nowhere, and stay in the roster panel, where their tokens
+        // and their transcript are still worth reading.
+        this.depart(a);
         return;
       }
 

@@ -154,18 +154,16 @@ export default function App() {
   const state = states[sessionId ?? ''] ?? initialState;
 
   /**
-   * The sessions that get a tab: the ones with agents working *right now*.
+   * The sessions that get a tab: the ones that are running.
    *
-   * Both halves of the test are necessary and neither is sufficient. The roster's `live` flag only
-   * says the CLI registered the session and something touched it inside 90 seconds, which is true
-   * of a window sitting at an idle prompt; `workingAgents` only sees what the transcripts say,
-   * which stays true for a while after the process behind them dies. Together they mean: this
-   * session is running, and somebody other than its orchestrator is doing something in it.
+   * This started as "sessions with agents working", which is what was originally asked for and is
+   * a sharper claim — but on a machine with two Claude windows open and neither fanning out, it
+   * meant the top bar said `2 RUNNING` above a room with no way to reach the second one. Predicting
+   * whether a tab will be there mattered more than the tab being precisely earned, and `live` is
+   * already the thing the dot in the picker means. The working count still rides on the tab, so
+   * "running" and "busy" stay visibly different.
    */
-  const working = useMemo(
-    () => sessions.filter((s) => s.live && workingAgents(states[s.sessionId] ?? initialState, now).length > 0),
-    [sessions, states, now],
-  );
+  const working = useMemo(() => sessions.filter((s) => s.live), [sessions]);
 
   /**
    * The tab strip, or nothing at all.
@@ -348,10 +346,14 @@ export default function App() {
                       is not always a running one and must not always claim to be. */}
                   <span className={s.live ? 'dot live' : 'dot'} />
                   <b>{s.name ?? s.sessionId.slice(0, 8)}</b>
-                  {/* The count is the reason the tab is here, so it is the thing on the tab. */}
-                  <span className="n" title={`${busy} agent${busy === 1 ? '' : 's'} working`}>
-                    {busy}
-                  </span>
+                  {/* Only when there is something to count. A tab is now raised by a session merely
+                      running, so a badge reading `0` would be on most of them most of the time —
+                      and a number that is nearly always zero stops being read at all. */}
+                  {busy > 0 && (
+                    <span className="n" title={`${busy} agent${busy === 1 ? '' : 's'} working`}>
+                      {busy}
+                    </span>
+                  )}
                 </button>
               );
             })}

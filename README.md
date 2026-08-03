@@ -63,7 +63,13 @@ shortcut points into the checkout.
 is running; a thought bubble is a real `thinking` block; walking to someone and speaking is that
 agent reporting a result. A red bubble is a `REFUTED` verdict, a green one `CONFIRMED`. When an
 agent finishes it gives up its chair — so somebody waiting outside can have it — and goes to sit in
-the corner. The corner filling up is how far along the session is.
+the corner for a couple of minutes before heading home. So the corner filling up tells you work is
+landing, and the room a few minutes later is only the people still working. Whoever has left is
+still in the **AGENTS** panel with their tokens, their cost and everything they said.
+
+If one of them turns out not to have finished after all — which happens, because a background agent
+is reported done the moment it is *launched* — it walks back in through the door and takes a desk
+again.
 
 If more agents are running than the room has chairs, the extra ones appear as small heads along the
 bottom. They are real: you can hover, tab to and click them.
@@ -81,16 +87,14 @@ button in the top bar to come back to now.
 
 ## More than one session at a time
 
-When two or more sessions have agents **working**, a strip of tabs appears over the room, one per
-session. Clicking a tab shows that session's room, roster, feed and totals. Nothing is thrown away
-when you switch: every room keeps running in the background, so switching back is instant and
-complete.
+When two or more sessions are **running**, a strip of tabs appears over the room, one per session.
+Clicking a tab shows that session's room, roster, feed and totals. Nothing is thrown away when you
+switch: every room keeps running in the background, so switching back is instant and complete.
 
-"Working" is deliberately strict — a window sitting at an idle prompt is not working. It means the
-session is registered and running **and** it has at least one agent other than the orchestrator that
-has not finished and is either active within the last 90 seconds or holding a tool call open. With
-one session working, or none, there is no tab strip at all; there would be nothing to choose
-between.
+"Running" is the same thing the dot in the picker means — the CLI has the session registered and
+something touched it inside the last 90 seconds. A tab carries a count only when that session has
+agents actually working, so a busy session and an idle one are still told apart at a glance. With
+one session running, or none, there is no strip at all; there would be nothing to choose between.
 
 **New sessions are picked up automatically.** The hub sweeps for them every few seconds — start a
 session in another window and its tab appears on its own. The `⟲` button in the top bar asks it to

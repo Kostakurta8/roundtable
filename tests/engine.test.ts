@@ -21,6 +21,7 @@ import {
   WAYPOINTS,
   LOUNGE_CAPACITY,
   LOUNGE_DESK_INDEX,
+  LOUNGE_STAY_MS,
   loungeSpot,
   podSeat,
   route,
@@ -773,11 +774,14 @@ describe('Engine — coffee break', () => {
     const settled = tickUntil(e, 60_000, (st) => stateOf(st, 'alpha').lounging === true);
     const spot = { x: stateOf(settled, 'alpha').x, y: stateOf(settled, 'alpha').y };
 
-    for (let t = 0; t < IDLE_COFFEE_MS + 30_000; t += STEP_MS) {
+    // Bounded by the corner stay, because leaving for good is the one departure that *is* allowed
+    // — and `IDLE_COFFEE_MS` is well inside it, so the idle timer still gets its chance to misfire.
+    for (let t = 0; t < LOUNGE_STAY_MS - STEP_MS; t += STEP_MS) {
       const s = stateOf(e.tick(STEP_MS), 'alpha');
       expect(s.x, 'a retired agent must not wander').toBeCloseTo(spot.x, 6);
       expect(s.y).toBeCloseTo(spot.y, 6);
     }
+    expect(IDLE_COFFEE_MS).toBeLessThan(LOUNGE_STAY_MS); // or the loop above proves nothing
     expect(e.offsite()).toEqual([]);
   });
 
@@ -823,11 +827,47 @@ describe('Engine — hot-desking', () => {
     expectAt(settled, loungeSpot(0));
     expect(settled.loungeSlot).toBe(0);
 
-    // And it stays. This is the whole point of the corner: an office that deleted people as they
-    // finished ended a successful session as an empty room.
-    const later = e.tick(120_000);
-    expect(later.map((s) => s.id).sort()).toEqual(['alpha', 'main']);
-    expectAt(stateOf(later, 'alpha'), loungeSpot(0));
+    // It stays a while — the corner is what makes work completing visible, and an office that
+    // deleted people the instant they finished would end a successful session as an empty room.
+    const during = e.tick(LOUNGE_STAY_MS - 5_000);
+    expect(during.map((s) => s.id).sort()).toEqual(['alpha', 'main']);
+    expectAt(stateOf(during, 'alpha'), loungeSpot(0));
+
+    // And then it goes home. The corner used to be the end of the line, which over a couple of
+    // hours turned the room into a group photograph of everyone who had ever worked there.
+    const after = tickUntil(e, 300_000, (st) => !st.some((s) => s.id === 'alpha'));
+    expect(after.map((s) => s.id)).toEqual(['main']);
+    expect(e.offsite()).toEqual([]); // gone, not queued outside for a chair
+  });
+
+  it('brings an agent that had already left back in through the door', () => {
+    // It left because it was finished. If it turns out not to have been, it did not teleport to the
+    // corner — it walks back in, because that is what actually happened.
+    const e = officeOf('main', 'alpha');
+    e.apply({ op: 'done', agentId: 'alpha', ok: true });
+    tickUntil(e, 300_000, (st) => !st.some((s) => s.id === 'alpha'));
+
+    e.apply({ op: 'tool', agentId: 'alpha', id: 't1', tool: 'Read', act: 'read' });
+    const back = stateOf(e.tick(0), 'alpha');
+    expect(back.deskIndex).toBeGreaterThanOrEqual(0);
+    expectAt(back, WAYPOINTS.door);
+    expect(stateOf(tickUntil(e, 60_000, poseIs('alpha', 'sit')), 'alpha').pose).toBe('sit');
+  });
+
+  it('gives the break-corner place back when somebody leaves', () => {
+    // The corner holds twelve. If a place were still held by somebody who had gone home, a long
+    // session would run out of room to retire into and later agents would be stranded at their
+    // desks looking like they were still working.
+    const e = officeOf('main', 'alpha');
+    for (let i = 0; i < LOUNGE_CAPACITY + 2; i++) {
+      e.apply({ op: 'done', agentId: 'alpha', ok: true });
+      tickUntil(e, 300_000, (st) => !st.some((s) => s.id === 'alpha'));
+      e.apply({ op: 'tool', agentId: 'alpha', id: `t${i}`, tool: 'Read', act: 'read' });
+      tickUntil(e, 60_000, poseIs('alpha', 'sit'));
+    }
+    e.apply({ op: 'done', agentId: 'alpha', ok: true });
+    const settled = stateOf(tickUntil(e, 60_000, (st) => stateOf(st, 'alpha').lounging === true), 'alpha');
+    expect(settled.loungeSlot).toBe(0); // the same place, handed back every time
   });
 
   /**
