@@ -12,23 +12,26 @@
  *                    Control frames carry no `seq`, so `isEv` never mistakes one for an event.
  *   client → server  `{"cmd":"follow","sessionId":"<id from hello>"}`.
  *                    Anything else (bad JSON, unknown command, unknown session id) is ignored.
+ *
+ * Binding to loopback is not on its own a boundary — a browser will happily open a socket to
+ * 127.0.0.1 for any page that asks — so the handshake is also gated on `Origin`; see
+ * `ALLOWED_ORIGINS`.
  */
 import { statSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { basename, dirname, join, resolve } from 'node:path';
 import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { Ev } from '../shared/events';
+import type { BacklogTruncatedMsg, HelloMsg, SessionSummary } from '../shared/protocol';
 import { Normalizer } from './normalize';
 import { parseLine } from './parse';
 import { listSessions, subagentFiles } from './sessions';
 import { Tailer } from './tail';
 
-export type SessionSummary = { sessionId: string; slug: string; mtime: number };
-export type HelloMsg = { kind: 'hello'; sessions: SessionSummary[] };
-/** Sent just before a backlog replay that can no longer offer the full history. */
-export type BacklogTruncatedMsg = { kind: 'backlogTruncated'; dropped: number };
-export type FollowCmd = { cmd: 'follow'; sessionId: string };
+// The frame shapes are declared in `shared/protocol.ts` so the client can have them without
+// importing this file — which would drag node:fs, chokidar and ws into the browser bundle.
+export type { BacklogTruncatedMsg, FollowCmd, HelloMsg, SessionSummary } from '../shared/protocol';
 
 /** Shutdown handle. Assignable to `() => void`; returns a promise so callers can await teardown. */
 export type StopServer = () => Promise<void>;
@@ -67,6 +70,25 @@ const WATCH_DEPTH = 0;
  * someone is following; cleared the moment it attaches (and on unfollow/shutdown).
  */
 const SUBAGENT_RESCAN_MS = 500;
+
+/**
+ * The page origins allowed to open the socket — the observer's own dev server, under either
+ * loopback name Vite answers to.
+ *
+ * Browsers do not apply the same-origin policy to WebSockets: without this check *any* page the
+ * user happens to have open could connect to the hub, take the `hello` roster, `follow` a
+ * session and read their private transcripts, with no prompt and nothing on screen. The Origin
+ * header is the one thing a browser will not let a page lie about, so it is what the gate reads.
+ */
+const ALLOWED_ORIGINS = new Set(['http://localhost:5173', 'http://127.0.0.1:5173']);
+
+/**
+ * An absent Origin is allowed: only browsers send one, so its absence means no web page is
+ * behind the request — a CLI, a test, or the app talking to itself. Those already have whatever
+ * access to the transcript files the hub could give them, so refusing them buys nothing.
+ */
+const originAllowed = (origin: string | undefined): boolean =>
+  origin === undefined || ALLOWED_ORIGINS.has(origin);
 
 /** Windows paths compare case-insensitively; chokidar echoes whatever casing the FS reports. */
 const samePath = (a: string, b: string): boolean =>
@@ -406,7 +428,16 @@ export async function startServer(root: string, port: number, opts: HubOptions =
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('roundtable observer: websocket only\n');
   });
-  const wss = new WebSocketServer({ server, path: WS_PATH });
+  const wss = new WebSocketServer({
+    server,
+    path: WS_PATH,
+    // Read off the request rather than `info.origin`: ws passes `req.headers.origin` through
+    // untouched, so it really is `string | undefined`, while `@types/ws` declares it `string`.
+    // The parameter is annotated because `verifyClient` is a union of a sync and an async
+    // signature, which gives nothing for TypeScript to infer this callback's shape from.
+    // A rejected handshake gets a 401 and is destroyed — no connection, no roster, no events.
+    verifyClient: ({ req }: { req: IncomingMessage }) => originAllowed(req.headers.origin),
+  });
   // ws mirrors the HTTP server's 'error' onto this emitter, and an EventEmitter with no 'error'
   // listener throws. Without this guard a failed bind rejects *and* crashes the process. The
   // mirrored error is reported once, by the HTTP server's own handler below.

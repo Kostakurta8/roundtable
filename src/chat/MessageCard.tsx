@@ -1,4 +1,5 @@
 /** One line of the feed: a human turn, an agent's card, or a system note. */
+import { memo } from 'react';
 import { agentLook, SYSTEM, USER, type RtAgent, type RtMsg } from '../store';
 
 /** The 15px avatar — skin, hair and a sliver of torso, in the agent's own tints. */
@@ -51,7 +52,14 @@ const displayName = (msg: RtMsg, agent?: RtAgent): string => {
   return name.length > NAME_MAX ? `${name.slice(0, NAME_MAX - 1)}…` : name;
 };
 
-export function MessageCard({ msg, agent }: { msg: RtMsg; agent?: RtAgent }) {
+/**
+ * Memoised because the feed is a list that only ever grows at one end: `reduce` copies the
+ * `msgs` array on every event but keeps each `RtMsg` object identical, so without this every
+ * arriving event re-renders every card already on screen — hundreds of them, several times a
+ * second, while the office is animating alongside. A card whose message and agent are the same
+ * objects as last time draws the same pixels, so it can be skipped outright.
+ */
+export const MessageCard = memo(function MessageCard({ msg, agent }: { msg: RtMsg; agent?: RtAgent }) {
   if (msg.agentId === SYSTEM) return <div className="msg-sys">— {msg.text} —</div>;
 
   const isUser = msg.agentId === USER;
@@ -105,4 +113,4 @@ export function MessageCard({ msg, agent }: { msg: RtMsg; agent?: RtAgent }) {
       </div>
     </div>
   );
-}
+});

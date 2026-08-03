@@ -37,6 +37,8 @@ export type RtPending = {
 export type RtState = {
   agents: Record<string, RtAgent>;
   msgs: RtMsg[];
+  /** How many of the oldest messages the cap has dropped, so the feed can say so out loud. */
+  trimmed: number;
   totalTok: number;
   pending: RtPending;
 };
@@ -45,9 +47,18 @@ export const MAIN = 'main';
 export const USER = 'user';
 export const SYSTEM = 'system';
 
+/**
+ * The longest the feed is allowed to get. A day-long session produces tens of thousands of
+ * turns, and every one of them is an array entry the panel re-renders and a DOM node the browser
+ * keeps alive — unbounded, that is a leak with a scrollbar. 500 is far past what anyone scrolls
+ * back through in an observer window, and what falls off the top is counted, not hidden.
+ */
+export const MSG_CAP = 500;
+
 export const initialState: RtState = {
   agents: {},
   msgs: [],
+  trimmed: 0,
   totalTok: 0,
   pending: { thinking: {}, chips: {}, nextId: 1 },
 };
@@ -116,9 +127,15 @@ function addMsg(state: RtState, draft: MsgDraft): RtState {
     ...(draft.thinking ? { thinking: draft.thinking } : {}),
     ...(draft.verdict ? { verdict: draft.verdict } : {}),
   };
+  // The one place a message enters the feed, and so the one place the cap has to hold. Trimming
+  // from the head keeps both invariants the rest of the store leans on: what is left is still
+  // ascending by ts, and no id is ever reused or renumbered.
+  const grown = insertByTs(state.msgs, msg);
+  const over = Math.max(0, grown.length - MSG_CAP);
   return {
     ...state,
-    msgs: insertByTs(state.msgs, msg),
+    msgs: over > 0 ? grown.slice(over) : grown,
+    trimmed: state.trimmed + over,
     pending: { ...state.pending, nextId: state.pending.nextId + 1 },
   };
 }

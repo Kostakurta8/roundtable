@@ -73,13 +73,14 @@ export const POD_ROW_PITCH_Y = 90;
 export const POD_ROW_MAX_Y = 780;
 
 /**
- * Rows that would fall past `POD_ROW_MAX_Y` all share that row, so they are fanned sideways
- * instead. 54px because two clamped rows are separated by the fan alone and the grid must stay
- * ≥50px apart; and because the column gap (224px) is not a whole multiple of it, so column 0 of
- * one overflow row can never land exactly on column 1 of another. Past ~12 actors this is a
- * holding pattern, not a layout — design spec §3.3 calls for a hot-desk overflow there.
+ * Rows that would fall past `POD_ROW_MAX_Y` all share that row, fanned sideways instead of
+ * stacked. 54px is the pitch of that fan: it clears the ~54px actor width, so two seats along
+ * the lane are never closer than the invariant below allows.
  */
 export const POD_OVERFLOW_FAN_X = 54;
+
+/** No two desks may come closer than this. The overflow layout exists to keep it true. */
+export const POD_MIN_SEAT_GAP = 50;
 
 /** The orchestrator's id, as `mapping.ts` emits it. */
 const MAIN_ID = 'main';
@@ -142,6 +143,30 @@ export const WAYPOINTS = {
 } as const;
 
 /**
+ * How the two columns share the overflow lane along `POD_ROW_MAX_Y`.
+ *
+ * Column 0 can only fan so far to the right before it closes on column 1's own last gridded
+ * seat — which sits just *above* the lane (22.2px, at the numbers this file ships with), so
+ * nearly all of the clearance has to come out of x. Marching past that point is what put pod
+ * slot 14 within 23.6px of slot 7. So column 0's fan stops there, and the lane continues to the
+ * right of column 1 instead, at the same pitch, across open floor.
+ *
+ * Derived rather than written down, so that moving a pod seat, the pitch or the floor line
+ * cannot quietly reintroduce the overlap. Past ~30 agents the lane runs out of room even so:
+ * this is the holding pattern design spec §3.3 replaces with a real hot-desk overflow.
+ */
+const OVERFLOW = ((): { steps: number; firstSlot: number } => {
+  const [colA, colB] = [WAYPOINTS.podSeats[2], WAYPOINTS.podSeats[3]];
+  /** The lowest row of the grid proper — the last one that still fits above the floor line. */
+  const lastRow = 1 + Math.floor((POD_ROW_MAX_Y - colA.y) / POD_ROW_PITCH_Y);
+  /** The sliver between that row and the lane; the rest of the gap has to be horizontal. */
+  const dy = POD_ROW_MAX_Y - (colA.y + (lastRow - 1) * POD_ROW_PITCH_Y);
+  const clearX = Math.sqrt(Math.max(0, POD_MIN_SEAT_GAP ** 2 - dy ** 2));
+  const steps = Math.floor((colB.x - clearX - colA.x) / POD_OVERFLOW_FAN_X);
+  return { steps: Math.max(0, steps), firstSlot: 2 * (lastRow + 1) };
+})();
+
+/**
  * The seat for pod slot `slot`, 0-based.
  *
  * Slots 0-3 are the mockup's own four chairs, verbatim. Past those the pods continue as the
@@ -158,8 +183,16 @@ export function podSeat(slot: number): Pt {
   const row = Math.floor(slot / 2);
   const base = seats[2 + col]; // the mockup's second row, which is row 1 of the grid
   const y = base.y + (row - 1) * POD_ROW_PITCH_Y;
-  const clampedRows = Math.max(0, Math.ceil((y - POD_ROW_MAX_Y) / POD_ROW_PITCH_Y));
-  return { x: base.x + clampedRows * POD_OVERFLOW_FAN_X, y: Math.min(y, POD_ROW_MAX_Y) };
+  if (y <= POD_ROW_MAX_Y) return { x: base.x, y };
+
+  // Off the bottom of the room: onto the overflow lane. The first `steps` seats of each column
+  // fan out from that column, so the two-column read survives a few extra agents; everything
+  // after that continues rightwards past column 1, which is the only open floor left.
+  const n = slot - OVERFLOW.firstSlot;
+  const paired = OVERFLOW.steps * 2;
+  const lane = n < paired ? col : 1;
+  const step = n < paired ? Math.floor(n / 2) + 1 : n - OVERFLOW.steps + 1;
+  return { x: seats[2 + lane].x + step * POD_OVERFLOW_FAN_X, y: POD_ROW_MAX_Y };
 }
 
 // --- routing -----------------------------------------------------------------------------

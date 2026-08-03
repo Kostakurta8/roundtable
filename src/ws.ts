@@ -7,7 +7,9 @@
  */
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { isEv, type Ev } from '../shared/events';
-import type { FollowCmd, SessionSummary } from '../server/hub';
+// From `shared/`, never from `server/hub`: the hub pulls in node:fs, chokidar and ws, and an
+// `import type` is only one careless edit away from becoming a value import that bundles them.
+import type { FollowCmd, SessionSummary } from '../shared/protocol';
 import { initialState, reduce, type RtState } from './store';
 
 /** Loopback, always. The observer reads one machine's transcripts: its own. */

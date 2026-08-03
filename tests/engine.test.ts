@@ -4,6 +4,7 @@ import {
   BUBBLE_MS,
   Engine,
   MANAGER_DESK_INDEX,
+  POD_MIN_SEAT_GAP,
   POD_ROW_MAX_Y,
   SETTLE_MS,
   WAYPOINTS,
@@ -108,12 +109,18 @@ describe('Engine — desk assignment', () => {
     expect(podSeat(8).y).toBeCloseTo(780, 6);
   });
 
-  it('keeps every desk at least 50px from every other with a dozen agents', () => {
-    const seats = [...Array(12).keys()].map(podSeat).concat([WAYPOINTS.managerSeat]);
+  // 17 actors, not a dozen: the overflow lane is where this invariant actually gets tested, and
+  // twelve stopped one row short of the first failure — column 0's fan used to march on until
+  // slot 14 landed 23.6px from slot 7, which the smaller roster never reached.
+  it('keeps every desk at least 50px from every other with 17 agents', () => {
+    const seats = [...Array(16).keys()].map(podSeat).concat([WAYPOINTS.managerSeat]);
+    expect(seats).toHaveLength(17);
     for (let i = 0; i < seats.length; i++) {
       for (let j = i + 1; j < seats.length; j++) {
         const gap = Math.hypot(seats[i].x - seats[j].x, seats[i].y - seats[j].y);
-        expect(gap, `slots ${i} and ${j} are ${gap.toFixed(1)}px apart`).toBeGreaterThanOrEqual(50);
+        expect(gap, `slots ${i} and ${j} are ${gap.toFixed(1)}px apart`).toBeGreaterThanOrEqual(
+          POD_MIN_SEAT_GAP,
+        );
       }
     }
   });

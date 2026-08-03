@@ -46,8 +46,11 @@ export function Chat({ state, title, live, truncatedDropped }: ChatProps) {
       </div>
 
       <div className="chat-scroll" ref={scroller} onScroll={onScroll}>
-        {/* The gap is named rather than hidden: a feed that silently starts mid-conversation lies. */}
+        {/* The gap is named rather than hidden: a feed that silently starts mid-conversation lies.
+            Two separate counts because they are two different losses — events the hub could no
+            longer replay, and messages this client's own cap pushed off the top. */}
         {truncatedDropped > 0 && <div className="msg-sys">— {truncatedDropped} earlier events dropped —</div>}
+        {state.trimmed > 0 && <div className="msg-sys">— {state.trimmed} earlier messages trimmed —</div>}
         {state.msgs.length === 0 && <div className="msg-sys">— waiting for the session to say something —</div>}
         {state.msgs.map((m) => (
           <MessageCard key={m.id} msg={m} agent={state.agents[m.agentId]} />

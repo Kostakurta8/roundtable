@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { Ev } from '../shared/events';
 import { Normalizer } from '../server/normalize';
 import { parseLine } from '../server/parse';
-import { agentLook, initialState, reduce, type RtState } from '../src/store';
+import { agentLook, initialState, MSG_CAP, reduce, type RtState } from '../src/store';
 
 /** Same helper the Normalizer tests use: a whole fixture file → the events it produces. */
 const feedAll = (file: string, agentId: 'main' | string): Ev[] => {
@@ -221,6 +221,38 @@ describe('reduce — rules', () => {
     }
     expect(initialState).toEqual(before);
     expect(initialState.msgs).toHaveLength(0);
+  });
+});
+
+describe('reduce — feed cap', () => {
+  // A long session streams far more turns than anyone scrolls back through, and every one of
+  // them is an array entry re-rendered and a DOM node held alive. The feed is capped; what falls
+  // off the top is counted rather than hidden.
+  it('keeps the newest MSG_CAP messages and counts what it dropped', () => {
+    const over = 40;
+    const st = fold([...Array(MSG_CAP + over).keys()].map((i) => text('a', `line ${i}`, 1000 + i)));
+
+    expect(st.msgs).toHaveLength(MSG_CAP);
+    expect(st.trimmed).toBe(over);
+    expect(st.msgs.at(-1)?.text).toBe(`line ${MSG_CAP + over - 1}`); // the newest arrival is kept
+    expect(st.msgs[0].text).toBe(`line ${over}`); // …and the oldest survivor is the one after the cut
+    expect(st.msgs.some((m) => m.text === `line ${over - 1}`)).toBe(false);
+  });
+
+  it('trims without disturbing ts order or renumbering ids', () => {
+    const st = fold([...Array(MSG_CAP + 5).keys()].map((i) => text('a', `line ${i}`, 1000 + i)));
+
+    const tss = st.msgs.map((m) => m.ts);
+    expect([...tss].sort((a, b) => a - b)).toEqual(tss);
+    expect(st.msgs[0].id).toBe(6); // ids are handed out from 1 and never reused
+    expect(st.msgs.at(-1)?.id).toBe(MSG_CAP + 5);
+  });
+
+  it('leaves a feed under the cap completely alone', () => {
+    const st = fold([...Array(MSG_CAP).keys()].map((i) => text('a', `line ${i}`, 1000 + i)));
+    expect(st.msgs).toHaveLength(MSG_CAP);
+    expect(st.trimmed).toBe(0);
+    expect(st.msgs[0].text).toBe('line 0');
   });
 });
 

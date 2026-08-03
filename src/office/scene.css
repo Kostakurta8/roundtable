@@ -771,9 +771,14 @@
   opacity: 0;
   transform: translateY(6px) scale(0.92);
   transform-origin: bottom left;
+  /* `left` is in the list because the thought bubble moves: it is parked beside the speech
+     bubble while both are up (`.say.on + .think.on` below) and returns to the actor's shoulder
+     when the speech expires. Without a transition it snapped 188px → 8px in one frame, straight
+     through the say bubble that was still spending its own 0.22s fading out. */
   transition:
     opacity 0.22s,
-    transform 0.22s;
+    transform 0.22s,
+    left 0.22s;
   pointer-events: none;
   /* NEW: real agent prose has no manual line breaks and can carry long identifiers. */
   overflow-wrap: anywhere;

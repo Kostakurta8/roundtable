@@ -152,8 +152,12 @@ async function start(root: string, extra: Partial<HubOptions> = {}): Promise<num
   throw new Error('no free port for the hub test');
 }
 
-async function connect(port: number): Promise<TestClient> {
-  const sock = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+/**
+ * A non-browser client: no `Origin` header at all, which is what every test below except the
+ * origin ones uses — and what the hub has to keep accepting.
+ */
+async function connect(port: number, origin?: string): Promise<TestClient> {
+  const sock = new WebSocket(`ws://127.0.0.1:${port}/ws`, origin === undefined ? {} : { origin });
   sockets.push(sock);
   const client = new TestClient(sock); // listeners attach before 'open' so nothing is missed
   await once(sock, 'open');
@@ -325,6 +329,62 @@ describe('hub', () => {
       expect(notice.dropped + capped.events().length).toBe(full.events().length);
     },
     25_000,
+  );
+
+  // Binding to loopback keeps other machines out; it does not keep other *pages* out. A browser
+  // will open a WebSocket to 127.0.0.1 for whatever page asks — the same-origin policy does not
+  // apply to them — and the hub answers every connection with the roster and will follow any
+  // session it names. Without the Origin gate, one visited page reads the user's transcripts.
+  it(
+    'refuses a handshake from a page origin the app is not served from',
+    async () => {
+      const { root } = makeRoot();
+      const port = await start(root);
+
+      const evil = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: 'http://evil.example' });
+      sockets.push(evil);
+      const frames: string[] = [];
+      evil.on('message', (data) => frames.push(data.toString()));
+
+      // Whichever comes first is the answer, so an accepted handshake fails here and now rather
+      // than by timing out on an error that is never coming.
+      const outcome = await new Promise<string>((res) => {
+        evil.on('open', () => res('open'));
+        evil.on('error', (err: Error) => res(`rejected: ${err.message}`));
+      });
+      expect(outcome, 'a foreign page opened the socket').not.toBe('open');
+      expect(outcome).toContain('401'); // ws aborts the handshake with 401 Unauthorized
+      expect(evil.readyState).not.toBe(WebSocket.OPEN);
+
+      await delay(SETTLE_MS);
+      expect(frames).toEqual([]); // no roster, so not one session id leaked either
+    },
+    20_000,
+  );
+
+  it(
+    'still greets the app’s own origin and clients that send none',
+    async () => {
+      const { root } = makeRoot();
+      const port = await start(root);
+
+      // The app page, exactly as the browser announces it (`playwright.config.ts` baseURL).
+      const app = await connect(port, 'http://localhost:5173');
+      expect((await app.wait(isHello)).sessions.map((s) => s.sessionId)).toContain('fix-sess');
+
+      // The loopback address is the same app under the other name Vite answers to.
+      const loopback = await connect(port, 'http://127.0.0.1:5173');
+      await loopback.wait(isHello);
+
+      // No Origin at all: a CLI or a test, which can already read the files the hub is tailing.
+      const headless = await connect(port);
+      await headless.wait(isHello);
+
+      // …and an allowed origin is a full client, not just a greeted one.
+      app.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await app.wait(evOf('userMessage'));
+    },
+    20_000,
   );
 
   it(

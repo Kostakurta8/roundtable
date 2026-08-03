@@ -7,6 +7,19 @@
  * chat panel live here; the room itself — floor, furniture, people — is in office/scene.css.
  * Natural-office palette throughout: the only saturated colours in the UI are the two verdicts.
  */
+/*
+ * Owned locally, not inherited from Tailwind's Preflight. The office bubbles are placed by
+ * absolute `left` against their own `max-width`, so a content-box that adds padding and border
+ * on top of that width makes the thought bubble overlap the speech bubble it is parked beside
+ * (scene.css `.say.on + .think.on`). Tailwind is otherwise unused here — the day someone drops
+ * the three directives above as dead weight must not silently bring that overlap back.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 :root {
   --oak-1: #e3d4b6;
   --oak-2: #d9c8a6;
