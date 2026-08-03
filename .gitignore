@@ -3,3 +3,6 @@ dist
 .playwright-mcp
 e2e/artifacts
 playwright-report
+
+# Sprite contact sheets from scripts/sheet.ts — build output, never source.
+.preview/

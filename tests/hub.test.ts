@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { isEv, type Ev } from '../shared/events';
+import { evSession, isEv, type Ev } from '../shared/events';
+import { MAX_BATCH_BYTES } from '../server/tail';
+import type { ResetMsg, TailNoticeMsg } from '../shared/protocol';
 import { startServer, type HubOptions, type StopServer } from '../server/hub';
 
 /** Polling makes the watcher deterministic on Windows and keeps the tests fast. */
@@ -19,6 +21,8 @@ const SETTLE_MS = 400;
 const LIVE_TEXT = 'live append landed';
 const SUB_TEXT = 'subagent append landed';
 const NEW_AGENT_TEXT = 'brand new agent reporting';
+const REWRITTEN_TEXT = 'a different conversation entirely';
+const TAIL_TEXT = 'the very last line of a long transcript';
 
 const assistantLine = (text: string, agentId?: string): string =>
   `${JSON.stringify({
@@ -29,6 +33,34 @@ const assistantLine = (text: string, agentId?: string): string =>
     timestamp: '2026-08-02T10:01:00.000Z',
     message: { role: 'assistant', model: 'claude-fable-5', content: [{ type: 'text', text }] },
   })}\n`;
+
+const userLine = (text: string): string =>
+  `${JSON.stringify({
+    type: 'user',
+    uuid: `u-${text.length}`,
+    sessionId: 'fix-sess',
+    timestamp: '2026-08-02T11:00:00.000Z',
+    message: { role: 'user', content: text },
+  })}\n`;
+
+/** One line longer than a whole read batch — the shape the tailer has to step over. */
+const oversizedLine = (): string =>
+  `${JSON.stringify({
+    type: 'user',
+    uuid: 'u-huge',
+    sessionId: 'fix-sess',
+    timestamp: '2026-08-02T11:05:00.000Z',
+    message: { role: 'user', content: 'x'.repeat(MAX_BATCH_BYTES) },
+  })}\n`;
+
+/** A transcript comfortably larger than one read batch, ending on a line worth waiting for. */
+function bulkTranscript(): string {
+  const pad = 'y'.repeat(3000);
+  const rows: string[] = [];
+  for (let i = 0; rows.length * 3000 < MAX_BATCH_BYTES * 1.4; i++) rows.push(assistantLine(`${pad} #${i}`));
+  rows.push(assistantLine(TAIL_TEXT));
+  return rows.join('');
+}
 
 // ---------------------------------------------------------------- test harness
 
@@ -43,6 +75,18 @@ const isTruncated = (m: unknown): m is Truncated =>
   typeof m === 'object' &&
   (m as { kind?: unknown }).kind === 'backlogTruncated' &&
   typeof (m as { dropped?: unknown }).dropped === 'number';
+
+const isReset = (m: unknown): m is ResetMsg =>
+  !!m && typeof m === 'object' && (m as { kind?: unknown }).kind === 'reset';
+
+/** Matches a tail notice, optionally only the ones satisfying a further predicate. */
+const noticeOf =
+  (extra: (n: TailNoticeMsg) => boolean = () => true) =>
+  (m: unknown): m is TailNoticeMsg => {
+    if (!m || typeof m !== 'object' || (m as { kind?: unknown }).kind !== 'notice') return false;
+    const n = m as TailNoticeMsg;
+    return typeof n.skipped === 'number' && typeof n.behind === 'boolean' && extra(n);
+  };
 
 /** Type guard for one `Ev` kind, with an optional extra predicate on the narrowed event. */
 const evOf =
@@ -131,6 +175,31 @@ const seedAgent = (subagentsDir: string, name = 'agent-abc123.jsonl'): void => {
   copyFileSync(join('fixtures', 'agent-abc123.jsonl'), join(subagentsDir, name));
 };
 
+/**
+ * Writes the CLI's own registry entry for a session, which is the only thing that makes the hub
+ * call it *running*.
+ *
+ * `~/.claude/sessions/<pid>.json` is what the real CLI keeps, and the hub pairs its `updatedAt`
+ * with the transcript's mtime before believing anything — so a test that wants a live session has
+ * to produce one, not assert around it.
+ */
+const register = (root: string, sessionId: string, extra: Record<string, unknown> = {}): void => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${sessionId}.json`),
+    JSON.stringify({
+      sessionId,
+      pid: 4242,
+      cwd: `C:\\work\\${sessionId}`,
+      name: `dev-${sessionId.slice(0, 2)}`,
+      status: 'busy',
+      updatedAt: Date.now(),
+      ...extra,
+    }),
+  );
+};
+
 const isPortTaken = (err: unknown): boolean =>
   !!err && typeof err === 'object' && (err as { code?: unknown }).code === 'EADDRINUSE';
 
@@ -208,8 +277,152 @@ describe('hub', () => {
       await delay(SETTLE_MS);
 
       expect(other.events().length).toBeGreaterThan(0); // it got its own session's backlog
-      expect(other.events().every((e) => 'ref' in e && e.ref.sessionId === 'other-sess')).toBe(true);
-      expect(idle.events()).toEqual([]); // never followed → never streamed
+      // `evSession` rather than `e.ref.sessionId`: `sessionSeen` is about the session itself and
+      // carries no agent, so a check that reached through `ref` would skip the one event whose
+      // whole job is to name a session.
+      expect(other.events().every((e) => evSession(e) === 'other-sess')).toBe(true);
+      // Nothing in this temp root is in the CLI's registry, so nothing here is *running* — the
+      // live sweep has nothing to attach, and a socket that asked for nothing still gets nothing.
+      expect(idle.events()).toEqual([]);
+    },
+    20_000,
+  );
+
+  /**
+   * Multi-session. The observer used to follow exactly one session and a switch dropped the
+   * socket, so a machine running three sessions could be watched one at a time and only by
+   * throwing away what you were looking at. The hub now tails everything that is *running* and
+   * streams all of it; the client decides which of them is worth a tab.
+   */
+  it(
+    'streams a running session to every socket without being asked for it',
+    async () => {
+      const { root, slugDir, mainFile } = makeRoot();
+      const otherFile = join(slugDir, 'other-sess.jsonl');
+      copyFileSync(join('fixtures', 'main-session.jsonl'), otherFile);
+      // Only `other-sess` is registered with the CLI, so only it is running.
+      register(root, 'other-sess');
+
+      const port = await start(root);
+      const client = await connect(port);
+      await client.wait(isHello);
+
+      // The picker chose the session that is *not* running — a historical one, which the live
+      // sweep would never attach on its own.
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      appendFileSync(mainFile, assistantLine(LIVE_TEXT));
+      appendFileSync(otherFile, assistantLine(NEW_AGENT_TEXT));
+
+      // Both arrive, on one socket, distinguishable only by the session on the event.
+      const pinnedEv = await client.wait(evOf('agentText', (e) => e.text === LIVE_TEXT));
+      const liveEv = await client.wait(evOf('agentText', (e) => e.text === NEW_AGENT_TEXT));
+      expect(evSession(pinnedEv)).toBe('fix-sess');
+      expect(evSession(liveEv)).toBe('other-sess');
+    },
+    20_000,
+  );
+
+  it(
+    'names a running session that has not written anything since the hub attached',
+    async () => {
+      // The case a cheap roster summary cannot cover and an agent-only stream cannot either: the
+      // session exists and is running, and has said nothing. Without `sessionSeen` the client has
+      // no way to know it is there, so it could never grow a tab for it.
+      const { root } = makeRoot();
+      register(root, 'fix-sess');
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+
+      const seen = await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'fix-sess'));
+      expect(seen.cwd).toBe('C:\\work\\fix-sess');
+      expect(seen.live).toBe(true);
+    },
+    20_000,
+  );
+
+  it(
+    'picks up a session that starts after the observer is already open',
+    async () => {
+      const { root, slugDir } = makeRoot();
+      const client = await connect(await start(root, { rosterMs: 300 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('agentText'));
+
+      // A second session appears on disk and registers itself, exactly as a new CLI would.
+      const lateFile = join(slugDir, 'late-sess.jsonl');
+      copyFileSync(join('fixtures', 'main-session.jsonl'), lateFile);
+      register(root, 'late-sess');
+
+      // Nothing on disk announces a new session to a process that is not watching its directory;
+      // the roster sweep is what has to notice.
+      const seen = await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'late-sess'), 8000);
+      expect(seen.live).toBe(true);
+      appendFileSync(lateFile, assistantLine(SUB_TEXT));
+      const ev = await client.wait(evOf('agentText', (e) => e.text === SUB_TEXT));
+      expect(evSession(ev)).toBe('late-sess');
+    },
+    25_000,
+  );
+
+  it(
+    'keeps streaming a session the picker moved away from, as long as it is still running',
+    async () => {
+      // The acceptance the old single-follow client could not meet: switching tabs must not throw
+      // away the session you switched away from.
+      const { root, slugDir, mainFile } = makeRoot();
+      const otherFile = join(slugDir, 'other-sess.jsonl');
+      copyFileSync(join('fixtures', 'main-session.jsonl'), otherFile);
+      register(root, 'fix-sess');
+      register(root, 'other-sess');
+
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'fix-sess'));
+
+      client.send({ cmd: 'follow', sessionId: 'other-sess' }); // the user clicks the other tab
+      await delay(SETTLE_MS);
+
+      appendFileSync(mainFile, assistantLine(LIVE_TEXT)); // the one they switched *away* from
+      const ev = await client.wait(evOf('agentText', (e) => e.text === LIVE_TEXT));
+      expect(evSession(ev)).toBe('fix-sess');
+    },
+    20_000,
+  );
+
+  it(
+    'tells the client to start again before every replay, so an evicted session is not counted twice',
+    async () => {
+      // The failure this prevents: switch away from a session, let the hub evict the watch, switch
+      // back. The backlog is re-read from byte zero and every event carries a *fresh* seq — higher
+      // than the ones the client already folded, so `ev.seq <= state.lastSeq` rejects none of them
+      // and the whole session lands a second time on top of itself.
+      const { root, slugDir } = makeRoot();
+      copyFileSync(join('fixtures', 'main-session.jsonl'), join(slugDir, 'other-sess.jsonl'));
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      const first = await client.wait(isReset);
+      expect(first).toMatchObject({ sessionId: 'fix-sess', reason: 'replay' });
+      await client.wait(evOf('agentText'));
+
+      // Every replay gets one, including the very first for a session — the hub cannot know what
+      // the client is holding, and "always" is the only rule that is right in both cases.
+      client.send({ cmd: 'follow', sessionId: 'other-sess' });
+      const second = await client.wait(
+        (m): m is ResetMsg => isReset(m) && (m as ResetMsg).sessionId === 'other-sess',
+      );
+      expect(second.reason).toBe('replay');
+
+      // The reset must arrive *before* the history it invalidates, or the client drops the replay
+      // it was meant to keep.
+      const frames = client.seen;
+      const resetAt = frames.findIndex((m) => isReset(m) && (m as ResetMsg).sessionId === 'other-sess');
+      const firstOtherEv = frames.findIndex((m) => isEv(m) && evSession(m) === 'other-sess');
+      expect(resetAt).toBeGreaterThanOrEqual(0);
+      expect(firstOtherEv).toBeGreaterThan(resetAt);
     },
     20_000,
   );
@@ -385,6 +598,127 @@ describe('hub', () => {
       await app.wait(evOf('userMessage'));
     },
     20_000,
+  );
+
+  // A transcript that is truncated or rewritten is read again from byte zero, and every line of
+  // it is republished with a *fresh* seq — which is exactly what the client's idempotence guard
+  // keys on, so it cannot reject a single one. Without the `reset` frame the session is counted
+  // twice: every message, every token, every dollar.
+  it(
+    'sends exactly one reset before re-replaying a rewritten transcript, with fresh seqs',
+    async () => {
+      const { root, mainFile } = makeRoot({ subagents: false });
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('userMessage', (e) => e.text === 'find the flaky test'));
+      await delay(SETTLE_MS);
+
+      const before = client.events();
+      expect(before.length).toBeGreaterThan(0);
+      const lastSeqBefore = Math.max(...before.map((e) => e.seq));
+
+      // Strictly shorter than what has already been read, so the tailer sees the file shrink.
+      writeFileSync(mainFile, userLine(REWRITTEN_TEXT));
+
+      const again = await client.wait(evOf('userMessage', (e) => e.text === REWRITTEN_TEXT), 10_000);
+      await delay(SETTLE_MS);
+
+      // Only the rewind kind: every replay also sends a `reset`, and this test is about the one a
+      // truncated transcript causes.
+      const resets = client.seen.filter((m): m is ResetMsg => isReset(m) && (m as ResetMsg).reason === 'rewound');
+      expect(resets).toHaveLength(1); // one restart, however many files the rewind touched
+      expect(resets[0]).toEqual({ kind: 'reset', sessionId: 'fix-sess', reason: 'rewound' });
+
+      // The frame precedes every event of the re-read: a client that acts on the stream in order
+      // has dropped its state before the first replacement event lands.
+      const at = client.seen.indexOf(resets[0]);
+      expect(at).toBeLessThan(client.seen.indexOf(again));
+      const after = client.seen.slice(at + 1).filter((m): m is Ev => isEv(m));
+      expect(after.length).toBeGreaterThan(0);
+      // Fresh seqs are the reason the frame is needed at all — assert they really are fresh, and
+      // that not one of them slipped out ahead of it.
+      expect(after.every((e) => e.seq > lastSeqBefore)).toBe(true);
+      const ahead = client.seen.slice(0, at).filter((m): m is Ev => isEv(m));
+      expect(ahead.every((e) => e.seq <= lastSeqBefore)).toBe(true);
+
+      // …and the rewind is reported to the host application rather than swallowed.
+      expect(errors.some((e) => e.ctx === 'reset:fix-sess')).toBe(true);
+    },
+    25_000,
+  );
+
+  // 126 lines of 200 real transcripts are ≥ 1 MiB, and on one file every skipped line was a
+  // `tool_result` — four chips that spin forever, with nothing on the wire to say why.
+  it(
+    'reports an oversized line as a tail notice instead of losing it silently',
+    async () => {
+      const { root, mainFile } = makeRoot({ subagents: false });
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('userMessage'));
+
+      appendFileSync(mainFile, oversizedLine());
+      appendFileSync(mainFile, assistantLine(LIVE_TEXT));
+
+      const notice = await client.wait(noticeOf((n) => n.skipped > 0), 15_000);
+      expect(notice.sessionId).toBe('fix-sess');
+      expect(notice.skipped).toBeGreaterThanOrEqual(1);
+
+      // The tail resynchronizes on the next newline, so the line after the giant one still lands.
+      await client.wait(evOf('agentText', (e) => e.text === LIVE_TEXT), 15_000);
+    },
+    30_000,
+  );
+
+  // The drain bound stops one enormous file from starving every other session; it must not also
+  // stop it from ever being finished. A 67.4 MB transcript once read 45.2 MB and gave up, and a
+  // historical session never retried — `armRescan` only re-pumps subagent files.
+  it(
+    'keeps draining across ticks and says the tail is behind until it has caught up',
+    async () => {
+      const { root, mainFile } = makeRoot({ subagents: false });
+      writeFileSync(mainFile, bulkTranscript()); // more than one read batch
+      const client = await connect(await start(root, { drainPasses: 1 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+
+      // One pass per round cannot finish this file, and the follower is told so on follow.
+      const behind = await client.wait(noticeOf((n) => n.behind), 15_000);
+      expect(behind.sessionId).toBe('fix-sess');
+      expect(behind.skipped).toBe(0); // behind is not the same claim as lost
+
+      // The continuation runs on later ticks: the last line of the file arrives regardless.
+      const tail = await client.wait(evOf('agentText', (e) => e.text === TAIL_TEXT), 25_000);
+      expect(tail.ref.agentId).toBe('main');
+
+      // …and the warning clears, so the UI does not keep claiming an incomplete tail.
+      const caughtUp = await client.wait(noticeOf((n) => !n.behind), 15_000);
+      expect(client.seen.indexOf(behind)).toBeLessThan(client.seen.indexOf(caughtUp));
+      expect(caughtUp.skipped).toBe(0);
+    },
+    45_000,
+  );
+
+  it(
+    'says nothing about the tail when nothing was skipped and nothing is behind',
+    async () => {
+      const { root, mainFile } = makeRoot();
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('userMessage'));
+      appendFileSync(mainFile, assistantLine(LIVE_TEXT));
+      await client.wait(evOf('agentText', (e) => e.text === LIVE_TEXT));
+      await delay(SETTLE_MS);
+
+      expect(client.seen.filter(noticeOf())).toEqual([]); // a quiet session stays quiet
+      // Nothing was rewound. The one `reset` this session does see is the routine `replay` that
+      // precedes every backlog, which says nothing about the transcript's health.
+      expect(client.seen.filter((m) => isReset(m) && (m as ResetMsg).reason === 'rewound')).toEqual([]);
+    },
+    25_000,
   );
 
   it(

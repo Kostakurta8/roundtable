@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { Ev } from '../shared/events';
-import { mapEvent } from '../src/office/mapping';
+import type { Ev, UserSource } from '../shared/events';
+import { mapEvent, toolAct } from '../src/office/mapping';
+import { initialState, reduce } from '../src/store';
+
+/** The store's own fold, so a verdict can be checked as the feed will actually show it. */
+const fold = (evs: Ev[]) => evs.reduce(reduce, initialState);
 
 // --- hand-built events, one factory per Ev kind ------------------------------------------
 const ref = (agentId: string) => ({ sessionId: 's', agentId });
@@ -22,17 +26,20 @@ const evText = (agentId: string, text: string, ts = 1000): Ev => ({
 const evUsage = (agentId: string, inTok: number, outTok: number, ts = 1000): Ev => ({
   kind: 'usage', ref: ref(agentId), inTok, outTok, ts, seq: next(),
 });
-const evUserMessage = (agentId: string, text: string, ts = 1000): Ev => ({
-  kind: 'userMessage', ref: ref(agentId), text, ts, seq: next(),
+const evUserMessage = (agentId: string, text: string, source?: UserSource, ts = 1000): Ev => ({
+  kind: 'userMessage', ref: ref(agentId), text, ...(source ? { source } : {}), ts, seq: next(),
 });
-const evToolResult = (agentId: string, ok: boolean, ts = 1000): Ev => ({
-  kind: 'toolResult', ref: ref(agentId), toolUseId: `tu${SEQ}`, ok, ts, seq: next(),
+const evToolResult = (agentId: string, ok: boolean, toolUseId = 'tu1', ts = 1000): Ev => ({
+  kind: 'toolResult', ref: ref(agentId), toolUseId, ok, ts, seq: next(),
 });
 const evFileEdit = (agentId: string, path: string, ts = 1000): Ev => ({
   kind: 'fileEdit', ref: ref(agentId), path, ts, seq: next(),
 });
-const evAgentSpawn = (agentId: string, childAgentId: string, prompt: string, ts = 1000): Ev => ({
-  kind: 'agentSpawn', ref: ref(agentId), childAgentId, prompt, ts, seq: next(),
+const evAgentSpawn = (agentId: string, childAgentId: string, prompt: string, toolUseId?: string, ts = 1000): Ev => ({
+  kind: 'agentSpawn', ref: ref(agentId), childAgentId, prompt, ...(toolUseId ? { toolUseId } : {}), ts, seq: next(),
+});
+const evAgentDone = (agentId: string, ok: boolean, ts = 1000): Ev => ({
+  kind: 'agentDone', ref: ref(agentId), ok, ts, seq: next(),
 });
 const evSessionSeen = (sessionId: string, ts = 1000): Ev => ({
   kind: 'sessionSeen', sessionId, cwd: '/proj', live: true, ts, seq: next(),
@@ -58,14 +65,123 @@ describe('mapEvent — thinking', () => {
 });
 
 describe('mapEvent — toolStart', () => {
-  it('joins tool and target into the workBurst label', () => {
-    expect(mapEvent(evToolStart('a', 'Grep', 'retryWithBackoff'))).toEqual([
-      { op: 'workBurst', agentId: 'a', label: 'Grep retryWithBackoff' },
+  it('carries the tool kind and the target apart, not flattened into one label', () => {
+    const [cmd] = mapEvent(evToolStart('a', 'Grep', 'retryWithBackoff'));
+    expect(cmd).toEqual({
+      op: 'tool',
+      agentId: 'a',
+      id: expect.any(String),
+      tool: 'Grep',
+      act: 'read',
+      target: 'retryWithBackoff',
+    });
+  });
+
+  it('omits the target rather than carrying an empty one', () => {
+    const [cmd] = mapEvent(evToolStart('a', 'Bash'));
+    expect(cmd).toMatchObject({ op: 'tool', tool: 'Bash', act: 'run' });
+    expect(cmd).not.toHaveProperty('target');
+  });
+
+  it('caps a target long enough to be a whole shell command', () => {
+    const long = 'x'.repeat(200);
+    const [cmd] = mapEvent(evToolStart('a', 'Bash', long));
+    expect(cmd).toMatchObject({ target: 'x'.repeat(60) });
+  });
+
+  it('keeps the tool_use id, so the result can be matched to the call', () => {
+    const ev = evToolStart('a', 'Read', 'src/x.ts');
+    const id = ev.kind === 'toolStart' ? ev.toolUseId : '';
+    expect(mapEvent(ev)[0]).toMatchObject({ id });
+  });
+});
+
+describe('toolAct — the picture a tool maps to', () => {
+  it('groups the tools that share a posture', () => {
+    for (const t of ['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']) expect(toolAct(t)).toBe('read');
+    for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) expect(toolAct(t)).toBe('write');
+    for (const t of ['Bash', 'BashOutput', 'KillShell']) expect(toolAct(t)).toBe('run');
+    for (const t of ['WebFetch', 'WebSearch']) expect(toolAct(t)).toBe('browse');
+    for (const t of ['Task', 'Agent', 'Workflow', 'SendMessage']) expect(toolAct(t)).toBe('delegate');
+  });
+
+  it('falls back to `other` rather than guessing from the name', () => {
+    // An MCP tool's name is arbitrary and its behaviour unknowable from here. Drawing an agent
+    // walking to the window because a name contained "web" would be a claim nobody can check.
+    expect(toolAct('mcp__playwright__browser_click')).toBe('other');
+    expect(toolAct('TodoWrite')).toBe('other');
+    expect(toolAct('')).toBe('other');
+  });
+});
+
+describe('mapEvent — toolResult', () => {
+  it('closes the call it names, with how it went', () => {
+    expect(mapEvent(evToolResult('a', true, 'tu7'))).toEqual([
+      { op: 'toolEnd', agentId: 'a', id: 'tu7', ok: true },
+    ]);
+    expect(mapEvent(evToolResult('a', false, 'tu7'))).toEqual([
+      { op: 'toolEnd', agentId: 'a', id: 'tu7', ok: false },
+    ]);
+  });
+});
+
+describe('mapEvent — fileEdit', () => {
+  it('carries the path', () => {
+    expect(mapEvent(evFileEdit('a', 'src/office/engine.ts'))).toEqual([
+      { op: 'edit', agentId: 'a', path: 'src/office/engine.ts' },
+    ]);
+  });
+});
+
+describe('mapEvent — agentSpawn', () => {
+  it('names the parent, the child and the brief', () => {
+    expect(mapEvent(evAgentSpawn('main', 'kid', 'Map the office layout. Report back.'))).toEqual([
+      { op: 'spawn', agentId: 'main', child: 'kid', prompt: 'Map the office layout.' },
     ]);
   });
 
-  it('trims the trailing space when there is no target', () => {
-    expect(mapEvent(evToolStart('a', 'Bash'))).toEqual([{ op: 'workBurst', agentId: 'a', label: 'Bash' }]);
+  it("keeps the Task id when the child's own id is not knowable yet", () => {
+    // Which it never is at this point: the child appears only once its sidecar lands on disk.
+    expect(mapEvent(evAgentSpawn('main', 'pending', 'scout the suites', 'tu4'))).toEqual([
+      { op: 'spawn', agentId: 'main', child: 'pending', prompt: 'scout the suites', toolUseId: 'tu4' },
+    ]);
+  });
+});
+
+describe('mapEvent — agentDone', () => {
+  it('reports the agent that finished, and whether it went well', () => {
+    expect(mapEvent(evAgentDone('kid', true))).toEqual([{ op: 'done', agentId: 'kid', ok: true }]);
+    expect(mapEvent(evAgentDone('kid', false))).toEqual([{ op: 'done', agentId: 'kid', ok: false }]);
+  });
+});
+
+describe('mapEvent — agentSeen', () => {
+  it("carries the sidecar's parent link when there is one", () => {
+    const ev: Ev = { kind: 'agentSeen', ref: ref('kid'), parentToolUseId: 'tu4', ts: 1, seq: next() };
+    expect(mapEvent(ev)).toEqual([{ op: 'ensureActor', agentId: 'kid', parentToolUseId: 'tu4' }]);
+  });
+});
+
+describe('mapEvent — userMessage', () => {
+  it("is the human's instruction in the main transcript", () => {
+    expect(mapEvent(evUserMessage('main', 'find the flaky test. it is in tail.'))).toEqual([
+      { op: 'prompt', agentId: 'main', text: 'find the flaky test.', from: 'human' },
+    ]);
+  });
+
+  it("is the parent's brief in a subagent's transcript", () => {
+    expect(mapEvent(evUserMessage('kid', 'scout the suites'))).toEqual([
+      { op: 'prompt', agentId: 'kid', text: 'scout the suites', from: 'parent' },
+    ]);
+  });
+
+  it('ignores the machine text that also arrives on the user lane', () => {
+    // Hook output, command echoes and `<system-reminder>` blocks are not instructions anybody
+    // gave, and the office must not act as though somebody had just been told something.
+    for (const source of ['hook', 'command', 'reminder', 'caveat'] as const) {
+      expect(mapEvent(evUserMessage('main', 'stuff', source))).toEqual([]);
+    }
+    expect(mapEvent(evUserMessage('main', 'stuff', 'human'))).toHaveLength(1);
   });
 });
 
@@ -292,22 +408,6 @@ describe('mapEvent — usage', () => {
 });
 
 describe('mapEvent — kinds the office does not react to directly', () => {
-  it('userMessage → []', () => {
-    expect(mapEvent(evUserMessage('main', 'find the flaky test'))).toEqual([]);
-  });
-
-  it('toolResult → []', () => {
-    expect(mapEvent(evToolResult('a', true))).toEqual([]);
-  });
-
-  it('fileEdit → []', () => {
-    expect(mapEvent(evFileEdit('a', 'src/x.ts'))).toEqual([]);
-  });
-
-  it('agentSpawn → []', () => {
-    expect(mapEvent(evAgentSpawn('main', 'pending', 'scout the suites'))).toEqual([]);
-  });
-
   it('sessionSeen → [] (this kind carries no ref at all)', () => {
     expect(mapEvent(evSessionSeen('s1'))).toEqual([]);
   });
@@ -315,6 +415,30 @@ describe('mapEvent — kinds the office does not react to directly', () => {
   it('an unrecognized future kind → []', () => {
     const unknown = { kind: 'quantumFlux', ref: ref('a'), ts: 1, seq: 99 } as unknown as Ev;
     expect(mapEvent(unknown)).toEqual([]);
+  });
+});
+
+describe('mapEvent — the seam is wide enough', () => {
+  it('leaves no event kind the room is blind to', () => {
+    // The regression this whole layer exists to prevent: five kinds used to fall through the
+    // default and the office could not say whether anything was working, who had asked whom, or
+    // that anybody had ever finished. `sessionSeen` is the one honest exception — it is about the
+    // session, not about anyone in the room.
+    const every: Ev[] = [
+      evAgentSeen('a'),
+      evThinking('a', 'hm'),
+      evToolStart('a', 'Read', 'x.ts'),
+      evToolResult('a', true),
+      evFileEdit('a', 'x.ts'),
+      evAgentSpawn('a', 'kid', 'go'),
+      evAgentDone('kid', true),
+      evUserMessage('main', 'do the thing'),
+      evText('a', 'found it'),
+      evUsage('a', 1, 2),
+    ];
+    for (const ev of every) {
+      expect(mapEvent(ev), `${ev.kind} produced no command`).not.toHaveLength(0);
+    }
   });
 });
 
@@ -337,5 +461,45 @@ describe('mapEvent — purity', () => {
     const withDefault = mapEvent(evText('reviewer', 'REFUTED it.'));
     const withEmpty = mapEvent(evText('reviewer', 'REFUTED it.'), new Set());
     expect(withDefault).toEqual(withEmpty);
+  });
+});
+
+/**
+ * The office and the feed must agree on what a verdict is.
+ *
+ * They read the same `agentText` events: the store decides whether a chat card is badged, and
+ * mapping decides whether the room stages a confront and in what colour. When the two disagree an
+ * agent walks a red trip across the office for a message the feed shows as ordinary — which is
+ * exactly what happened while the store tested `/\bREFUTED\b/` and mapping still used
+ * `.includes()`, under a comment claiming the two matched "exactly".
+ *
+ * Asserting the two functions against each other, rather than each against its own literal, is the
+ * point: this test fails if either one is changed alone.
+ */
+describe('verdicts — one reading, two readers', () => {
+  const CASES: readonly string[] = [
+    'REFUTED — the retry never fires.',
+    'CONFIRMED. The fix holds.',
+    'UNREFUTED so far, but I want another pass.', // the boundary case that forked them
+    'CONFIRMEDLY better',
+    'I confirmed the fix and refuted nothing.', // lowercase prose is not a verdict
+    'CONFIRMED for the parser, REFUTED for the tail.', // both markers: the negative wins
+    'Nothing conclusive yet.',
+    '(REFUTED)',
+    'REFUTED',
+    'PRECONFIRMED',
+  ];
+
+  it.each(CASES)('the room and the feed reach the same verdict on %j', (text) => {
+    // What the feed will badge the card with.
+    const feed = fold([evText('reviewer', text)]).msgs.at(-1)?.verdict;
+    // What the room will stage: a `confront` carries a verdict, anything else carries none.
+    const cmds = mapEvent(evText('reviewer', text));
+    const room = cmds.find((c) => c.op === 'confront')?.verdict;
+    expect(room).toBe(feed);
+  });
+
+  it('stages no confront at all for a message that is not a verdict', () => {
+    expect(mapEvent(evText('reviewer', 'UNREFUTED so far.')).some((c) => c.op === 'confront')).toBe(false);
   });
 });

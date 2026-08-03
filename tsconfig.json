@@ -19,6 +19,7 @@
     "server",
     "tests",
     "e2e",
+    "scripts",
     "vite.config.ts",
     "vitest.config.mts",
     "playwright.config.ts"

@@ -3,16 +3,23 @@
 @tailwind utilities;
 
 /*
- * Ported from docs/mockup/office-sim-v5.html — the approved look. The shell, the HUD and the
- * chat panel live here; the room itself — floor, furniture, people — is in office/scene.css.
- * Natural-office palette throughout: the only saturated colours in the UI are the two verdicts.
+ * The observer shell: tokens, the app grid, and every panel that is not the room itself.
+ *
+ * The room is not here and takes no tokens from here: it is a canvas painted by
+ * `office/pixel/scene.ts` out of the locked palette in `office/pixel/art.ts`, and `office/pixel.css`
+ * does nothing but size it. Two sources of truth for one colour is how the old DOM room ended up
+ * with a stylesheet the size of the renderer that replaced it.
+ *
+ * Two themes, one attribute. `data-theme` on <html> is the only switch — nothing branches on the
+ * theme in JavaScript, so a new surface is themed the moment it names a token instead of a hex.
+ * Day is the mockup's approved daylight office; night is the same room after hours, lit by desk
+ * lamps and monitors rather than windows.
  */
+
 /*
- * Owned locally, not inherited from Tailwind's Preflight. The office bubbles are placed by
- * absolute `left` against their own `max-width`, so a content-box that adds padding and border
- * on top of that width makes the thought bubble overlap the speech bubble it is parked beside
- * (scene.css `.say.on + .think.on`). Tailwind is otherwise unused here — the day someone drops
- * the three directives above as dead weight must not silently bring that overlap back.
+ * Owned locally, not inherited from Tailwind's Preflight. Panels across the shell size themselves
+ * by `max-width` against padding and a border, so a content-box would quietly add both on top of
+ * the width they were laid out to. Tailwind is otherwise unused here.
  */
 *,
 *::before,
@@ -20,24 +27,104 @@
   box-sizing: border-box;
 }
 
+/* ============================================================= tokens ==== */
+
 :root {
+  /* --- office surfaces, also read by scene.css --- */
   --oak-1: #e3d4b6;
   --oak-2: #d9c8a6;
+  --oak-3: #d2bf9a;
   --plank: rgba(122, 94, 58, 0.12);
   --wall: #efe9dc;
   --wall-2: #e6dfd0;
   --base: #cfc7b4;
-  --card: #ffffff;
-  --paper: #faf8f3;
+  --shadow-floor: rgba(96, 78, 46, 0.22);
+
+  /* --- UI surfaces --- */
+  --bg: #d9c8a6;
+  --panel: rgba(255, 255, 255, 0.94);
+  --panel-solid: #ffffff;
+  --panel-2: #faf8f3;
+  --panel-3: #f2eee4;
+  --line: #e4dfd1;
+  --line-soft: #eee9dc;
+
   --ink: #2e2d29;
-  --ink-soft: #67675f;
-  --ink-dim: #9b998e;
-  --border: #e4dfd1;
+  --ink-2: #67675f;
+  /* Carries status lines, timestamps and the OFFLINE state, so it has to clear WCAG AA against
+     the panel it sits on — the mockup's lighter grey measured 2.7:1 and was unreadable in sun. */
+  --ink-3: #75736a;
+
+  --accent: #1e7280;
+  --accent-2: #3e9aa8;
+  --accent-wash: #e8f3f4;
   --ok: #2e9e5b;
+  --ok-wash: #e9f6ee;
+  --ok-line: #cfe8da;
   --err: #c04848;
-  --shadow-amb: 0 12px 30px rgba(96, 78, 46, 0.18);
+  --err-wash: #fbeaea;
+  --err-line: #ebcaca;
+  --warn: #b07d1a;
+  --warn-wash: #f8f0dc;
+
+  --shadow-1: 0 1px 3px rgba(96, 78, 46, 0.1);
+  --shadow-2: 0 12px 30px rgba(96, 78, 46, 0.18);
+  --shadow-3: 0 22px 60px rgba(96, 78, 46, 0.26);
+
   --font-mono: 'Cascadia Code', ui-monospace, 'JetBrains Mono', Consolas, monospace;
   --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+
+  /* --- layout --- */
+  --dock-w: 400px;
+  --top-h: 46px;
+  --time-h: 62px;
+  --rail-w: 244px;
+  --radius: 12px;
+  --radius-sm: 7px;
+  --ease: cubic-bezier(0.22, 0.7, 0.3, 1);
+}
+
+/*
+ * Night. Warm-neutral rather than blue-black: the room is oak and plaster, and a cold grey wash
+ * over it reads as a screenshot with the brightness pulled down instead of as evening.
+ */
+:root[data-theme='dark'] {
+  --oak-1: #3a3229;
+  --oak-2: #322b23;
+  --oak-3: #2a241d;
+  --plank: rgba(0, 0, 0, 0.25);
+  --wall: #2a2822;
+  --wall-2: #24221d;
+  --base: #1e1c18;
+  --shadow-floor: rgba(0, 0, 0, 0.5);
+
+  --bg: #1c1915;
+  --panel: rgba(38, 35, 30, 0.94);
+  --panel-solid: #262320;
+  --panel-2: #2e2a25;
+  --panel-3: #34302a;
+  --line: #423c34;
+  --line-soft: #383229;
+
+  --ink: #ece5d8;
+  --ink-2: #b0a795;
+  --ink-3: #7d7566;
+
+  --accent: #4fb3c2;
+  --accent-2: #6ac6d4;
+  --accent-wash: #22383c;
+  --ok: #5cc98a;
+  --ok-wash: #21372a;
+  --ok-line: #385b45;
+  --err: #e57a7a;
+  --err-wash: #3a2424;
+  --err-line: #61393a;
+  --warn: #d6a544;
+  --warn-wash: #3a3021;
+
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 12px 30px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 22px 60px rgba(0, 0, 0, 0.62);
 }
 
 html,
@@ -49,36 +136,85 @@ body,
 body {
   margin: 0;
   overflow: hidden;
-  background: var(--oak-2);
+  background: var(--bg);
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ================================================================ HUD ==== */
+/* ============================================================== shell ==== */
 
-.hud {
-  position: fixed;
-  z-index: 1000;
-  font-family: var(--font-mono);
+/*
+ * One grid, three rows. The old shell floated every panel with `position: fixed` and hard-coded
+ * the chat's width into the top bar's `right` offset, so any change to one panel had to be
+ * mirrored by hand in the others — and at narrow widths the HUD was simply hidden rather than
+ * laid out. Areas mean the dock can collapse and the timeline can be hidden with a class.
+ */
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--dock-w);
+  grid-template-rows: var(--top-h) minmax(0, 1fr) var(--time-h);
+  grid-template-areas:
+    'top   top'
+    'stage dock'
+    'time  time';
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg);
 }
-.glass {
-  background: rgba(255, 255, 255, 0.93);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-amb);
-  backdrop-filter: blur(3px);
+.app.dock-hidden {
+  grid-template-columns: minmax(0, 1fr) 0;
 }
-.hud-top {
-  top: 12px;
-  left: 12px;
-  right: 396px;
+.app.time-hidden {
+  grid-template-rows: var(--top-h) minmax(0, 1fr) 0;
+}
+.app.dock-hidden .dock,
+.app.time-hidden .timeline {
+  display: none;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(6px);
+}
+
+/* The stage owns the room and everything that floats over it. */
+.stage {
+  grid-area: stage;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-2);
+}
+/*
+ * Two classes deep on purpose: `office/pixel.css` is imported after this file, so an equally
+ * specific `.office` rule there would win. There the room is a full-bleed layer in its own right;
+ * here it is one cell of a grid.
+ */
+.stage > .office {
+  position: absolute;
+  inset: 0;
+}
+
+/* ============================================================ top bar ==== */
+
+.topbar {
+  grid-area: top;
   display: flex;
   align-items: center;
-  gap: 13px;
-  padding: 9px 14px;
+  gap: 10px;
+  padding: 0 12px;
+  font-family: var(--font-mono);
   font-size: 11px;
+  min-width: 0;
 }
 .wordmark {
   display: flex;
@@ -87,32 +223,172 @@ body {
   letter-spacing: 0.2em;
   font-weight: 700;
   flex: none;
+  color: var(--ink);
+}
+.topbar .sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  flex: none;
+}
+.topbar .spacer {
+  margin-left: auto;
 }
 
+.stat {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  flex: none;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+.stat b {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.stat .k {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink-3);
+}
+.pill-live {
+  color: var(--ok);
+  border-color: var(--ok-line);
+  background: var(--ok-wash);
+}
+.pill-warn {
+  color: var(--warn);
+  border-color: var(--line);
+  background: var(--warn-wash);
+}
+/*
+ * The fourth state of "what is the room showing": a past moment, and the way back to now. It is a
+ * button rather than a pill because it is the only exit from a seek that no panel toggle and no
+ * short window can take away — `font-family` because a <button> does not inherit the bar's mono.
+ */
+.pill-seek {
+  gap: 6px;
+  color: var(--warn);
+  border-color: var(--warn);
+  background: var(--warn-wash);
+  font-family: inherit;
+  cursor: pointer;
+}
+.pill-seek b {
+  font-variant-numeric: tabular-nums;
+}
+.pill-seek:hover {
+  background: var(--warn);
+  color: var(--panel-solid);
+}
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: blink 1.6s infinite;
+}
+
+/* --- buttons --- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition:
+    background 0.14s var(--ease),
+    color 0.14s var(--ease),
+    border-color 0.14s var(--ease);
+}
+.btn:hover {
+  background: var(--panel-3);
+  color: var(--ink);
+}
+.btn.on {
+  background: var(--accent-wash);
+  border-color: var(--accent-2);
+  color: var(--accent);
+}
+.btn.icon {
+  padding: 4px 7px;
+}
+.btn:focus-visible,
+.tab:focus-visible,
+.pill-seek:focus-visible,
+.session-pick:focus-visible,
+.arow:focus-visible,
+.filter-chip:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+}
+
+/* --- session picker --- */
+
+/*
+ * The one child of the bar that yields. Every other one is `flex: none`, so a narrow window has to
+ * be absorbed here or it is absorbed by pushing the buttons off the right edge — which, with
+ * `body { overflow: hidden }`, means clipping them away entirely rather than scrolling to them.
+ * The floor keeps it a button you can still hit and still read a name in.
+ */
 .session-menu {
   position: relative;
-  min-width: 0;
+  min-width: 96px;
+  flex: 0 1 auto;
 }
 .session-pick {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 320px;
+  min-width: 0;
+  max-width: 340px;
   padding: 4px 9px;
-  background: var(--paper);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--ink-soft);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
   font: inherit;
   cursor: pointer;
 }
 .session-pick:hover {
-  border-color: #d5cdb8;
+  border-color: var(--accent-2);
 }
+/* The name is the last thing to give, but it does give: without this it sets a min-content floor
+   the flex item cannot shrink past, and the overflow lands on the buttons instead. */
 .session-pick b {
   color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.session-pick .slug {
+.session-pick .slug,
+.session-list .slug {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -121,122 +397,208 @@ body {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 1;
-  width: 340px;
-  max-height: 300px;
+  z-index: 60;
+  /* The picker has to stay operable at every width the bar survives, and a 420px panel hanging off
+     a bar 20px from the viewport's edge is not operable below ~450px. */
+  width: min(420px, calc(100vw - 32px));
+  max-height: 60vh;
   overflow-y: auto;
   padding: 5px;
   margin: 0;
   list-style: none;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-3);
 }
 .session-list button {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px 8px;
   width: 100%;
-  padding: 5px 7px;
+  padding: 6px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   font: inherit;
   font-size: 10px;
-  color: var(--ink-soft);
+  color: var(--ink-2);
   text-align: left;
   cursor: pointer;
 }
 .session-list button:hover {
-  background: var(--paper);
+  background: var(--panel-2);
 }
 .session-list button.on {
-  background: #edf2e8;
+  background: var(--accent-wash);
 }
 .session-list b {
   color: var(--ink);
   flex: none;
 }
-.session-list .slug {
+/* Scoped to `.session-list` this painted nothing anywhere else, and three places render one: the
+   picker's own button, and every session tab. A dot with no size is not a subtle bug — it is a
+   liveness indicator that is simply absent. */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  align-self: center;
+  flex: none;
+}
+.dot.live {
+  background: var(--ok);
+}
+.session-list time {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.session-list .cwd {
+  grid-column: 2 / -1;
+  color: var(--ink-3);
+  font-size: 9px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.session-list time {
-  margin-left: auto;
-  flex: none;
-  color: var(--ink-dim);
-}
 .session-list .empty {
-  padding: 6px 7px;
+  padding: 8px;
   font-size: 10px;
-  color: var(--ink-dim);
+  color: var(--ink-3);
 }
 
-.pill {
+/* ====================================================== session tabs ==== */
+
+/*
+ * One tab per session with agents working, floating over the top of the room.
+ *
+ * Over the room rather than in the shell's grid, because the strip is not always there: a grid row
+ * that has to collapse when it is empty is the same shape of mistake that left the dock on a
+ * zero-height track at 800×600. Floating costs nothing when there is nothing to float.
+ *
+ * The container takes no pointer events so it cannot steal a click meant for the room behind it;
+ * the tabs themselves take them back.
+ */
+.session-tabs {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  gap: 4px;
+  max-width: calc(100% - 20px);
+  overflow-x: auto;
+  scrollbar-width: none;
+  pointer-events: none;
+}
+.session-tabs::-webkit-scrollbar {
+  display: none;
+}
+.session-tab {
+  pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex: none;
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  /* The room is drawn in flat colour; a tab sitting on top of it needs to read as *above* it. */
+  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
 }
-.pill-live {
-  color: var(--ok);
-  border: 1px solid #cfe8da;
-  background: #e9f6ee;
+.session-tab:hover {
+  border-color: var(--ink-3);
 }
-.pill-off {
-  color: var(--ink-dim);
-  border: 1px solid var(--border);
-  background: var(--paper);
-}
-.live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-  animation: blink 1.6s infinite;
-}
-.cost {
+.session-tab.on {
   color: var(--ink);
-  font-variant-numeric: tabular-nums;
+  border-color: var(--accent-2);
+}
+.session-tab b {
+  font-weight: 600;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.hud-top .roster {
-  margin-left: auto;
-  flex: none;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  color: var(--ink-dim);
-  white-space: nowrap;
+/* The working-agent count is the reason the tab exists, so it is the loudest thing on it. */
+.session-tab .n {
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent-2);
+  color: var(--panel);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
-/* Mockup 290-294: the roster legend, bottom left, one row per agent. The mockup has five
-   agents; a real session can have twenty, so the panel is capped and scrolls rather than
-   growing up the screen and covering the room it is describing. */
-.hud-agents {
-  left: 12px;
-  bottom: 12px;
-  padding: 10px 12px 9px;
+/* =============================================================== rail ==== */
+
+/* The roster, floating over the room's bottom-left corner. */
+.rail {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 30;
+  width: var(--rail-w);
+  max-height: calc(100% - 20px);
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  font-family: var(--font-mono);
   font-size: 9.5px;
-  display: grid;
-  gap: 6px;
-  min-width: 252px;
-  max-width: 320px;
-  max-height: 40vh;
-  overflow-y: auto;
 }
-.hud-agents .hd {
+.rail-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 8.5px;
   letter-spacing: 0.2em;
-  color: var(--ink-dim);
-  margin-bottom: 2px;
+  color: var(--ink-3);
+  padding: 0 2px 6px;
+}
+.rail-hd .spacer {
+  margin-left: auto;
+}
+.rail-list {
+  overflow-y: auto;
+  display: grid;
+  gap: 2px;
+  min-height: 0;
 }
 .arow {
-  display: flex;
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  color: var(--ink-soft);
+  gap: 7px;
+  width: 100%;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.arow:hover {
+  background: var(--panel-2);
+}
+.arow.on {
+  background: var(--accent-wash);
+  border-color: var(--accent-2);
+}
+.arow .who {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 .arow b {
@@ -246,55 +608,226 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.arow .model {
+.arow .sub {
+  color: var(--ink-3);
+  font-size: 8.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ink-dim);
 }
-.arow .st {
-  margin-left: auto;
-  padding-left: 6px;
+.arow .right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   flex: none;
-  color: var(--ink-dim);
+}
+/* Depth in the spawn tree, as an indent that cannot collapse the name column. */
+.arow[data-depth='1'] {
+  padding-left: 12px;
+}
+.arow[data-depth='2'] {
+  padding-left: 20px;
+}
+.arow[data-depth='3'] {
+  padding-left: 28px;
+}
+
+/* One dot per agent phase — the roster's only colour. */
+.phase {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-3);
+}
+.phase.thinking {
+  background: var(--accent-2);
+  animation: pulse 1.4s infinite;
+}
+.phase.working {
+  background: var(--warn);
+  animation: pulse 0.9s infinite;
+}
+.phase.talking {
+  background: var(--ok);
+}
+.phase.done {
+  background: transparent;
+  border: 1px solid var(--ink-3);
+}
+
+/* A token bar, so relative spend is legible without reading five numbers. */
+.tokbar {
+  width: 34px;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+  flex: none;
+}
+.tokbar i {
+  display: block;
+  height: 100%;
+  background: var(--accent-2);
+}
+
+/* =============================================================== dock ==== */
+
+.dock {
+  grid-area: dock;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px 7px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition: color 0.14s var(--ease);
+}
+.tab:hover {
+  color: var(--ink-2);
+}
+.tab.on {
+  color: var(--ink);
+  border-bottom-color: var(--accent-2);
+}
+.tab .n {
   font-size: 8.5px;
-  min-width: 92px;
-  text-align: right;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dock-foot {
+  border-top: 1px solid var(--line);
+  padding: 7px 12px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- shared scroller + toolbar for every tab --- */
+
+.tab-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  flex: none;
+}
+.search {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.search::placeholder {
+  color: var(--ink-3);
+}
+.search:focus {
+  outline: none;
+  border-color: var(--accent-2);
+}
+.filter-chip {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.filter-chip.on {
+  background: var(--accent-wash);
+  border-color: var(--accent-2);
+  color: var(--accent);
+}
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px 14px;
+}
+.empty-note {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+  padding: 18px 8px;
+  letter-spacing: 0.06em;
+}
+
+/*
+ * The dock with no session to show. It replaces the feed rather than sitting inside it, because
+ * a feed's own empty note is a statement about a session — and the whole bug was three surfaces
+ * describing a session that did not exist. `margin: auto` inside the dock's flex column centres
+ * it on both axes, so an empty panel reads as deliberate rather than as one that failed to load.
+ */
+.nothing {
+  margin: auto;
+  max-width: 290px;
+  padding: 20px 16px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.75;
+  color: var(--ink-3);
+}
+.nothing b {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--ink-2);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+.nothing p {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* =============================================================== chat ==== */
 
-.chat {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  bottom: 12px;
-  width: 372px;
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
 .chat-head {
-  padding: 11px 14px 9px;
-  border-bottom: 1px solid var(--border);
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--line-soft);
   font-family: var(--font-mono);
-}
-.chat-head .l1 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: var(--ink-dim);
-}
-.chat-head .l1 .cnt {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-  letter-spacing: 0;
-  color: var(--ink-soft);
+  flex: none;
 }
 .chat-head .l2 {
   margin-top: 3px;
@@ -304,21 +837,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chat-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 10px 12px 14px;
-  scroll-behavior: smooth;
-}
-.chat-foot {
-  border-top: 1px solid var(--border);
-  padding: 8px 14px;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--ink-dim);
-  letter-spacing: 0.05em;
-}
 
 /* The 1fr column must be minmax(0, 1fr): an auto column sizes to the longest unbroken string
    in the card, which pushes a real file path straight through the edge of the panel. */
@@ -326,26 +844,31 @@ body {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 0 8px;
-  padding: 6px 0;
-  animation: msg-in 0.3s ease;
+  padding: 5px 0;
+  animation: msg-in 0.3s var(--ease);
 }
 .msg .mini {
   margin-top: 4px;
   justify-self: center;
 }
 .msg-card {
-  background: var(--card);
-  border: 1px solid var(--border);
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
   border-radius: 9px;
   padding: 7px 10px 8px;
   min-width: 0;
-  box-shadow: 0 1px 3px rgba(96, 78, 46, 0.08);
+  box-shadow: var(--shadow-1);
 }
 .msg-card.verdict-err {
   border-left: 3px solid var(--err);
 }
 .msg-card.verdict-ok {
   border-left: 3px solid var(--ok);
+}
+/* The card of whoever is selected in the roster or the room. */
+.msg.focus .msg-card {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 1px var(--accent-2);
 }
 .msg-head {
   display: flex;
@@ -360,10 +883,15 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.msg-head .model {
+  color: var(--ink-3);
+  font-size: 8.5px;
+  flex: none;
+}
 .msg-head time {
   margin-left: auto;
   flex: none;
-  color: var(--ink-dim);
+  color: var(--ink-3);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
 }
@@ -379,23 +907,36 @@ body {
 .msg-body p:last-child {
   margin: 0;
 }
+.msg-body code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--panel-3);
+  border-radius: 3px;
+  padding: 0 3px;
+}
 /* The human's own turn spans the full width — no avatar column to leave room for. */
 .msg-user {
   grid-template-columns: minmax(0, 1fr);
 }
 .msg-user .msg-card {
-  background: #edf2e8;
-  border-color: #dbe3d0;
+  background: var(--accent-wash);
+  border-color: var(--accent-2);
+}
+/* A machine-written `user` line: real, but not the human talking. */
+.msg-user.machine .msg-card {
+  background: var(--panel-2);
+  border-color: var(--line);
+  border-left: 3px solid var(--line);
 }
 .msg-sys {
   text-align: center;
   font-family: var(--font-mono);
   font-size: 9px;
-  color: var(--ink-dim);
-  padding: 7px 0;
+  color: var(--ink-3);
+  padding: 6px 0;
   letter-spacing: 0.06em;
   overflow-wrap: anywhere;
-  animation: msg-in 0.3s ease;
+  animation: msg-in 0.3s var(--ease);
 }
 
 /* Mini-head: skin, hair and a sliver of torso, in the agent's own tints. */
@@ -427,6 +968,8 @@ body {
   border-radius: 3px 3px 2px 2px;
 }
 
+/* ============================================================== chips ==== */
+
 .chips {
   display: flex;
   gap: 4px;
@@ -441,25 +984,51 @@ body {
   font-size: 8.5px;
   padding: 2px 6px;
   border-radius: 4px;
-  border: 1px solid var(--border);
-  color: var(--ink-soft);
-  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  background: var(--panel-2);
   display: inline-flex;
   align-items: center;
   gap: 4px;
   max-width: 100%;
   overflow-wrap: anywhere;
 }
+.chip .t {
+  font-weight: 700;
+  color: var(--ink);
+}
+.chip .ms {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+/* A tool that has started but not returned: the office is mid-action, and the feed says so. */
+.chip.running {
+  border-color: var(--accent-2);
+  color: var(--accent);
+}
+.chip.running::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: blink 1s infinite;
+}
+.chip.failed {
+  color: var(--err);
+  border-color: var(--err-line);
+  background: var(--err-wash);
+}
 .chip--refuted {
   color: var(--err);
-  border-color: #ebcaca;
-  background: #fbeaea;
+  border-color: var(--err-line);
+  background: var(--err-wash);
   font-weight: 700;
 }
 .chip--ok {
   color: var(--ok);
-  border-color: #cfe8da;
-  background: #e9f6ee;
+  border-color: var(--ok-line);
+  background: var(--ok-wash);
   font-weight: 700;
 }
 
@@ -469,7 +1038,7 @@ details.monologue {
 details.monologue summary {
   font-family: var(--font-mono);
   font-size: 9px;
-  color: var(--ink-dim);
+  color: var(--ink-3);
   cursor: pointer;
   list-style: none;
   display: flex;
@@ -481,7 +1050,7 @@ details.monologue summary::-webkit-details-marker {
 }
 details.monologue summary::before {
   content: '▸';
-  transition: transform 0.15s;
+  transition: transform 0.15s var(--ease);
 }
 details.monologue[open] summary::before {
   transform: rotate(90deg);
@@ -489,17 +1058,391 @@ details.monologue[open] summary::before {
 .monologue-body {
   margin-top: 4px;
   padding: 6px 9px;
-  border-left: 2px solid #dcd6ca;
-  background: var(--paper);
+  border-left: 2px solid var(--line);
+  background: var(--panel-2);
   border-radius: 0 5px 5px 0;
   font-family: var(--font-mono);
   font-size: 9.5px;
   line-height: 1.65;
-  color: var(--ink-soft);
+  color: var(--ink-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 260px;
   overflow-y: auto;
+}
+
+/* ======================================================= agents / tools ==== */
+
+.acard {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-solid);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  box-shadow: var(--shadow-1);
+}
+.acard.on {
+  border-color: var(--accent-2);
+}
+.acard-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.acard-head b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acard-head .right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--ink-3);
+  font-size: 9px;
+}
+.kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-2);
+}
+.kv dt {
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+}
+.kv dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The live tool stream: one dense row per call. */
+.trow {
+  display: grid;
+  grid-template-columns: 15px auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 7px;
+  padding: 3px 4px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-2);
+}
+.trow:hover {
+  background: var(--panel-2);
+}
+.trow .tool {
+  font-weight: 700;
+  color: var(--ink);
+}
+.trow .target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+  direction: rtl; /* a clipped path should lose its head, not its filename */
+  text-align: left;
+}
+.trow .ms {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.trow.failed .tool {
+  color: var(--err);
+}
+.trow.running .tool {
+  color: var(--accent);
+}
+
+/* A horizontal share bar, used by the tool histogram and the per-agent spend. */
+.bar {
+  display: grid;
+  grid-template-columns: minmax(0, 92px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-2);
+  padding: 2px 0;
+}
+.bar .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar .track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.bar .track i {
+  display: block;
+  height: 100%;
+  background: var(--accent-2);
+}
+.bar .val {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+
+.section-hd {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  color: var(--ink-3);
+  margin: 10px 0 5px;
+}
+.section-hd:first-child {
+  margin-top: 0;
+}
+
+/* ========================================================== inspector ==== */
+
+.inspector {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 40;
+  width: 262px;
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  padding: 10px 12px 12px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  animation: pop-in 0.16s var(--ease);
+}
+.inspector .close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.inspector h3 {
+  margin: 0 16px 2px 0;
+  font-size: 11px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.inspector .sub {
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+
+/* =========================================================== timeline ==== */
+
+.timeline {
+  grid-area: time;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+  min-width: 0;
+}
+.tl-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  letter-spacing: 0.1em;
+}
+.tl-side b {
+  color: var(--ink);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.tl-plot {
+  position: relative;
+  height: 42px;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  border-bottom: 1px solid var(--line);
+  cursor: crosshair;
+}
+/*
+ * One column per bucket, and one <button> per column: pressing a column seeks the room, so the
+ * thing being pressed has to be a control rather than a `div` with a click handler bolted to it.
+ *
+ * The button is the *whole* column, not the height of its own data. A quiet second draws a bar six
+ * percent tall — two and a half pixels — and a two-and-a-half-pixel click target with a focus ring
+ * nobody can see is not the affordance this strip has been claiming to be. The stack inside carries
+ * the height; the button carries the hit area, the focus and the "you are here".
+ */
+.tl-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+/* An outline rather than a border or a background: it is painted outside the box, so a column
+   under two pixels wide still shows a ring wide enough to find. */
+.tl-bar:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+}
+/* Where the room is being replayed from, in the same warm tone as the top bar's seek pill — the
+   two are the same fact stated at opposite ends of the window. */
+.tl-bar[aria-current='true'] {
+  background: var(--warn-wash);
+  box-shadow: inset 0 -2px 0 var(--warn);
+}
+/* Stacked so the mix of work in a second is legible, not just its volume. */
+.tl-stack {
+  width: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  border-radius: 1px 1px 0 0;
+  overflow: hidden;
+  opacity: 0.85;
+}
+.tl-bar:hover .tl-stack,
+.tl-bar:focus-visible .tl-stack,
+.tl-bar[aria-current='true'] .tl-stack {
+  opacity: 1;
+}
+.tl-stack i {
+  display: block;
+  width: 100%;
+}
+/* Shared by the stacked columns and the legend below them, so the two cannot drift apart. */
+.s-says {
+  background: var(--ok);
+}
+.s-tools {
+  background: var(--accent-2);
+}
+.s-thinks {
+  background: var(--ink-3);
+}
+.s-errors {
+  background: var(--err);
+}
+.tl-legend {
+  display: flex;
+  gap: 9px;
+  flex: none;
+}
+.tl-legend span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tl-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  display: block;
+}
+
+/* ============================================================= palette ==== */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(20, 16, 10, 0.32);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+  animation: fade-in 0.12s var(--ease);
+}
+.palette {
+  width: min(560px, 92vw);
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-3);
+  animation: pop-in 0.16s var(--ease);
+}
+.palette input {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.palette input:focus {
+  outline: none;
+}
+.palette ul {
+  list-style: none;
+  margin: 0;
+  padding: 5px;
+  overflow-y: auto;
+}
+/*
+ * The rows are options in a listbox, not buttons. Focus stays in the search field for the widget's
+ * whole life and `aria-activedescendant` names the row the arrows are on, which is what makes the
+ * selection audible; a row that was separately focusable would put thirty tab stops between the
+ * field and the way out.
+ *
+ * The highlight is keyed on `aria-selected` rather than on a class, so the colour a sighted user
+ * sees and the state a screen reader reads are one attribute and cannot come apart.
+ */
+.palette li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.palette li[aria-selected='true'],
+.palette li:hover {
+  background: var(--accent-wash);
+  color: var(--ink);
+}
+.palette .empty-note {
+  margin: 0;
+}
+.palette .hint {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+  flex: none;
+}
+kbd {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--ink-2);
 }
 
 /* =============================================================== misc ==== */
@@ -513,6 +1456,17 @@ details.monologue[open] summary::before {
     opacity: 0.25;
   }
 }
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.6;
+  }
+}
 @keyframes msg-in {
   from {
     opacity: 0;
@@ -523,35 +1477,142 @@ details.monologue[open] summary::before {
     transform: none;
   }
 }
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
   }
-  .chat-scroll {
+  .scroller {
     scroll-behavior: auto;
   }
 }
 
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d8d3c6;
+  background: var(--line);
   border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Narrow window: the feed is the observer's whole point, so it takes the room instead of hiding. */
-@media (max-width: 940px) {
-  .chat {
-    left: 12px;
-    width: auto;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * Narrow and short windows. The old rule hid the HUD outright below 940px, which left the
+ * observer with no session picker and no roster — the panels the room exists to annotate. Now the
+ * dock narrows first, then drops below the room instead of beside it, and the room keeps its
+ * whole width because it is the thing that does not reflow.
+ *
+ * The top bar sheds down the same ladder, and it has to: every child of it is `flex: none`, it has
+ * a fixed 46px row to sit in so it cannot wrap, and `body { overflow: hidden }` means anything
+ * pushed past its right edge is clipped rather than scrolled to — ⌘K, the theme and the dock
+ * toggle simply stopped being reachable by mouse or by tab. What is dropped at each step is a word
+ * whose glyph, number or `title` already says the same thing; what survives at every step is every
+ * control. `RAIL_INSET` used to be a constant in `App.tsx` that this block silently invalidated
+ * twice over; `useRailInset` measures the rail instead, so these two rules are free to move.
+ */
+@media (max-width: 1180px) {
+  :root {
+    --dock-w: 330px;
+    --rail-w: 210px;
   }
-  .hud-top,
-  .hud-agents {
+  .topbar {
+    gap: 8px;
+  }
+  /* Step one: words that are beside their own glyph — ROUNDTABLE beside the ring, "auto" beside
+     ◐, "SHOWING" beside a clock. */
+  .topbar .lbl {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  /* Step two: the dividers and the stats' keys. Each stat keeps a `title` naming what it counts,
+     and none of them was ever focusable, so nothing leaves the keyboard's reach here. */
+  .topbar {
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .topbar .sep {
+    display: none;
+  }
+  .topbar .stat .k {
+    display: none;
+  }
+  .session-pick {
+    max-width: 190px;
+  }
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--top-h) minmax(0, 1fr) minmax(0, 1fr) var(--time-h);
+    grid-template-areas:
+      'top'
+      'stage'
+      'dock'
+      'time';
+  }
+  .app.dock-hidden {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rail {
+    display: none; /* the Agents tab carries the same roster, with more room for it */
+  }
+  .inspector {
+    width: 220px;
+  }
+}
+/*
+ * Step three: the numbers themselves. The dock's tabs carry the agent and message counts, and the
+ * running-sessions pill is a hint rather than a control — the five controls are not repeated
+ * anywhere else, so they are the last things standing.
+ */
+@media (max-width: 740px) {
+  .topbar .stat,
+  .topbar .pill-warn {
+    display: none;
+  }
+}
+@media (max-height: 620px) {
+  .app,
+  .app.time-hidden {
+    grid-template-rows: var(--top-h) minmax(0, 1fr) 0;
+  }
+  .timeline {
     display: none;
   }
 }

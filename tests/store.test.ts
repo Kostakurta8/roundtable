@@ -4,7 +4,16 @@ import { describe, expect, it } from 'vitest';
 import type { Ev } from '../shared/events';
 import { Normalizer } from '../server/normalize';
 import { parseLine } from '../server/parse';
-import { agentLook, initialState, MSG_CAP, reduce, type RtState } from '../src/store';
+import {
+  agentLook,
+  initialState,
+  MSG_CAP,
+  OPEN_TOOL_GRACE_MS,
+  reduce,
+  workingAgents,
+  WORKING_WINDOW_MS,
+  type RtState,
+} from '../src/store';
 
 /** Same helper the Normalizer tests use: a whole fixture file → the events it produces. */
 const feedAll = (file: string, agentId: 'main' | string): Ev[] => {
@@ -65,7 +74,7 @@ describe('reduce — fixture stream', () => {
     expect(withThinking[0].text).toBe('Plan: scout then verify.');
 
     // the Grep tool_use became a chip on that message
-    expect(st.msgs.flatMap((m) => m.chips)).toContain('Grep retryWithBackoff');
+    expect(st.msgs.flatMap((m) => m.tools.map((t) => t.label))).toContain('Grep retryWithBackoff');
 
     // usage accumulated
     expect(st.totalTok).toBeGreaterThan(0);
@@ -119,14 +128,14 @@ describe('reduce — rules', () => {
       text('b', 'unrelated'),
     ]);
     const a = st.msgs.find((m) => m.agentId === 'a');
-    expect(a?.chips).toEqual(['Grep retryWithBackoff', 'Bash npm test']);
-    expect(st.msgs.find((m) => m.agentId === 'b')?.chips).toEqual([]);
+    expect(a?.tools.map((t) => t.label)).toEqual(['Grep retryWithBackoff', 'Bash npm test']);
+    expect(st.msgs.find((m) => m.agentId === 'b')?.tools).toEqual([]);
     expect(st.agents.a.status).toContain('Bash');
   });
 
   it('repeats a genuinely repeated tool call — chips are a log, not a set', () => {
     const st = fold([text('a', 'rerunning'), toolStart('a', 'Bash', 'npm test'), toolStart('a', 'Bash', 'npm test')]);
-    expect(st.msgs[0].chips).toEqual(['Bash npm test', 'Bash npm test']);
+    expect(st.msgs[0].tools.map((t) => t.label)).toEqual(['Bash npm test', 'Bash npm test']);
   });
 
   // A file-editing tool_use makes the normalizer emit BOTH toolStart and fileEdit, so the store
@@ -151,18 +160,18 @@ describe('reduce — rules', () => {
     // guard: the double emission this test exists for is really there
     expect(evs.filter((e) => e.kind === 'toolStart' || e.kind === 'fileEdit')).toHaveLength(2);
 
-    expect(fold(evs).msgs[0].chips).toEqual(['Edit src/retry.ts']);
+    expect(fold(evs).msgs[0].tools.map((t) => t.label)).toEqual(['Edit src/retry.ts']);
   });
 
   it('keeps the precise tool name when a Write reports a file edit', () => {
     // Write emits toolStart 'Write <path>' and fileEdit 'Edit <path>' — two different labels for
     // one action, so equal-label dedup would not have been enough.
-    expect(fold(editLine('Write', 'src/new.ts')).msgs[0].chips).toEqual(['Write src/new.ts']);
+    expect(fold(editLine('Write', 'src/new.ts')).msgs[0].tools.map((t) => t.label)).toEqual(['Write src/new.ts']);
   });
 
   it('still reports a file edit in the agent status', () => {
     const st = fold([text('a', 'writing'), fileEdit('a', 'src/x.ts')]);
-    expect(st.msgs[0].chips).toEqual([]); // the chip is the tool call's, not this event's
+    expect(st.msgs[0].tools).toEqual([]); // the chip is the tool call's, not this event's
     expect(st.agents.a.status).toBe('Edit src/x.ts');
   });
 
@@ -203,10 +212,32 @@ describe('reduce — rules', () => {
     expect(st.totalTok).toBe(38);
   });
 
-  it('returns the same state object for an unknown event kind', () => {
+  /**
+   * An event this build does not know must change nothing the UI draws. It does still advance the
+   * sequence high-water mark and the session clock — that is bookkeeping about the stream, not
+   * about its content, and a reducer that skipped it would re-fold the unknown event on every
+   * replay for the rest of the session.
+   */
+  it('leaves everything it draws untouched for an unknown event kind', () => {
     const st = fold([text('a', 'hi')]);
     const unknown = { kind: 'quantumFlux', ref: ref('a'), ts: 1, seq: 99 } as unknown as Ev;
-    expect(reduce(st, unknown)).toBe(st);
+    const after = reduce(st, unknown);
+
+    expect(after.msgs).toBe(st.msgs);
+    expect(after.agents).toBe(st.agents);
+    expect(after.tools).toBe(st.tools);
+    expect(after.totalTok).toBe(st.totalTok);
+    expect(after.trimmed).toBe(st.trimmed);
+    expect(after.lastSeq).toBe(99);
+  });
+
+  it('ignores an event it has already folded, so a replayed backlog cannot double count', () => {
+    const evs = [usage('a', 10, 5)];
+    const once = fold(evs);
+    const twice = evs.reduce(reduce, once); // the hub replaying the same frames
+    expect(twice.totalTok).toBe(once.totalTok);
+    expect(twice.agents.a.tokens).toBe(once.agents.a.tokens);
+    expect(twice.msgs.length).toBe(once.msgs.length);
   });
 
   it('mutates nothing it was handed', () => {
@@ -221,6 +252,98 @@ describe('reduce — rules', () => {
     }
     expect(initialState).toEqual(before);
     expect(initialState.msgs).toHaveLength(0);
+  });
+});
+
+/**
+ * A red chip used to be the end of the trail: the store counted the failure, the panel coloured
+ * it, and nothing anywhere carried what the tool had actually said. The text has to reach the same
+ * three places the call itself does — the message card it hangs on, the live strip, and the
+ * pending list — because a result can arrive long after any of them was written.
+ */
+describe('reduce — a failure carries its reason', () => {
+  const start = (agentId: string, tool: string, target: string, id: string, ts = 1000): Ev => ({
+    kind: 'toolStart', ref: ref(agentId), tool, target, toolUseId: id, ts, seq: next(),
+  });
+  const result = (agentId: string, id: string, ok: boolean, error?: string, ts = 1200): Ev => ({
+    kind: 'toolResult', ref: ref(agentId), toolUseId: id, ok, ...(error === undefined ? {} : { error }), ts, seq: next(),
+  });
+  const WHY = 'Exit code 127\n/usr/bin/bash: line 1: php: command not found';
+
+  it('puts the reason on the chip, wherever that chip ended up', () => {
+    const st = fold([
+      text('a', 'running the importer'),
+      start('a', 'Bash', 'php import.php', 'tu_e'),
+      result('a', 'tu_e', false, WHY),
+    ]);
+    const onCard = st.msgs[0].tools[0];
+    expect(onCard).toMatchObject({ ok: false, error: WHY, ms: 200 });
+    // The live strip holds the same resolved call, not a stale copy of the one that was running.
+    expect(st.tools.at(-1)).toMatchObject({ ok: false, error: WHY });
+    expect(st.agents.a.errors).toBe(1);
+  });
+
+  it('reaches a call the agent had not spoken for yet', () => {
+    // A turn that opens with a tool call has no card, so the call waits in `pending.tools` — and
+    // its result can land before the agent ever says anything. The held copy has to be rewritten
+    // too, or the chip appears without its reason once the agent finally speaks.
+    const st = fold([start('a', 'Read', '/gone.ts', 'tu_p'), result('a', 'tu_p', false, 'File does not exist.')]);
+    expect(st.tools.at(-1)).toMatchObject({ error: 'File does not exist.' });
+    expect(st.pending.tools.a?.[0]).toMatchObject({ error: 'File does not exist.' });
+
+    const spoken = fold([text('a', 'that file is gone')], st);
+    expect(spoken.msgs.at(-1)?.tools[0]).toMatchObject({ ok: false, error: 'File does not exist.' });
+  });
+
+  it('says nothing about a call that worked', () => {
+    const st = fold([text('a', 'listing'), start('a', 'Glob', '**/*.ts', 'tu_ok'), result('a', 'tu_ok', true)]);
+    expect(st.msgs[0].tools[0]).toMatchObject({ ok: true });
+    expect(st.msgs[0].tools[0].error).toBeUndefined();
+  });
+
+  it('still records a failure whose result carried no text', () => {
+    // The field is optional on the wire, so `ok: false` with no reason is a state the panel has to
+    // be able to draw — it must not read as a success.
+    const st = fold([text('a', 'fetching'), start('a', 'WebFetch', 'https://x.test', 'tu_q'), result('a', 'tu_q', false)]);
+    expect(st.msgs[0].tools[0]).toMatchObject({ ok: false });
+    expect(st.msgs[0].tools[0].error).toBeUndefined();
+    expect(st.agents.a.errors).toBe(1);
+  });
+
+  it('reads the reason end to end, from a real transcript line', () => {
+    // Through the Normalizer rather than a hand-built event, so the two halves cannot drift.
+    const n = new Normalizer('s', 'main');
+    const evs = [
+      ...n.feed({
+        type: 'assistant',
+        timestamp: '2026-08-03T09:00:00.000Z',
+        message: {
+          role: 'assistant',
+          model: 'm',
+          content: [
+            { type: 'text', text: 'checking the file' },
+            { type: 'tool_use', id: 'tu_x', name: 'Edit', input: { file_path: 'notes.md', old_string: 'a', new_string: 'b' } },
+          ],
+        },
+      }),
+      ...n.feed({
+        type: 'user',
+        timestamp: '2026-08-03T09:00:01.000Z',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tu_x',
+              is_error: true,
+              content: '<tool_use_error>String to replace not found in file.</tool_use_error>',
+            },
+          ],
+        },
+      }),
+    ];
+    const chip = fold(evs).msgs.flatMap((m) => m.tools).find((t) => t.id === 'tu_x');
+    expect(chip).toMatchObject({ tool: 'Edit', target: 'notes.md', ok: false, error: 'String to replace not found in file.' });
   });
 });
 
@@ -253,6 +376,164 @@ describe('reduce — feed cap', () => {
     expect(st.msgs).toHaveLength(MSG_CAP);
     expect(st.trimmed).toBe(0);
     expect(st.msgs[0].text).toBe('line 0');
+  });
+});
+
+/**
+ * Pricing. The store used to hold one model per agent and price that agent's whole total with it,
+ * which is wrong by the ratio between two rate cards the moment a session switches models — 9% of
+ * real transcripts do, from a `/model` switch or an overload fallback, and between Opus and Haiku
+ * that ratio is fifteen.
+ */
+const usageOf = (agentId: string, u: Partial<{ inTok: number; outTok: number; cacheRead: number; cacheWrite: number; model: string }>, ts = 1000): Ev => ({
+  kind: 'usage',
+  ref: ref(agentId),
+  inTok: u.inTok ?? 0,
+  outTok: u.outTok ?? 0,
+  cacheRead: u.cacheRead ?? 0,
+  cacheWrite: u.cacheWrite ?? 0,
+  ...(u.model ? { model: u.model } : {}),
+  ts,
+  seq: next(),
+});
+
+describe('reduce — pricing across models', () => {
+  it('bills each model for its own tokens', () => {
+    const st = fold([
+      agentSeen('a', 'claude-opus-5'),
+      usageOf('a', { outTok: 1_000_000, model: 'claude-opus-5' }),
+      // The same agent, after a /model switch. Priced at Opus this would read $75.
+      usageOf('a', { outTok: 1_000_000, model: 'claude-haiku-4-5' }),
+    ]);
+    expect(st.cost).toBeCloseTo(75 + 5, 6);
+    expect(st.costPartial).toBe(false);
+  });
+
+  it('keeps the tokens whole even though the dollars are split', () => {
+    const st = fold([
+      usageOf('a', { inTok: 10, outTok: 20, cacheRead: 30, cacheWrite: 40, model: 'claude-opus-5' }),
+      usageOf('a', { inTok: 1, outTok: 2, cacheRead: 3, cacheWrite: 4, model: 'claude-sonnet-5' }),
+    ]);
+    expect(st.agents['a'].tokens).toBe(110);
+    expect(st.totalTok).toBe(110);
+  });
+
+  it('marks the estimate a floor when one of an agent\'s models has no rate card', () => {
+    const st = fold([
+      usageOf('a', { outTok: 1_000_000, model: 'claude-opus-5' }),
+      usageOf('a', { outTok: 1_000_000, model: 'some-model-from-the-future' }),
+    ]);
+    expect(st.cost).toBeCloseTo(75, 6); // the part that can be priced is still priced
+    expect(st.costPartial).toBe(true); // and the HUD is told it is only part
+  });
+
+  /**
+   * `<synthetic>` is not a model — it is the CLI's marker on lines it wrote itself, and every one
+   * of them carries a usage object of four zeros. Left uncarded it latched as the agent's model,
+   * priced the agent at nothing, and flipped the whole HUD into `≥` floor mode over tokens that
+   * do not exist.
+   */
+  it('does not turn the estimate into a floor over a synthetic line', () => {
+    const st = fold([
+      usageOf('a', { outTok: 1_000_000, model: 'claude-opus-5' }),
+      usageOf('a', { inTok: 0, outTok: 0, model: '<synthetic>' }),
+    ]);
+    expect(st.cost).toBeCloseTo(75, 6);
+    expect(st.costPartial).toBe(false);
+  });
+
+  it('hands tokens counted before the model was known to the model that arrives', () => {
+    // An opening turn names no model, so its usage has nowhere to go until one does.
+    const st = fold([usageOf('a', { outTok: 1_000_000 }), agentSeen('a', 'claude-opus-5')]);
+    expect(st.cost).toBeCloseTo(75, 6);
+    expect(st.costPartial).toBe(false);
+  });
+});
+
+describe('reduce — compaction summaries', () => {
+  const summary = (t: string, ts = 1000): Ev => ({
+    kind: 'userMessage', ref: ref('main'), text: t, source: 'compaction', ts, seq: next(),
+  });
+
+  it('never lets the CLI\'s own summary become the session task', () => {
+    const st = fold([
+      summary('This session is being continued from a previous conversation that ran out of context.'),
+      userMessage('main', 'now make the tabs work', 2000),
+    ]);
+    expect(st.task).toBe('now make the tabs work');
+  });
+
+  it('keeps the summary in the feed, labelled, rather than hiding it', () => {
+    const st = fold([summary('This session is being continued from a previous conversation.')]);
+    const msg = st.msgs.find((m) => m.agentId === 'user');
+    expect(msg?.source).toBe('compaction');
+  });
+});
+
+/**
+ * "Has agents working" is the whole of the tab strip's reason to exist, so it is worth testing
+ * what it refuses as much as what it accepts. The failure that matters is a false positive: a tab
+ * strip that appears over two idle terminals is worse than no tab strip.
+ */
+describe('workingAgents', () => {
+  const NOW = 1_000_000;
+  const at = (agentId: string, ts: number): Ev[] => [
+    { kind: 'agentSeen', ref: ref(agentId), ts, seq: next() },
+    { kind: 'agentText', ref: ref(agentId), text: 'working on it', ts, seq: next() },
+  ];
+
+  it('does not count main — a session at an idle prompt has one and is doing nothing', () => {
+    const st = fold(at('main', NOW));
+    expect(workingAgents(st, NOW)).toHaveLength(0);
+  });
+
+  it('counts a subagent that has just done something', () => {
+    const st = fold(at('abc123', NOW - 1000));
+    expect(workingAgents(st, NOW).map((a) => a.id)).toEqual(['abc123']);
+  });
+
+  it('stops counting a subagent that has gone quiet', () => {
+    const st = fold(at('abc123', NOW - WORKING_WINDOW_MS - 1));
+    expect(workingAgents(st, NOW)).toHaveLength(0);
+  });
+
+  it('keeps counting a subagent that is silent because it is inside a long tool call', () => {
+    // A Bash that compiles a project writes nothing while it runs. The 90-second window alone
+    // would call this agent finished while it is doing the most work of the session.
+    const quiet = NOW - WORKING_WINDOW_MS * 3;
+    const st = fold([
+      ...at('abc123', quiet),
+      { kind: 'toolStart', ref: ref('abc123'), tool: 'Bash', toolUseId: 'tu1', ts: quiet, seq: next() },
+    ]);
+    expect(workingAgents(st, NOW).map((a) => a.id)).toEqual(['abc123']);
+  });
+
+  it('gives up on an open tool call eventually, rather than never', () => {
+    // An unresolved call is not always real: a `tool_result` carried on a line over 1 MiB is
+    // dropped unparsed, and an infinite grace would keep a dead session's tab on screen for ever.
+    const ancient = NOW - OPEN_TOOL_GRACE_MS - 1;
+    const st = fold([
+      ...at('abc123', ancient),
+      { kind: 'toolStart', ref: ref('abc123'), tool: 'Bash', toolUseId: 'tu1', ts: ancient, seq: next() },
+    ]);
+    expect(workingAgents(st, NOW)).toHaveLength(0);
+  });
+
+  it('does not count an agent that has finished', () => {
+    const st = fold([
+      ...at('abc123', NOW - 1000),
+      { kind: 'agentDone', ref: ref('abc123'), ok: true, ts: NOW - 500, seq: next() },
+    ]);
+    expect(workingAgents(st, NOW)).toHaveLength(0);
+  });
+
+  it('reads a session that has only ever announced itself as nobody working', () => {
+    // `sessionSeen` arrives for a session that is running and has written nothing. It must name
+    // the session without claiming anything is happening in it.
+    const st = fold([{ kind: 'sessionSeen', sessionId: 's', cwd: 'C:\\work', live: true, ts: NOW, seq: next() }]);
+    expect(st.sessionId).toBe('s');
+    expect(st.cwd).toBe('C:\\work');
+    expect(workingAgents(st, NOW)).toHaveLength(0);
   });
 });
 

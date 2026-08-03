@@ -1,6 +1,26 @@
 # Roundtable — live multi-agent office for Claude Code (Observer MVP)
 
-Date: 2026-08-02 · Status: draft for user review · Session: planning (a2c2ce06)
+Date: 2026-08-02 · Status: **PARTLY SUPERSEDED — see below** · Session: planning (a2c2ce06)
+
+> ## Superseded, 2026-08-03
+>
+> This document is kept because its §2 (what is actually on disk), its event vocabulary and its
+> phase plan are still the design the code follows. Four decisions in it are not, and are marked
+> **SUPERSEDED** where they appear. Read those corrections before treating any part of this file as
+> current.
+>
+> | Where | What it says | What is true now |
+> |---|---|---|
+> | §3.3 | "One session rendered at a time (v1)." | Every session that is *running* is streamed at once, and a tab appears per session with agents working. `shared/protocol.ts`, `src/ws.ts`, `src/App.tsx`. |
+> | §5 Client | "Office sim = plain DOM/CSS components … no canvas/WebGL needed" | The room is a 480×270 pixel-art canvas buffer blitted to a `<canvas>`, with a transparent DOM layer over it for accessibility and hit testing. `src/office/pixel/`, `src/office/PixelOffice.tsx`. `docs/pixel-contract.md` is the binding contract for the sprite modules. |
+> | §5 Client | "Tailwind" / "react-virtuoso" | Tailwind is installed and entirely unused — there is not one utility class in `src/`. The feed windows itself (`RENDER_WINDOW` in `src/chat/Chat.tsx`); react-virtuoso was never added. |
+> | §5 Run | "opens http://127.0.0.1:7411" | 7411 is the hub's WebSocket only; it answers HTTP with a 404. The app is Vite on 5173, and the hub's `Origin` allowlist names 5173/4173 — that pairing is load-bearing. |
+>
+> One more correction, to §2 rather than to a decision: a streamed response is written as several
+> JSONL lines sharing one `message.id`, each repeating that response's usage *as it stood* — the
+> first line says `output_tokens: 1` and the last says the total. Anything that reads usage per line
+> is wrong by roughly a factor of two in one direction or 2.4 in the other. See
+> `server/normalize.ts`.
 
 ## 1. What it is
 
@@ -91,7 +111,11 @@ renders identically.
 
 - Desks spawn on a grid; >12 actors → overflow "hot-desk" roster strip (visual cap).
 - Sidebar session switcher: live sessions (from `sessions/*.json` + mtime<30s) + recent history.
-  One session rendered at a time (v1).
+  ~~One session rendered at a time (v1).~~ **SUPERSEDED 2026-08-03:** the hub streams every running
+  session at once and the client holds one `RtState` and one office engine per session. A tab strip
+  appears over the room when more than one session has agents working — where "working" means an
+  agent other than `main`, not finished, and either active inside 90 s or holding a tool call open.
+  Switching tabs discards nothing.
 - Replay: same pipeline fed from a historical file with a time scrubber (P5).
 
 ## 4. Visual design (locked by mockup office-sim-v5)
@@ -110,13 +134,22 @@ Cascadia/ui-monospace for labels, Segoe UI for chat. No neon; semantic green/red
 - **Server**: Node 20+, TypeScript strict, `chokidar` (usePolling fallback on Windows), `ws`.
   Incremental JSONL tail via per-file byte offsets; never re-parse whole files. Binds 127.0.0.1
   only (transcripts contain secrets). No persistence in v1 (in-memory; replay reads from disk).
-- **Client**: Vite + React 18 + TS strict + Tailwind. Office sim = plain DOM/CSS components +
-  ~200-line TS behavior engine (actor state machines, waypoint walking, painter z=f(y)) — proven in
-  mockup; no canvas/WebGL needed at this actor count. Chat feed virtualized (react-virtuoso) for
-  long sessions.
+- **Client**: Vite + React 18 + TS strict + ~~Tailwind~~. ~~Office sim = plain DOM/CSS components +
+  ~200-line TS behavior engine … no canvas/WebGL needed at this actor count. Chat feed virtualized
+  (react-virtuoso).~~
+  **SUPERSEDED 2026-08-03:** the DOM room was deleted. The office is a 480×270 pixel-art buffer
+  painted by `src/office/pixel/scene.ts` and blitted to a `<canvas>`, with a transparent layer of
+  real focusable DOM elements positioned over each sprite — a canvas is a picture, and a picture is
+  unreadable to a screen reader, a keyboard and a test alike. The behaviour engine survived and grew
+  (`src/office/engine.ts`): actor state machines, waypoint walking, hot-desking, a break corner, and
+  a deterministic command log that any past moment can be rebuilt from. Tailwind is installed and
+  has zero utility classes anywhere in `src/`; the feed windows itself rather than virtualizing.
 - **Tests**: vitest (parser, normalizer, behavior scheduler — fixtures = real transcript excerpts
   captured in P0); Playwright e2e (synthetic session file appended live → assert actor/chat).
-- **Run**: `npm run dev` → server + client, opens http://127.0.0.1:7411.
+- **Run**: `npm run dev` → server + client. ~~opens http://127.0.0.1:7411~~ **SUPERSEDED:** 7411 is
+  the hub's WebSocket and answers plain HTTP with a 404; the app is Vite on 5173. The hub gates the
+  WebSocket handshake on `Origin` against 5173/4173, so Vite's `strictPort` is load-bearing — a dev
+  server that quietly moved to 5174 would be refused by the hub.
 
 ## 6. Build phases
 

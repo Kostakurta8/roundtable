@@ -1,0 +1,362 @@
+/*
+ * The pixel room's stylesheet, which is almost nothing on purpose.
+ *
+ * Everything visible in the office is painted into a canvas by `pixel/scene.ts`; CSS's job here is
+ * to size that canvas, stop the browser from smoothing it, and place the transparent layer of real
+ * elements that carries the room's accessibility and its click targets. Any styling of the room
+ * itself belongs in the palette in `pixel/art.ts`, not here — two sources of truth for a colour is
+ * how the old room ended up with a stylesheet the size of the renderer.
+ */
+
+.office.pixel {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #0d1017;
+  /* The room is a picture of a place, not a document: dragging it selects nothing. */
+  user-select: none;
+  touch-action: none;
+  /* A room you can drag says so before you try. */
+  cursor: grab;
+}
+
+.office.pixel[data-drag='on'] {
+  cursor: grabbing;
+}
+
+/* The room is a keyboard control now — arrows pan it — so it has to be reachable and to say so. */
+.office.pixel:focus-visible {
+  outline: 2px solid var(--accent, #4fb3c2);
+  outline-offset: -2px;
+}
+
+.pixel-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /*
+   * Both spellings. `pixelated` is the standard and what Chrome and Firefox honour; `crisp-edges`
+   * is what Safari implements, and the whole style collapses into a blurry mess without it.
+   */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/*
+ * The accessibility layer.
+ *
+ * One element per person, positioned by the frame loop exactly over the sprite the canvas draws.
+ * It is transparent because the picture is already painted — not because it is decorative — so it
+ * keeps its label, its focus, its pressed state and its text. Everything a pointer, a keyboard, a
+ * screen reader or a test needs is here; the canvas is only the paint.
+ */
+.actor-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Above the desks and the fixtures: a pointer over somebody's head must find the person, not
+     the furniture they happen to be standing in front of. `elementFromPoint` at an actor's
+     centre returning that actor is the contract the whole interaction layer rests on. */
+  z-index: 2;
+}
+
+/*
+ * The workstations.
+ *
+ * A desk answers a different question from a person: people walk, and a desk is where an agent's
+ * work stays whether they are sitting at it or across the room arguing. Under the people in the
+ * stack, so it can never take a click meant for one.
+ */
+.desk-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/*
+ * The off-site strip's hit targets. Above the desks and the people, because the strip is drawn
+ * over the bottom of the room and nothing on the floor is behind it to compete for a pointer.
+ */
+.ghost-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.actor,
+.desk,
+.ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 3px;
+  /* No transition on transform: the loop writes a new one every frame, and easing an already
+     eased position is what makes a walk look like it is dragging a rubber band. */
+}
+
+.actor:focus-visible,
+.ghost:focus-visible,
+.desk:focus-visible {
+  outline: 2px solid var(--accent, #4fb3c2);
+  outline-offset: 1px;
+}
+
+/*
+ * Hover, which is a peek and not a selection.
+ *
+ * Drawn as a ring rather than a wash: the canvas underneath is the picture, and a highlight that
+ * covers it with colour hides the very thing it is pointing at.
+ */
+.actor.hov,
+.actor:hover,
+.ghost.hov,
+.ghost:hover,
+.desk.hov,
+.desk:hover {
+  box-shadow:
+    inset 0 0 0 2px var(--accent-2, #4fb3c2),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.desk.hov,
+.desk:hover {
+  border-radius: 2px;
+  background: rgba(79, 179, 194, 0.1);
+}
+
+/*
+ * The spawn tree, expressed as light.
+ *
+ * Selecting a parent is a claim about a *set* of agents, and the canvas can only be told about
+ * one id — so the subtree lives here, in the DOM, where a class per mark can say what a single
+ * `selected` cannot. `dim` is everyone outside the tree; `kin` is everyone inside it but not the
+ * agent you actually clicked.
+ */
+.actor.dim,
+.desk.dim {
+  background: rgba(13, 16, 23, 0.58);
+  border-radius: 2px;
+}
+
+.actor.kin,
+.desk.kin {
+  box-shadow: inset 0 0 0 1px rgba(79, 179, 194, 0.55);
+}
+
+.actor.sel {
+  box-shadow: inset 0 0 0 2px var(--accent, #4fb3c2);
+}
+
+/*
+ * The spoken and unspoken text.
+ *
+ * Drawn on the canvas as a bubble; kept here as text so it can be read aloud, searched, and
+ * asserted on. Transparent rather than removed — a `display: none` bubble is one a screen reader
+ * never announces, and the room would be silent to anyone not looking at it.
+ */
+.actor .say,
+.actor .think {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: max-content;
+  max-width: 220px;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.actor .say:not(.on),
+.actor .think:not(.on) {
+  /* An expired bubble is gone, not merely invisible: leaving the last thing an agent said in the
+     accessibility tree forever is worse than saying nothing. */
+  display: none;
+}
+
+.actor .think {
+  bottom: calc(100% + 18px);
+}
+
+/*
+ * The peek.
+ *
+ * A hover card that commits nothing: it names the agent, says what they are doing and what they
+ * have cost, and disappears. Real text in a real element, because a painted tooltip is invisible
+ * to a screen reader and unassertable in a test — and because the numbers in it are written by
+ * the frame loop, one string at a time, only when they change.
+ *
+ * Never a pointer target: a card that could be hovered would take the hover off the thing that
+ * summoned it, and the two would fight for as long as the pointer sat between them.
+ */
+.peek {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  pointer-events: none;
+  display: grid;
+  gap: 1px;
+  max-width: 260px;
+  padding: 7px 9px;
+  border: 1px solid var(--line, #423c34);
+  border-radius: var(--radius-sm, 7px);
+  background: var(--panel-solid, #262320);
+  box-shadow: var(--shadow-2, 0 12px 30px rgba(0, 0, 0, 0.35));
+  color: var(--ink, #ece5d8);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0;
+  transition: opacity 90ms var(--ease, ease);
+}
+
+/* Set by the loop once the card has been placed, so it never flashes at the stage's corner. */
+.peek.on {
+  opacity: 1;
+}
+
+.peek-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.peek-model,
+.peek-note {
+  color: var(--ink-3, #75736a);
+  font-size: 10px;
+}
+
+.peek-act {
+  color: var(--accent-2, #3e9aa8);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.peek-note:empty {
+  display: none;
+}
+
+.peek-nums {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  color: var(--ink-2, #67675f);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
+/*
+ * The fixtures the canvas draws and a pointer cannot reach.
+ *
+ * Transparent, because the whiteboard and the roundtable are already painted; what they lack is a
+ * way to be clicked, labelled and tabbed to, which is exactly what an empty button is for.
+ */
+.fixture {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.fixture:hover {
+  background: rgba(79, 179, 194, 0.16);
+  box-shadow: inset 0 0 0 1px var(--accent-2, #4fb3c2);
+}
+
+.fixture:focus-visible {
+  outline: 2px solid var(--accent, #4fb3c2);
+  outline-offset: 2px;
+}
+
+/*
+ * The camera's own controls.
+ *
+ * The room could always be zoomed; nothing said so. A wheel gesture nobody knows about is not a
+ * feature, so the level is on screen with the two buttons that change it and the two that undo
+ * it — keyboard reachable, and labelled for anyone who cannot see the glyphs.
+ */
+.cam-ctl {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--line, #423c34);
+  border-radius: var(--radius-sm, 7px);
+  background: var(--panel, rgba(38, 35, 30, 0.94));
+  box-shadow: var(--shadow-1, 0 1px 3px rgba(0, 0, 0, 0.25));
+}
+
+.cam-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-2, #67675f);
+  font-family: var(--font-ui, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cam-btn:hover:not(:disabled) {
+  background: var(--panel-3, #34302a);
+  color: var(--ink, #ece5d8);
+}
+
+.cam-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cam-btn:focus-visible {
+  outline: 2px solid var(--accent, #4fb3c2);
+  outline-offset: -1px;
+}
+
+.cam-btn[aria-pressed='true'] {
+  background: var(--accent-wash, rgba(79, 179, 194, 0.18));
+  color: var(--accent, #1e7280);
+}
+
+.cam-z {
+  min-width: 30px;
+  color: var(--ink-2, #67675f);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  text-align: center;
+}
+
+/*
+ * What was said, for anyone not watching.
+ *
+ * Clipped rather than hidden: `display: none` and `visibility: hidden` both take a live region
+ * out of the accessibility tree, and a live region nobody hears is the same as no live region.
+ */
+.rt-crier {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
