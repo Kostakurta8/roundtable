@@ -886,6 +886,57 @@ describe('Engine — hot-desking', () => {
     expect(s.say).toBe('All six checks pass.');
   });
 
+  /**
+   * The deskless cases. All three used to throw or misbehave, and all three are ordinary: an agent
+   * gives up its chair the instant it finishes, `mapping.ts` resolves a verdict's target against
+   * the whole roster (which includes everyone queued outside and everyone already finished), and a
+   * full break corner leaves a finished agent sitting where it was.
+   */
+  it('lets an agent be spoken to after it has given up its desk', () => {
+    const e = officeOf('main', 'alpha', 'beta');
+    e.apply({ op: 'done', agentId: 'beta', ok: true });
+    tickUntil(e, 60_000, (st) => stateOf(st, 'beta').lounging === true);
+    // The throw this prevents escaped `apply` all the way to the socket's flush loop, taking every
+    // remaining event in that batch with it while the feed had already folded them.
+    expect(() =>
+      e.apply({ op: 'confront', agentId: 'alpha', to: 'beta', text: 'REFUTED that.', verdict: 'err' }),
+    ).not.toThrow();
+    expect(stateOf(e.tick(STEP_MS), 'alpha').say).toBe('REFUTED that.');
+  });
+
+  it('lets an agent be spoken to while it is still waiting outside for a chair', () => {
+    const e = officeOf('main', ...fullHouse());
+    e.apply({ op: 'ensureActor', agentId: 'waiter' });
+    expect(e.tick(0).map((s) => s.id)).not.toContain('waiter'); // genuinely deskless
+    expect(() =>
+      e.apply({ op: 'confront', agentId: 'main', to: 'waiter', text: 'CONFIRMED it.', verdict: 'ok' }),
+    ).not.toThrow();
+  });
+
+  it('does not send an agent that has finished off for a coffee', () => {
+    // Filling the break corner takes exactly as many finished agents as it holds. Their chairs come
+    // free as they go, so `late` — queued outside at the start — is seated by the time it finishes,
+    // and `retire` then has nowhere to put it: it keeps the chair, still `done`, still on the floor.
+    // That agent used to go idle and set off for the machine, every ninety seconds, for ever.
+    const crowd = [...Array(LOUNGE_CAPACITY).keys()].map((i) => `f${i}`);
+    const e = officeOf('main', ...crowd, 'late');
+    for (const id of crowd) e.apply({ op: 'done', agentId: id, ok: true });
+    tickUntil(e, 300_000, (st) => stateOf(st, 'late').pose === 'sit');
+    e.tick(SETTLE_MS);
+
+    e.apply({ op: 'tool', agentId: 'main', id: 'keepalive', tool: 'Bash', act: 'run' }); // lights on
+    e.apply({ op: 'done', agentId: 'late', ok: true });
+    const refused = stateOf(e.tick(0), 'late');
+    expect(refused.retired).toBeFalsy(); // the corner had no room for it
+    const seat = { x: refused.x, y: refused.y };
+
+    e.tick(IDLE_COFFEE_MS + 5_000);
+    // Still in its chair. A coffee is a walk to the machine, so either of these moving is the bug.
+    const after = stateOf(e.tick(0), 'late');
+    expect(after.pose).toBe('sit');
+    expectAt(after, seat);
+  });
+
   it('never makes an agent that finished before it sat down go and sit down first', () => {
     // This is what replaying a completed session looked like: every agent filed in through the
     // door, perched at a desk for three seconds, stood up and filed out again. Nothing about that

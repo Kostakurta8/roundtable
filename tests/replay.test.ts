@@ -214,3 +214,63 @@ describe('frameAt', () => {
     expect(frameAt(SESSION, 8000)).toEqual(new Replay(SESSION).seek(8000));
   });
 });
+
+/**
+ * The log a `Replay` is walking must not move underneath it.
+ *
+ * `Replay` tracks its position with a numeric cursor, so an entry removed from the front of the
+ * array slides every later entry down by one and the replay skips a command it has not applied
+ * yet — silently, and for the rest of the session. Once a session is at the cap that is one lost
+ * command per new command: in a reproduction it dropped 59 edits and an entire agent, who simply
+ * never appeared in the scrubbed room.
+ */
+describe('Recorder — the log a Replay holds', () => {
+  it('hands out a snapshot, not the array it goes on writing to', () => {
+    const rec = new Recorder();
+    rec.record(1000, seen('a'));
+    const snap = rec.entries();
+    rec.record(2000, seen('b'));
+    expect(snap).toHaveLength(1);
+    expect(rec.entries()).toHaveLength(2);
+  });
+
+  it('keeps a replay intact while the cap drops entries off the front', () => {
+    const rec = new Recorder();
+    for (let i = 0; i < REPLAY_CAP; i++) rec.record(1000 + i, thinks('a', `t${i}`));
+    const replay = new Replay(rec.entries());
+    replay.seek(1000 + REPLAY_CAP);
+
+    // Past the cap: one entry falls off the front for every one recorded.
+    for (let i = 0; i < 60; i++) rec.record(50_000 + i, seen(`ghost${i}`));
+    expect(rec.truncated).toBe(60);
+
+    // The replay was built from a snapshot, so it still describes exactly the log it was given —
+    // it has not silently skipped 60 commands it never applied.
+    expect(replay.to).toBe(1000 + REPLAY_CAP - 1);
+    expect(replay.seek(1000 + REPLAY_CAP).map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('reports a revision that moves for a new command and for a dropped one', () => {
+    const rec = new Recorder();
+    expect(rec.revision).toBe(0);
+    rec.record(1000, seen('a'));
+    const afterOne = rec.revision;
+    expect(afterOne).toBe(1);
+    for (let i = 0; i < REPLAY_CAP + 5; i++) rec.record(2000 + i, thinks('a', `t${i}`));
+    // Monotonic, and counts what was dropped as well as what is held — which is what lets a holder
+    // of a snapshot notice it is stale with one comparison.
+    expect(rec.revision).toBe(REPLAY_CAP + 6);
+    expect(rec.truncated).toBeGreaterThan(0);
+  });
+
+  it('never reports a position before the log begins', () => {
+    const rec = new Recorder();
+    rec.record(10_000, seen('a'));
+    const replay = new Replay(rec.entries());
+    replay.seek(0); // earlier than anything recorded
+    // Reporting 0 here claimed the room stood somewhere the log cannot describe, and the next
+    // `advance` then ticked the engine through all ten seconds between that fiction and the first
+    // real command.
+    expect(replay.position).toBe(10_000);
+  });
+});

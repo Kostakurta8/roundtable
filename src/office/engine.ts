@@ -433,6 +433,14 @@ const OVERFLOW_X0 = pct(22, 0).x;
  */
 export function podSeat(slot: number): Pt {
   const seats = WAYPOINTS.podSeats;
+  // Negative slots are the deskless sentinels — manager (-1), off-site (-2), lounge (-3) — not pod
+  // indices, and asking this for one is a caller's mistake. It has to be caught here anyway,
+  // because `slot < seats.length` is true for every negative number: `seats[-3]` is `undefined`,
+  // `noUncheckedIndexedAccess` is off so the type says `Pt`, and the renderer dereferenced it on
+  // every single `agentDone` — a retired agent keeps `pose: 'sit'` for its whole leaving beat while
+  // `deskIndex` is already -3. Clamped rather than thrown because the only caller is inside a frame,
+  // where a nameplate a few pixels wrong is a blemish and an exception is a room frozen mid-stride.
+  if (slot <= 0) return seats[0];
   if (slot < seats.length) return seats[slot];
   const n = slot - seats.length;
   const room = Math.floor((SCENE.w - OVERFLOW_X0) / POD_OVERFLOW_FAN_X);
@@ -1054,6 +1062,12 @@ export class Engine {
 
     a.retired = true;
     a.place = -1; // any table place they were holding is given up
+    // And the errand they were on. `stroll` is normally cleared by an `unstroll` step at the end of
+    // the walk, but when an agent finishes before it ever sat down the queue is *replaced* below,
+    // which throws that step away. The flag then stays set for the rest of the session and
+    // `strollable` refuses the agent for ever: it can never be called to the roundtable again, and
+    // never takes another break, even after `unretire` puts it back at a desk.
+    a.stroll = undefined;
     a.loungeSlot = slot;
     this.lounge[slot] = a.id;
 
@@ -1129,6 +1143,7 @@ export class Engine {
     // renderer that still believed they were settled there would draw the break-corner pose over
     // an agent walking back to a desk.
     a.lounging = false;
+    a.stroll = undefined; // same reason as in `retire`: the queue below replaces the unstroll step
     // Whatever walk to the corner was still queued is no longer where they are going.
     a.queue = [];
 
@@ -1196,8 +1211,17 @@ export class Engine {
         }
       }
     }
-    if (a === target) {
-      // Nobody walks a note to their own desk; they just say it where they sit.
+    // Nobody walks a note to their own desk, and nobody can walk one to a desk that does not
+    // exist. The second case is not rare: `mapping.ts` resolves a verdict's target against the
+    // *whole* roster, which includes every agent queued outside for a chair and every agent
+    // already in the break corner, so on a wide fan-out most named targets are deskless. Asking
+    // `visitorSpot` where their desk is threw out of `apply`, and that throw escapes all the way to
+    // the socket's flush loop — taking every remaining event in the batch with it, permanently,
+    // while the feed and the roster had already folded them. The room and the panels then disagree
+    // for the rest of the session, and nothing says why.
+    const targetDeskless =
+      target.deskIndex !== MANAGER_DESK_INDEX && (target.retired || target.deskIndex < 0);
+    if (a === target || targetDeskless) {
       a.say = text;
       a.verdict = verdict;
       a.sayUntil = this.clock + BUBBLE_MS;
@@ -1295,6 +1319,12 @@ export class Engine {
       // The queue test is implied by the stamp above and kept anyway, because `strollable` is
       // shared with the huddle, whose participants are deliberately allowed to be mid-errand.
       if (a.open.size > 0 || a.queue.length > 0) continue;
+      // The same exclusion the lights-on test above makes, and for the same reason — it was simply
+      // never applied here. An agent that finished when the break corner was already full keeps its
+      // chair (`retire` gives up and returns), so it stays `done` on the floor, goes idle, and
+      // ninety seconds later sets off for a coffee. Repeatedly, for as long as anyone else is still
+      // working. Somebody who has finished does not get up for a drink; they have left.
+      if (a.done) continue;
       if (this.clock - a.activeAt < IDLE_COFFEE_MS) continue;
       if (!this.strollable(a)) continue;
       this.sendOn(a, 'coffee', WAYPOINTS.coffee, COFFEE_HOLD_MS);

@@ -479,8 +479,11 @@ export class Scene {
     this.boxes.clear();
     this.deskBoxes.clear();
     this.deskPapers.clear();
+    this.ghostBoxes.clear();
     this.t = 0;
     this.doorOpen = 0;
+    // Not `night`: the theme belongs to the viewer, not to the session being shown. Everything
+    // above is a memory of one room and has to go with it.
   }
 
   draw(ctx: CanvasRenderingContext2D, input: SceneInput): void {
@@ -1084,7 +1087,13 @@ export class Scene {
       const headY = Math.round(m.py) - CH.CHAR.h;
       // A seated agent's head is *behind* their desk and their monitor, so a plate hung over the
       // head lands on the screen. Hang it over whichever of the two is higher instead.
-      const wantY = (a.pose === 'sit' ? Math.min(headY, deskTopOf(a)) : headY) - 2;
+      //
+      // `pose === 'sit'` is not the same question as "has a desk". An agent that has just finished
+      // is given up its chair immediately — `deskIndex` becomes the lounge sentinel — but stays
+      // sitting for the beat before it stands, and asking where its desk is during that beat is
+      // asking about a desk it no longer has.
+      const atDesk = a.deskIndex >= 0 || a.deskIndex === MANAGER_DESK_INDEX;
+      const wantY = (a.pose === 'sit' && atDesk ? Math.min(headY, deskTopOf(a)) : headY) - 2;
       const w = textWidth(label) + 6;
       const h = selected && a.status ? 14 : 8;
 

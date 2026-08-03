@@ -120,6 +120,8 @@ type Sim = {
   log: Recorder;
   /** The scrubber's own engine, built lazily and only while somebody is actually scrubbing. */
   replay: Replay | null;
+  /** The `Recorder.revision` `replay` was built from, so a stale snapshot is noticed. */
+  replayRev: number;
   /**
    * The seating revision this room last told React about.
    *
@@ -135,6 +137,7 @@ const freshSim = (): Sim => ({
   roster: new Set<string>(),
   log: new Recorder(),
   replay: null,
+  replayRev: -1,
   seatingSeen: -1,
 });
 
@@ -583,6 +586,20 @@ export const PixelOffice = memo(function PixelOffice({
   const visibleId = useRef(roomId);
   visibleId.current = roomId;
 
+  /**
+   * The scene remembers one room, so switching to another one has to wipe what it remembers.
+   *
+   * It keeps a desk's accumulated paper stacks by *desk index* — deliberately, so clutter outlives
+   * the agent that earned it — and each actor's last position by agent id. Neither survives a
+   * change of session honestly: a brand-new session's empty desks would open already piled with the
+   * previous session's work, and `main` exists in every session, so its remembered position would
+   * be the other room's and the first frame would fling it across the office, raising a footstep
+   * puff and a facing flip for a step nobody took.
+   */
+  useEffect(() => {
+    scene.current?.reset();
+  }, [roomId]);
+
   /** The selected agent's spawn tree. Everyone outside it is dimmed; `null` dims nobody. */
   const kin = useMemo(() => (selected === null ? null : subtreeOf(agents, selected)), [agents, selected]);
 
@@ -724,7 +741,13 @@ export const PixelOffice = memo(function PixelOffice({
         // Scrubbing. A fresh engine is wound over the recorded command stream to the moment asked
         // for; the room this paints is the room that actually stood there, not a reconstruction
         // from aggregates.
-        s.replay ??= new Replay(s.log.entries());
+        // Rebuilt whenever the log has moved, because `entries()` is a snapshot: a `Replay` built
+        // from an older one would be missing every command recorded since, and the scrubber would
+        // quietly stop at the moment the scrub began however far forward it was dragged.
+        if (!s.replay || s.replayRev !== s.log.revision) {
+          s.replay = new Replay(s.log.entries());
+          s.replayRev = s.log.revision;
+        }
         // Clamped into the span the log can honestly rebuild. The activity strip is drawn from the
         // *store's* history, which reaches back further than the office's own recording whenever a
         // truncated backlog gave the store events the office never turned into commands — and an

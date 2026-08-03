@@ -58,8 +58,10 @@ export const REPLAY_CAP = 20_000;
 export class Recorder {
   private readonly log: Entry[] = [];
   private lost = 0;
+  private seen = 0;
 
   record(ts: number, cmd: Cmd): void {
+    this.seen += 1;
     this.log.push({ ts: Number.isFinite(ts) ? ts : 0, cmd });
     if (this.log.length > REPLAY_CAP) {
       this.log.shift();
@@ -67,9 +69,28 @@ export class Recorder {
     }
   }
 
-  /** The log itself. Callers read it; only `record` writes it. */
+  /**
+   * A snapshot of the log.
+   *
+   * A copy, not the live array, and that is the whole point. `Replay` walks its log with a numeric
+   * cursor, so when the cap `shift()`s an entry off the front every position past the cursor slides
+   * down by one and the replay skips a command it had not applied yet — silently, for the rest of
+   * the session. On a log at the cap that is one lost command per new command, and what the
+   * scrubber shows stops being what happened: in a reproduction it dropped 59 edits and an entire
+   * agent, who simply never appeared in the room.
+   */
   entries(): readonly Entry[] {
-    return this.log;
+    return [...this.log];
+  }
+
+  /**
+   * How many commands have ever been recorded, dropped ones included.
+   *
+   * Monotonic, so a holder of a snapshot can tell whether it is still current with one comparison
+   * — both a new command and a dropped one move it.
+   */
+  get revision(): number {
+    return this.seen;
   }
 
   /** How many commands the cap has dropped off the front. Never hidden. */
@@ -161,7 +182,11 @@ export class Replay {
       this.cursor = 0;
       this.at = this.from;
     }
-    return this.wind(want);
+    // Never before the log's own beginning. `wind` applies nothing for a `want` earlier than the
+    // first entry, so recording the position as `want` claimed the room stood somewhere the log
+    // cannot describe — and the next `advance` then ticked the engine through all the time between
+    // that fiction and the first real command.
+    return this.wind(Math.max(want, this.from));
   }
 
   /**
