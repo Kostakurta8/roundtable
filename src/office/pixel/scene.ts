@@ -74,7 +74,6 @@ const SPEED_EASE_MS = 120;
 const REACT_MS = 800;
 
 /** How long somebody in the break corner holds one activity before drifting into the next. */
-const LOUNGE_TURN_MS = 5200;
 
 /** Every desk the floor plan draws: the manager's, then the pod grid in seating order. */
 const DESK_INDICES: readonly number[] = [
@@ -1075,13 +1074,6 @@ export class Scene {
       if (!m) continue;
       const selected = input.selected === a.id;
       // Nobody in the break corner gets a plate unless you ask for it.
-      //
-      // Nine finished agents standing within sixty pixels of each other produced nine labels in
-      // the same twenty pixels of wall, and the collision nudge gave up and overlapped them — a
-      // solid block of unreadable text with the office somewhere behind it. Their names are on the
-      // roster, the inspector and their own accessible element; what the corner needs to say is
-      // "these people are done", and it says that by being full.
-      if (a.lounging && !selected) continue;
       const label = plateLabel(input.agents[a.id]?.label ?? a.id);
       const x = Math.round(m.px);
       const headY = Math.round(m.py) - CH.CHAR.h;
@@ -1227,36 +1219,10 @@ function paperFor(tokens: number): number {
  * children outranks the rest, because an agent whose only open call is a `Task` is not working —
  * it is waiting, and drawing it typing is a lie the room tells for as long as the child runs.
  */
-/**
- * What somebody is doing in the break corner.
- *
- * The engine walks them to a place and stops; everything from there is presentation, so it is
- * decided here from the place they were given and their own seed. That split is deliberate — the
- * simulation should not be scripting whether a finished agent is having a cigarette, and it would
- * have to carry a field per activity if it did.
- */
-function loungeAct(a: ActorState, seed: number, t: number): CH.CharAct {
-  const slot = a.loungeSlot ?? 0;
-  // Only the two places at the café table are somewhere to sit — and `perch` brings its own stool,
-  // which is why the scene does not draw one there.
-  if (slot === 0 || slot === 1) return 'perch';
-  if (slot === 8) return 'smoke'; // the ash stand, which is the only reason it is there
-  // Everyone else is on their feet by the counter, and they take turns holding forth. Staggered by
-  // seed so a corner of six people is a conversation rather than a chorus.
-  switch (Math.floor((t + (seed % 9000)) / LOUNGE_TURN_MS) % 3) {
-    case 0:
-      return 'chat';
-    case 1:
-      return 'drink';
-    default:
-      return 'idle';
-  }
-}
 
 function actOf(a: ActorState, m: Mem, seated: boolean, t: number): CH.CharAct {
   if (m.react) return m.react.kind;
   if (a.pose === 'walk') return 'walk';
-  if (a.lounging) return loungeAct(a, m.seed, t);
   if (!seated) {
     if (a.say !== undefined) return 'talk';
     // Standing and not speaking: at the window, at the table, at the coffee machine, or handing

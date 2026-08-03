@@ -116,14 +116,12 @@ describe('Replay — winding to a moment', () => {
     expect(r.seek(21_000).map((s) => s.id).sort()).toEqual(['alpha', 'beta', 'main']);
   });
 
-  it('has moved a finished agent to the break corner by the time the scrubber passes it', () => {
+  it('has sent a finished agent home by the time the scrubber passes it', () => {
     const r = new Replay(SESSION);
     expect(r.seek(23_000).find((s) => s.id === 'alpha')?.retired).toBeUndefined();
-    // Its `done` lands at 24s; it holds a beat, gets up, and walks over to the corner. It does not
-    // leave — an office that deleted people as they finished ended every good session empty.
-    const after = r.seek(120_000).find((s) => s.id === 'alpha');
-    expect(after?.retired).toBe(true);
-    expect(after?.lounging).toBe(true);
+    // Its `done` lands at 24s; it holds a beat, gets up and walks out. A scrub past that point
+    // rebuilds a room it is no longer in, which is the same room the live view showed.
+    expect(r.seek(120_000).find((s) => s.id === 'alpha')).toBeUndefined();
   });
 
   it('reports its own honest bounds', () => {

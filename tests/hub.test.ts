@@ -193,7 +193,10 @@ const register = (root: string, sessionId: string, extra: Record<string, unknown
     join(dir, `${sessionId}.json`),
     JSON.stringify({
       sessionId,
-      pid: 4242,
+      // This process, which is unarguably running. Liveness is decided by asking the kernel about
+      // the pid, so a made-up number would be a coin flip on whether the test's session counts as
+      // running — and on this machine 4242 happened to land on something alive.
+      pid: process.pid,
       cwd: `C:\\work\\${sessionId}`,
       name: `dev-${sessionId.slice(0, 2)}`,
       status: 'busy',
@@ -536,6 +539,24 @@ describe('hub', () => {
   });
 
   it(
+    'keeps a session that is open but idle, rather than dropping it after ninety seconds',
+    async () => {
+      // The bug this exists for: a Claude window sitting at a prompt writes nothing, so a rule of
+      // "registered and touched within 90 seconds" called a session the user had open in front of
+      // them finished — and its tab vanished. Measured on this machine: a live session with a
+      // 970-second-old timestamp and a very much alive pid.
+      const { root } = makeRoot();
+      register(root, 'fix-sess', { updatedAt: Date.now() - 30 * 60_000 });
+      const client = await connect(await start(root));
+      const hello = await client.wait(isHello);
+      expect(hello.sessions.find((s) => s.sessionId === 'fix-sess')).toMatchObject({ live: true });
+      // And being live, it is streamed without being asked for.
+      await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'fix-sess'));
+    },
+    20_000,
+  );
+
+  it(
     'still answers a follow for a session it is already streaming',
     async () => {
       // The normal path once two sessions are running: the live sweep has already attached them
@@ -570,8 +591,9 @@ describe('hub', () => {
       await client.wait(isHello);
       await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'other-sess'));
 
-      // It stops running: the registry entry goes stale.
-      register(root, 'other-sess', { updatedAt: Date.now() - 10 * 60_000 });
+      // It stops running. No pid at all, so liveness falls back to the timestamp rule — which is
+      // the only way to express "gone" without picking a number and hoping nothing else has it.
+      register(root, 'other-sess', { pid: undefined, updatedAt: Date.now() - 10 * 60_000 });
       // Make its transcript's mtime old too — liveness is the later of the two.
       const old = new Date(Date.now() - 10 * 60_000);
       utimesSync(join(slugDir, 'other-sess.jsonl'), old, old);

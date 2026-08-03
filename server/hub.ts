@@ -180,6 +180,23 @@ const originAllowed = (origin: string | undefined): boolean =>
 const samePath = (a: string, b: string): boolean =>
   process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 
+/**
+ * Is that process still running?
+ *
+ * Signal 0 asks the kernel the question without delivering anything. `EPERM` means the process is
+ * there and belongs to somebody else — which is still a yes, and the case that would otherwise
+ * report every session of another user as finished.
+ */
+function alive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
+  }
+}
+
 /** When a file was last written, or `undefined` if it cannot be stat'd right now. */
 function mtimeOf(path: string): number | undefined {
   try {
@@ -363,11 +380,23 @@ export async function startServer(root: string, port: number, opts: HubOptions =
     return listSessions(root)
       .map(({ sessionId, slug, mtime }): SessionSummary => {
         const reg = registry.get(sessionId);
-        // Registered *and* recently touched. Either signal alone lies: the registry file outlives
-        // the process that wrote it, and a transcript's mtime says nothing about whether the CLI
-        // that produced it is still running.
+        // Registered, and its process still running.
+        //
+        // This used to be "registered *and* touched within 90 seconds", which is not a test of
+        // whether a session exists — it is a test of whether it has been *busy*. A Claude window
+        // sitting at a prompt writes nothing, so a session the user had open in front of them
+        // dropped out of the roster a minute and a half after their last message, taking its tab
+        // with it. Measured on this machine: a live session with a 970-second-old timestamp and a
+        // very much alive pid.
+        //
+        // The pid is the honest signal, and the registry keeps one. Its known weakness is reuse —
+        // a dead session's pid handed to some other process would read as running — which is worth
+        // an occasional extra row far more than losing the session you are actually looking at. The
+        // timestamp rule is kept as the fallback for an entry that carries no pid at all.
         const touched = Math.max(mtime, reg?.updatedAt ?? 0);
-        const live = reg !== undefined && now - touched < LIVE_WINDOW_MS;
+        const live =
+          reg !== undefined &&
+          (reg.pid !== undefined ? alive(reg.pid) : now - touched < LIVE_WINDOW_MS);
         return {
           sessionId,
           slug,

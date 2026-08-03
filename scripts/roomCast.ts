@@ -11,7 +11,7 @@
  * huddle, a coffee break, a spawn edge and a verdict.
  */
 import type { ActorState } from '../src/office/engine';
-import { LOUNGE_DESK_INDEX, loungeSpot, MANAGER_DESK_INDEX, podSeat, WAYPOINTS } from '../src/office/engine';
+import { MANAGER_DESK_INDEX, podSeat, WAYPOINTS } from '../src/office/engine';
 import { Scene, type Ghost, type SceneAgent } from '../src/office/pixel/scene';
 import { agentLook } from '../src/store';
 import { asCtx, SoftCtx } from './pixpreview';
@@ -52,24 +52,10 @@ const CAST: Spec[] = [
   { id: 'huddleW', deskIndex: 9, pose: 'stand', away: false, status: 'at the table', at: WAYPOINTS.tableW },
   { id: 'huddleE', deskIndex: 10, pose: 'stand', away: false, status: 'at the table', at: WAYPOINTS.tableE },
   { id: 'brewer', deskIndex: 11, pose: 'stand', away: false, status: '', at: WAYPOINTS.coffee },
-  // The break corner, one of each kind of place, because this sheet is a checklist: two on the
-  // stools at the café table, two standing at it, one at the counter, one on the couch, and one
-  // at the ash stand having a cigarette.
-  ...['stoolW', 'stoolE', 'tableFar', 'tableNear', 'counter', 'cooler', 'couchL', 'couchR', 'smoker'].map(
-    (id, i): Spec => ({
-      id,
-      deskIndex: LOUNGE_DESK_INDEX,
-      pose: 'stand',
-      away: false,
-      status: 'done',
-      done: true,
-      doneOk: i !== 4,
-      retired: true,
-      lounging: true,
-      loungeSlot: i,
-      at: loungeSpot(i),
-    }),
-  ),
+  // The break corner used to be cast here too — nine finished agents standing about in it. There
+  // are no finished agents in the room any more: finishing means walking out of the door, so the
+  // corner is furniture the room has rather than a place anybody stands. Its couch, café table and
+  // ash stand are still in the shot, drawn by the scene as part of the floor plan.
 ];
 
 /** Tokens per agent, for the paper stacks — a spread wide enough to see the curve saturate. */
