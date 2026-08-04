@@ -18,7 +18,7 @@
  */
 import { chromium, type Page } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startServer } from '../../server/hub';
 import { MODEL, MODEL_ALT, Stage, say, task, thinking, toolUse } from './stage';
@@ -29,17 +29,12 @@ const APP = 'http://localhost:5173';
 const OUT = join(homedir(), 'Desktop', 'roundtable promo');
 const RAW = join(OUT, 'raw');
 const STILLS = join(OUT, 'presskit', 'stills');
-const ROOT = join(
-  homedir(),
-  'AppData',
-  'Local',
-  'Temp',
-  'claude',
-  'C--Users-dev',
-  'fb9550e1-3336-40fc-9408-dfdacb7b6e58',
-  'scratchpad',
-  'promo-root',
-);
+/**
+ * The staged root. Under the OS temp directory rather than anywhere near `~/.claude`, so there is
+ * no path by which a take could pick up a real transcript: the hub is handed this directory and
+ * only this directory.
+ */
+const ROOT = join(tmpdir(), 'roundtable-promo-root');
 
 /**
  * Shortened from `AGENT_QUIET_MS = 45_000`. Declared in PLAN.md: it changes how long an agent's

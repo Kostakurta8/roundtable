@@ -7,6 +7,18 @@ break corner when they finish. The same events are in a group chat beside the ro
 It is **read-only**. It watches the transcript files Claude Code already writes under `~/.claude`
 and never writes to them, never talks to the API, and never leaves your machine.
 
+### See it first
+
+**[▶ media/roundtable-trailer.mp4](media/roundtable-trailer.mp4)** — 52 seconds, no narration, showing
+the whole thing: agents arriving, a red `REFUTED` and a green `CONFIRMED`, the timeline rewinding the
+room to an earlier second, two sessions in tabs, and the per-agent token and cost breakdown. Captions
+are burned in, and `media/roundtable-trailer.srt` has them as text.
+
+Every frame is the real application driven by real events — only the *content* of the transcripts is
+synthetic, so that no private session appears in it. `scripts/promo/` is the harness that filmed it.
+
+![the office, in daylight](media/screenshot-day.png)
+
 ```
 npm install
 npm start

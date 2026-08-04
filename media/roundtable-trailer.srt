@@ -1,0 +1,81 @@
+1
+00:00:00,180 --> 00:00:02,459
+This is one Claude Code session.
+
+2
+00:00:02,460 --> 00:00:04,592
+Every agent is a person at a desk.
+
+3
+00:00:04,593 --> 00:00:06,898
+They walk in when they're spawned.
+
+4
+00:00:06,899 --> 00:00:09,119
+A cloud is a real thinking block.
+
+5
+00:00:11,259 --> 00:00:13,838
+They walk over to report.
+
+6
+00:00:13,839 --> 00:00:16,118
+Red is REFUTED.
+
+7
+00:00:16,119 --> 00:00:18,239
+Green is CONFIRMED.
+
+8
+00:00:20,479 --> 00:00:22,699
+They finish, and they leave.
+
+9
+00:00:22,721 --> 00:00:25,018
+More agents than chairs.
+
+10
+00:00:25,019 --> 00:00:26,998
+The ones without a desk are real too.
+
+11
+00:00:26,999 --> 00:00:29,478
+Every agent's tokens, cache and cost.
+
+12
+00:00:29,479 --> 00:00:31,758
+Who spent what, at a glance.
+
+13
+00:00:31,759 --> 00:00:33,938
+Every token the session billed.
+
+14
+00:00:33,939 --> 00:00:36,218
+Every tool call, as it runs.
+
+15
+00:00:36,219 --> 00:00:38,698
+Rewind to any second.
+
+16
+00:00:38,699 --> 00:00:40,878
+Two sessions. Two tabs.
+
+17
+00:00:40,879 --> 00:00:42,958
+Every action, by name.
+
+18
+00:00:42,959 --> 00:00:44,938
+Day or night.
+
+19
+00:00:44,939 --> 00:00:46,959
+Press ? and it explains itself.
+
+20
+00:00:49,219 --> 00:00:52,419
+Read-only. Local. It never talks to an API.
+Built almost entirely by the agents it watches.
+Free and MIT: github.com/Kostakurta8/roundtable
