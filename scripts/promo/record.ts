@@ -87,6 +87,25 @@ const mark = (name: string): void => {
 
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Drives the room's own camera.
+ *
+ * The alternative — cropping the finished video and scaling back up — is a fake zoom that softens
+ * every glyph in the UI. This is the real one: the camera eases toward its target a fifth of the
+ * remaining distance per frame, so the move is smooth by itself and everything stays rendered at
+ * full resolution. It is also a feature, so filming it is filming the product.
+ *
+ * `=` rather than `+`: same key in the room's handler, and it needs no shift.
+ */
+async function camera(page: Page, key: '=' | '-' | 'Home', times = 1): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await page.locator('.office.pixel').press(key);
+    await wait(140);
+  }
+  const z = await page.locator('.cam-z').textContent();
+  console.log(`  · camera ${key}×${times} → ${z?.trim() ?? '?'}`);
+}
+
 async function shot(page: Page, name: string): Promise<void> {
   // `scale: 'css'` so a still is 1920×1080 rather than the 3840×2160 the 2× backing store would
   // give — the press kit wants the delivered size, and the room is drawn at integer scale either
@@ -208,7 +227,13 @@ async function main(): Promise<void> {
   stage.agentSays(A, AGENTS[4].id, [toolUse('t-e-1', 'Bash', { command: 'npx tsc --noEmit' })]);
   stage.agentSays(A, AGENTS[5].id, [toolUse('t-f-1', 'Read', { file_path: 'src/auth/middleware.ts' })]);
   mark('working');
-  await wait(10_000);
+  await wait(9000);
+
+  // The push in. Two steps is 1.25² = 1.56×, which still holds main's desk and the spot a visitor
+  // stands on, so the walk that follows is framed rather than merely closer.
+  await camera(page, '=', 2);
+  mark('zoomin');
+  await wait(4000);
 
   // ---------------------------------------------------------------- 3. reporting back
   stage.agentToolResult(A, AGENTS[1].id, 't-b-1', '11 matches');
@@ -219,6 +244,10 @@ async function main(): Promise<void> {
   await wait(13_000);
 
   // ---------------------------------------------------------------- 4. the verdicts
+  // Deliberately still 1.6×, not 2×. A third zoom step frames the speaker beautifully and pushes
+  // the top line of their speech bubble outside the room's viewport — so the shot captioned
+  // "Red is REFUTED" had the word REFUTED cropped off. The bubble is drawn above the speaker's
+  // head, so the tightest usable zoom is the one that still has headroom.
   stage.agentToolResult(A, AGENTS[2].id, 't-c-1', 'read 240 lines');
   stage.agentSays(A, AGENTS[2].id, [say('REFUTED: the scheduler suite is not flaky. Its fixture leaks a fake timer.')], {
     tokens: { in: 5200, out: 520 },
@@ -231,7 +260,15 @@ async function main(): Promise<void> {
     tokens: { in: 4400, out: 470 },
   });
   mark('confirmed');
-  await wait(12_000);
+  await wait(11_000);
+
+  // The pull out. Three steps back to 1.0× plus `Home` to re-centre: the shot starts on two people
+  // arguing about one line and ends on the whole floor. That reveal is the best move the room can
+  // make, and it costs four keystrokes.
+  await camera(page, '-', 2);
+  await camera(page, 'Home');
+  mark('zoomout');
+  await wait(5000);
 
   // ---------------------------------------------------------------- 5. finishing means leaving
   // An agent holding an open tool call is *not* quiet — an unresolved call buys it a longer
