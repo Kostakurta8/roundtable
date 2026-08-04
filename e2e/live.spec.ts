@@ -18,7 +18,7 @@
  * `webServer` owns its lifetime.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startServer, type StopServer } from '../server/hub';
@@ -119,6 +119,21 @@ const benchAgent = (agentId: string): string =>
     message: { role: 'user', content: 'wait for a chair' },
   })}\n`;
 
+/**
+ * Marks a copied fixture as having just been written.
+ *
+ * `copyFileSync` preserves the source's timestamps on Windows, so a transcript copied out of
+ * `fixtures/` arrives claiming it was last written whenever that file was committed. The hub reads
+ * a subagent's mtime to decide whether it has gone quiet and finished, so without this every agent
+ * in a freshly built root is *already* eligible to be reported done — and walks out of the room
+ * before the first assertion runs. That is what it looked like: all six of these failing at once,
+ * on counts, on ghosts, on hit tests, with nothing wrong in the renderer at all.
+ */
+function freshen(file: string): void {
+  const now = new Date();
+  utimesSync(file, now, now);
+}
+
 /** `tests/hub.test.ts`'s `makeRoot`, verbatim in layout: one session, one subagent. */
 function makeRoot(): { root: string; mainFile: string; subagentsDir: string } {
   const dir = mkdtempSync(join(tmpdir(), 'rt-e2e-'));
@@ -127,7 +142,10 @@ function makeRoot(): { root: string; mainFile: string; subagentsDir: string } {
   mkdirSync(subagents, { recursive: true });
   const main = join(slugDir, 'fix-sess.jsonl');
   copyFileSync(join('fixtures', 'main-session.jsonl'), main);
-  copyFileSync(join('fixtures', 'agent-abc123.jsonl'), join(subagents, 'agent-abc123.jsonl'));
+  freshen(main);
+  const agent = join(subagents, 'agent-abc123.jsonl');
+  copyFileSync(join('fixtures', 'agent-abc123.jsonl'), agent);
+  freshen(agent);
   return { root: dir, mainFile: main, subagentsDir: subagents };
 }
 
@@ -253,7 +271,11 @@ test.beforeAll(async () => {
   ({ root, mainFile, subagentsDir } = makeRoot());
   mkdirSync(ARTIFACTS, { recursive: true });
   try {
-    stop = await startServer(root, PORT, { ...WATCH });
+    // The quiet sweep is disabled for the whole run. These tests are about the renderer — who is
+    // on the floor, where their labels land, what the camera does — and the fixture agents have to
+    // stay put for all of it. Left at its default the suite would carry a hidden 45-second deadline
+    // measured from `beforeAll`, and the last test to run would be the first to flake.
+    stop = await startServer(root, PORT, { ...WATCH, quietMs: 10 * 60_000 });
   } catch (err) {
     throw new Error(
       `could not bind the observer hub on ${PORT} — is "npm run dev" already running? (${String(err)})`,
