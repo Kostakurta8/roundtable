@@ -229,9 +229,16 @@ async function main(): Promise<void> {
   mark('working');
   await wait(9000);
 
-  // The push in. Two steps is 1.25² = 1.56×, which still holds main's desk and the spot a visitor
-  // stands on, so the walk that follows is framed rather than merely closer.
-  await camera(page, '=', 2);
+  // The push in — on a person, not on the middle of the floor.
+  //
+  // Selecting an agent and pressing `F` puts the camera on them and keeps it there, so the zoom is
+  // centred on whoever is about to do something rather than on the room's geometric centre. That
+  // is worth three keystrokes twice over: the shot is composed, and because the camera is centred
+  // on the actor there is half a viewport of headroom above them, which is where the app draws
+  // speech bubbles. Centred on the room instead, the same zoom cropped the top line off them.
+  await page.locator(`.actor[data-agent="${AGENTS[1].id}"]`).click({ force: true });
+  await page.locator('.office.pixel').press('f');
+  await camera(page, '=', 3);
   mark('zoomin');
   await wait(4000);
 
@@ -244,10 +251,21 @@ async function main(): Promise<void> {
   await wait(13_000);
 
   // ---------------------------------------------------------------- 4. the verdicts
-  // Deliberately still 1.6×, not 2×. A third zoom step frames the speaker beautifully and pushes
-  // the top line of their speech bubble outside the room's viewport — so the shot captioned
-  // "Red is REFUTED" had the word REFUTED cropped off. The bubble is drawn above the speaker's
-  // head, so the tightest usable zoom is the one that still has headroom.
+  // Let the person go and hand the camera back to the room.
+  //
+  // Re-aiming follow at the *next* speaker is the obvious idea and it does not work: while the
+  // camera is locked on one agent at 2×, everybody else is outside the viewport, and their mark
+  // goes with them — `locator.click` fails with "Element is outside of the viewport", which is
+  // Playwright telling the truth about something a viewer would also not be able to click.
+  // So follow is for the walk, and the verdicts are framed on the room at 1.6×, which is the
+  // tightest zoom that still keeps a speech bubble's top line inside the room.
+  // Dropping follow resets the camera to 1.0× rather than leaving it where it was, so this zooms
+  // back *in* from scratch. Two steps is 1.56×, which is the tightest framing that still keeps a
+  // speech bubble's top line inside the room — the whole reason the verdicts are not filmed at 2×.
+  await page.locator('.office.pixel').press('f');
+  await page.locator('.office.pixel').press('Escape');
+  await camera(page, '=', 2);
+  await wait(2500);
   stage.agentToolResult(A, AGENTS[2].id, 't-c-1', 'read 240 lines');
   stage.agentSays(A, AGENTS[2].id, [say('REFUTED: the scheduler suite is not flaky. Its fixture leaks a fake timer.')], {
     tokens: { in: 5200, out: 520 },
@@ -265,6 +283,7 @@ async function main(): Promise<void> {
   // The pull out. Three steps back to 1.0× plus `Home` to re-centre: the shot starts on two people
   // arguing about one line and ends on the whole floor. That reveal is the best move the room can
   // make, and it costs four keystrokes.
+  // Pull all the way back out, to the whole floor.
   await camera(page, '-', 2);
   await camera(page, 'Home');
   mark('zoomout');
@@ -313,6 +332,37 @@ async function main(): Promise<void> {
   await wait(5000);
   await shot(page, 'timeline-crowd');
   await page.locator('.office.pixel').press('Escape');
+  await wait(1500);
+
+  // ------------------------------------------------------- 6b. where the numbers actually live
+  // The room can show that somebody is working. It cannot show what that cost. Three surfaces do,
+  // and the trailer had been showing none of them: the Inspector's per-agent breakdown, the roster
+  // with its token bars, and the tool stream. `force: true` on the click because an actor's mark is
+  // re-placed every frame and Playwright will wait forever for it to hold still.
+  // `main` rather than a scout: the orchestrator is the one that has actually spent anything, so
+  // its card carries six-figure token counts and a real cost. A scout's card reads `1.0k · <$0.01`,
+  // which is true and proves nothing.
+  await page.locator('.actor[data-agent="main"]').click({ force: true });
+  mark('inspector');
+  await wait(5500);
+  await page.locator('.office.pixel').press('Escape');
+  await wait(1200);
+
+  await page.locator('.office.pixel').press('2');
+  mark('agentspanel');
+  await wait(5500);
+
+  await page.locator('.office.pixel').press('3');
+  mark('toolspanel');
+  await wait(5500);
+
+  await page.locator('.office.pixel').press('1');
+  await wait(1500);
+
+  await page.keyboard.press('Control+k');
+  mark('palette');
+  await wait(4500);
+  await page.keyboard.press('Escape');
   await wait(1500);
 
   // ---------------------------------------------------------------- 7. rewind

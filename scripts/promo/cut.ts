@@ -6,21 +6,25 @@
  * offset from a *mark*, never as an absolute timecode, so a retake with different timings needs no
  * edit here: re-run `record.ts`, re-run this, and the same beats come out.
  *
- * Three things carry the pace, in the order they matter:
+ * Four things carry the pace, in the order they matter:
  *
- * 1. **Length.** Seventeen beats in about fifty seconds. Nothing is on screen long enough to be
- *    studied, because a trailer is an argument for looking at the real thing later.
- * 2. **Speed ramps.** The parts where people are merely walking run at 1.3–1.8×; the parts where
+ * 1. **Shot length.** Twenty-three shots in about fifty seconds — a shade over two seconds each.
+ *    Nothing is on screen long enough to be studied, because a trailer is an argument for looking
+ *    at the real thing later.
+ * 2. **Coverage.** The room is the hook, but the room cannot show what any of it cost. Four shots
+ *    are about the accounting — the Inspector's per-agent breakdown, the roster's token bars, the
+ *    session totals, the tool stream — because "the numbers are real" is this project's actual
+ *    claim and a trailer that only shows sprites is selling the wrong thing.
+ * 3. **Speed ramps.** The parts where people are merely walking run at 1.3–1.9×; the parts where
  *    something is decided run at 1×. Cutting the walk entirely would be easier and would lose the
  *    thing that makes the room legible, so it is compressed instead.
- * 3. **Crossfades.** Every join is a 0.3s `xfade`, and the last one fades through black into the
+ * 4. **Crossfades.** Every join is a 0.22s `xfade`, and the last one fades through black into the
  *    end card. Hard cuts between shots of the same static UI read as glitches; a dissolve reads as
  *    a move.
  *
  * The zooms are *not* here. They are in `record.ts`, driven through the app's own camera, because
- * cropping the finished video and scaling it back up softens every glyph in the UI. The two crops
- * that do exist are for reading small type (the token counters, the help dialog) and are held to
- * 1.5×, which lanczos survives.
+ * cropping the finished video and scaling it back up softens every glyph in the UI. The crops that
+ * do exist are for reading small type and are all held to exactly 1.5×, which lanczos survives.
  *
  * Captions are burned per segment rather than as one subtitle track over the finished file. It
  * keeps `libass` and its Windows path escaping out of the build, and it means a segment whose
@@ -43,7 +47,17 @@ const FONT = 'C\\:/Windows/Fonts/consola.ttf';
 /** The room's own width in the 1920px frame; the dock owns everything right of it. */
 const ROOM_W = 1510;
 /** Crossfade length. Long enough to read as a dissolve, short enough not to soften the beat. */
-const XFADE = 0.3;
+const XFADE = 0.22;
+
+/**
+ * The crop windows, all 16:9 out of the 1920×1080 frame and all exactly 1.5× — which lanczos
+ * survives without the UI going soft. Anything tighter starts to look like a screenshot of a
+ * screenshot, which is the wrong impression for an app whose whole claim is that its numbers are
+ * exact.
+ */
+const DOCK: [number, number, number, number] = [1280, 720, 620, 40];
+const TOPBAR: [number, number, number, number] = [1280, 720, 600, 8];
+const DIALOG: [number, number, number, number] = [1280, 720, 460, 110];
 
 type Marks = { video: string; marks: { name: string; at: number }[] };
 
@@ -58,174 +72,95 @@ type Window = {
   srcDur: number;
   /** 1 = real time. Above 1 compresses; used only where nothing is being decided. */
   speed?: number;
-  /** `[w, h, x, y]` in the source frame, for the two shots that exist to make small type legible. */
+  /** `[w, h, x, y]` in the source frame, for the shots that exist to make small type legible. */
   crop?: [number, number, number, number];
   caps?: Cap[];
   trailer: boolean;
   broll: boolean;
 };
 
+/** A caption that runs the whole shot, which is nearly all of them. */
+const cap = (text: string, dur: number, pos?: 'top' | 'bottom'): Cap[] => [
+  { text, from: 0.18, to: dur, ...(pos ? { pos } : {}) },
+];
+
 /**
  * The trailer, in the order it plays — which is not the order it was filmed.
  *
  * It opens on the packed room, which happens two thirds of the way through the take. A trailer
  * that starts where the session started opens on four people and a lot of empty desks; the whole
- * point of the first three seconds is that there is more happening than you can follow.
+ * point of the first two seconds is that there is more happening than you can follow.
  */
 const WINDOWS: Window[] = [
-  {
-    name: '01-hook',
-    mark: 'crowd',
-    offset: 9,
-    srcDur: 3,
-    trailer: true,
-    broll: false,
-    caps: [{ text: 'This is one Claude Code session.', from: 0.25, to: 3 }],
-  },
-  {
-    name: '02-desks',
-    mark: 'fanout',
-    offset: 2,
-    srcDur: 4.8,
-    speed: 1.6,
-    trailer: true,
-    broll: false,
-    caps: [{ text: 'Every agent is a person at a desk.', from: 0.2, to: 3 }],
-  },
-  {
-    name: '03-arrive',
-    mark: 'fanout',
-    offset: 8,
-    srcDur: 6.3,
-    speed: 1.8,
-    trailer: true,
-    broll: true,
-    caps: [{ text: "They walk in when they're spawned.", from: 0.2, to: 3.5 }],
-  },
-  {
-    name: '04-think',
-    mark: 'working',
-    offset: 2,
-    srcDur: 3.5,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'A cloud is a real thinking block.', from: 0.2, to: 3.5 }],
-  },
-  // No caption: the push in is the shot. A line of text over a camera move asks the viewer to do
+  { name: '01-hook', mark: 'crowd', offset: 9, srcDur: 2.5, trailer: true, broll: false,
+    caps: cap('This is one Claude Code session.', 2.5) },
+
+  { name: '02-desks', mark: 'fanout', offset: 2, srcDur: 4.0, speed: 1.7, trailer: true, broll: false,
+    caps: cap('Every agent is a person at a desk.', 2.35) },
+
+  { name: '03-arrive', mark: 'fanout', offset: 8, srcDur: 4.8, speed: 1.9, trailer: true, broll: true,
+    caps: cap("They walk in when they're spawned.", 2.5) },
+
+  { name: '04-think', mark: 'working', offset: 2, srcDur: 2.4, trailer: true, broll: true,
+    caps: cap('A cloud is a real thinking block.', 2.4) },
+
+  // No caption on either camera move. A line of text over a moving camera asks the viewer to do
   // two things at once and they do neither.
-  { name: '05-pushin', mark: 'zoomin', offset: 0.4, srcDur: 3.2, trailer: true, broll: true },
-  {
-    name: '06-deliver',
-    mark: 'deliver',
-    offset: 1.5,
-    srcDur: 4,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'They walk over to report.', from: 0.2, to: 4 }],
-  },
-  {
-    name: '07-refuted',
-    mark: 'refuted',
-    offset: 2,
-    srcDur: 3.4,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'Red is REFUTED.', from: 0.2, to: 3.4 }],
-  },
-  {
-    name: '08-confirmed',
-    mark: 'confirmed',
-    offset: 2,
-    srcDur: 3,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'Green is CONFIRMED.', from: 0.2, to: 3 }],
-  },
-  // The pull out, also uncaptioned, and deliberately the longest quiet moment in the cut: it is
-  // the one breath before the second half.
-  { name: '09-pullout', mark: 'zoomout', offset: 0.5, srcDur: 3.6, trailer: true, broll: true },
-  {
-    name: '10-leaving',
-    mark: 'leaving',
-    offset: 10,
-    srcDur: 4.4,
-    speed: 1.25,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'They finish, and they leave.', from: 0.2, to: 3.5 }],
-  },
-  {
-    name: '11-crowd',
-    mark: 'crowd',
-    offset: 4,
-    srcDur: 4.6,
-    speed: 1.3,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'More agents than chairs.', from: 0.2, to: 3.5 }],
-  },
-  {
-    name: '12-scrub',
-    mark: 'scrub',
-    offset: 1,
-    srcDur: 3.8,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'Rewind to any second.', from: 0.2, to: 3.8 }],
-  },
-  {
-    name: '13-tabs',
-    mark: 'tab-switch',
-    offset: 0.5,
-    srcDur: 3.4,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'Two sessions. Two tabs.', from: 0.2, to: 3.4 }],
-  },
-  {
-    name: '14-numbers',
-    mark: 'numbers',
-    offset: 1.5,
-    srcDur: 3.2,
-    // 1.5× on the top-right quadrant, which is where TOK and EST live. They are ten pixels tall at
-    // full frame and the caption is a claim about them, so they have to be readable.
-    crop: [1280, 720, 560, 0],
-    trailer: true,
-    broll: false,
-    caps: [{ text: 'Tokens checked against the transcripts.', from: 0.2, to: 3.2, pos: 'bottom' }],
-  },
-  {
-    name: '15-night',
-    mark: 'night',
-    offset: 2,
-    srcDur: 3,
-    trailer: true,
-    broll: true,
-    caps: [{ text: 'Day or night.', from: 0.2, to: 3 }],
-  },
-  {
-    name: '16-help',
-    mark: 'help',
-    offset: 0.8,
-    srcDur: 2.4,
-    trailer: true,
-    broll: false,
-    // Bottom, not the usual top band: the overlay's own headline sits exactly where a top caption
-    // lands, and covering the words "WHAT AM I LOOKING AT" with a caption saying the same thing is
-    // the worst of both. Below the dialog the frame is empty room.
-    caps: [{ text: 'Press ? and it explains itself.', from: 0.15, to: 2.4, pos: 'bottom' }],
-  },
-  // Then push into it, silently. The overlay is a wall of text and a caption over it is text on
-  // text: at 1.5× every row is legible, and the dialog's own headline says what the caption did.
-  {
-    name: '17-helpread',
-    mark: 'help',
-    offset: 3.4,
-    srcDur: 2.8,
-    crop: [1280, 720, 460, 110],
-    trailer: true,
-    broll: true,
-  },
+  { name: '05-pushin', mark: 'zoomin', offset: 0.2, srcDur: 2.4, trailer: true, broll: true },
+
+  { name: '06-deliver', mark: 'deliver', offset: 1.6, srcDur: 2.8, trailer: true, broll: true,
+    caps: cap('They walk over to report.', 2.8) },
+
+  { name: '07-refuted', mark: 'refuted', offset: 2.2, srcDur: 2.5, trailer: true, broll: true,
+    caps: cap('Red is REFUTED.', 2.5) },
+
+  { name: '08-confirmed', mark: 'confirmed', offset: 2.2, srcDur: 2.3, trailer: true, broll: true,
+    caps: cap('Green is CONFIRMED.', 2.3) },
+
+  { name: '09-pullout', mark: 'zoomout', offset: 0.5, srcDur: 2.5, trailer: true, broll: true },
+
+  { name: '10-leaving', mark: 'leaving', offset: 10, srcDur: 3.2, speed: 1.3, trailer: true, broll: true,
+    caps: cap('They finish, and they leave.', 2.4) },
+
+  { name: '11-crowd', mark: 'crowd', offset: 4, srcDur: 3.4, speed: 1.35, trailer: true, broll: true,
+    caps: cap('More agents than chairs.', 2.5) },
+
+  { name: '12-peek', mark: 'peek', offset: 0.6, srcDur: 2.2, trailer: true, broll: true,
+    caps: cap('The ones without a desk are real too.', 2.2) },
+
+  // ---- the accounting. Four shots, because "the numbers are real" is the actual claim.
+  { name: '13-inspector', mark: 'inspector', offset: 1.6, srcDur: 2.7, crop: DOCK, trailer: true, broll: true,
+    caps: cap("Every agent's tokens, cache and cost.", 2.7, 'bottom') },
+
+  { name: '14-roster', mark: 'agentspanel', offset: 1.6, srcDur: 2.5, crop: DOCK, trailer: true, broll: true,
+    caps: cap('Who spent what, at a glance.', 2.5, 'bottom') },
+
+  { name: '15-numbers', mark: 'numbers', offset: 1.5, srcDur: 2.4, crop: TOPBAR, trailer: true, broll: false,
+    caps: cap('Every token the session billed.', 2.4, 'bottom') },
+
+  { name: '16-tools', mark: 'toolspanel', offset: 1.6, srcDur: 2.5, crop: DOCK, trailer: true, broll: true,
+    caps: cap('Every tool call, as it runs.', 2.5, 'bottom') },
+
+  { name: '17-scrub', mark: 'scrub', offset: 1, srcDur: 2.7, trailer: true, broll: true,
+    caps: cap('Rewind to any second.', 2.7) },
+
+  { name: '18-tabs', mark: 'tab-switch', offset: 0.6, srcDur: 2.4, trailer: true, broll: true,
+    caps: cap('Two sessions. Two tabs.', 2.4) },
+
+  // Bottom: the palette's own search box sits exactly where a top caption lands.
+  { name: '19-palette', mark: 'palette', offset: 0.8, srcDur: 2.3, trailer: true, broll: false,
+    caps: cap('Every action, by name.', 2.3, 'bottom') },
+
+  { name: '20-night', mark: 'night', offset: 2, srcDur: 2.2, trailer: true, broll: true,
+    caps: cap('Day or night.', 2.2) },
+
+  // The overlay's own headline sits exactly where a top caption lands, so this one goes below it.
+  { name: '21-help', mark: 'help', offset: 0.8, srcDur: 2.2, trailer: true, broll: false,
+    caps: cap('Press ? and it explains itself.', 2.2, 'bottom') },
+
+  // Then push into it, silently: at 1.5× every row is legible, and a caption over a wall of text
+  // is text on text.
+  { name: '22-helpread', mark: 'help', offset: 3.4, srcDur: 2.4, crop: DIALOG, trailer: true, broll: true },
 ];
 
 /** The three lines of the end card, over the night room, dimmed. */
@@ -234,7 +169,7 @@ const END_CARD = [
   'Built almost entirely by the agents it watches.',
   'Not public yet. Reply if you want a build.',
 ];
-const END_DUR = 4.6;
+const END_DUR = 3.8;
 
 const ff = (args: string[]): void => {
   execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { stdio: 'inherit' });
@@ -263,7 +198,7 @@ type CapWithCrop = Cap & { crop?: unknown };
  * reading `%{...}` out of ordinary prose.
  */
 const drawtext = (c: CapWithCrop, file: string): string => {
-  const fade = `clip(min((t-${c.from})/0.22\\,(${c.to}-t)/0.22)\\,0\\,1)`;
+  const fade = `clip(min((t-${c.from})/0.2\\,(${c.to}-t)/0.2)\\,0\\,1)`;
   return [
     `drawtext=fontfile='${FONT}'`,
     `textfile='${ffPath(file)}'`,
@@ -280,7 +215,7 @@ const drawtext = (c: CapWithCrop, file: string): string => {
     c.crop === undefined ? `x=(${ROOM_W}-text_w)/2` : 'x=(w-text_w)/2',
     c.pos === 'bottom' ? 'y=h-170' : 'y=176',
     `alpha='${fade}'`,
-    `enable='between(t,${c.from - 0.25},${c.to + 0.25})'`,
+    `enable='between(t,${Math.max(0, c.from - 0.25)},${c.to + 0.25})'`,
   ].join(':');
 };
 
@@ -343,14 +278,10 @@ function main(): void {
       // No captions and no speed ramp: a channel wants the picture at the speed it happened.
       const file = join(BROLL, `${w.name.replace(/^\d+-/, '')}.mp4`);
       ff([
-        '-ss',
-        String(start - 1),
-        '-t',
-        String(w.srcDur + 4),
-        '-i',
-        meta.video,
-        '-vf',
-        'scale=1920:1080:flags=lanczos,fps=30',
+        '-ss', String(Math.max(0, start - 1)),
+        '-t', String(w.srcDur + 4),
+        '-i', meta.video,
+        '-vf', `${w.crop ? `crop=${w.crop.join(':')},` : ''}scale=1920:1080:flags=lanczos,fps=30`,
         ...encode,
         file,
       ]);
@@ -358,7 +289,7 @@ function main(): void {
   }
 
   // ------------------------------------------------------------------------ end card
-  const endFile = join(WORK, '17-end.mp4');
+  const endFile = join(WORK, '23-end.mp4');
   const lines = END_CARD.map((t, i) => {
     const f = join(WORK, `end-line${i}.txt`);
     writeFileSync(f, t, 'utf8');
@@ -373,14 +304,10 @@ function main(): void {
     ].join(':');
   });
   ff([
-    '-loop',
-    '1',
-    '-t',
-    String(END_DUR),
-    '-i',
-    join(KIT, 'stills', 'night.png'),
-    '-vf',
-    ['scale=1920:1080', 'eq=brightness=-0.24:saturation=0.65', ...lines, 'fps=30'].join(','),
+    '-loop', '1',
+    '-t', String(END_DUR),
+    '-i', join(KIT, 'stills', 'night.png'),
+    '-vf', ['scale=1920:1080', 'eq=brightness=-0.24:saturation=0.65', ...lines, 'fps=30'].join(','),
     ...encode,
     endFile,
   ]);
@@ -390,7 +317,7 @@ function main(): void {
   // ------------------------------------------------------------------- crossfade chain
   // One `xfade` per join, all in a single graph, so the whole trailer is encoded once. Each
   // `offset` is where the transition begins on the *output* timeline, and every transition eats
-  // `XFADE` seconds of total length — hence the running `acc` rather than a plain sum.
+  // its own duration of total length — hence the running `acc` rather than a plain sum.
   const inputs = segments.flatMap((s) => ['-i', s.file]);
   const steps: string[] = [];
   let acc = segments[0].dur;
@@ -401,32 +328,24 @@ function main(): void {
     // Through black into the end card: it is the one join that is a change of subject rather than
     // a change of shot, and a straight dissolve there reads as a mistake.
     const kind = last ? 'fadeblack' : 'fade';
-    const dur = last ? 0.5 : XFADE;
+    const dur = last ? 0.4 : XFADE;
     steps.push(`[${label}][${i}:v]xfade=transition=${kind}:duration=${dur}:offset=${(acc - dur).toFixed(3)}[${out}]`);
     acc += segments[i].dur - dur;
     label = out;
   }
 
-  const out = join(OUT, 'trailer-v2.mp4');
+  const out = join(OUT, 'trailer-v3.mp4');
   ff([
     ...inputs,
-    '-filter_complex',
-    steps.join(';'),
-    '-map',
-    `[${label}]`,
-    '-c:v',
-    'libx264',
-    '-preset',
-    'slow',
-    '-crf',
-    '18',
-    '-pix_fmt',
-    'yuv420p',
-    '-r',
-    '30',
+    '-filter_complex', steps.join(';'),
+    '-map', `[${label}]`,
+    '-c:v', 'libx264',
+    '-preset', 'slow',
+    '-crf', '18',
+    '-pix_fmt', 'yuv420p',
+    '-r', '30',
     '-an',
-    '-movflags',
-    '+faststart',
+    '-movflags', '+faststart',
     out,
   ]);
   console.log(`\n[cut] ${out} — ${acc.toFixed(1)}s across ${segments.length} shots`);
