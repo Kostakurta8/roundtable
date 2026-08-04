@@ -184,6 +184,16 @@ const ffPath = (p: string): string => p.replace(/\\/g, '/').replace(/:/g, '\\:')
 /** `crop` is a property of the window, but the caption needs it to decide what to centre on. */
 type CapWithCrop = Cap & { crop?: unknown };
 
+/** Seconds → `HH:MM:SS,mmm`, the only timestamp format SubRip accepts. */
+function stamp(t: number): string {
+  const ms = Math.max(0, Math.round(t * 1000));
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  const s = Math.floor((ms % 60_000) / 1000);
+  const pad = (n: number, w = 2): string => String(n).padStart(w, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms % 1000, 3)}`;
+}
+
 /**
  * One caption, on a border rather than a plate.
  *
@@ -313,6 +323,37 @@ function main(): void {
   ]);
   segments.push({ file: endFile, dur: END_DUR });
   console.log('  cut end-card');
+
+  // --------------------------------------------------------------------- subtitles
+  // The captions are burned in, which is what makes the trailer work muted — but burned pixels are
+  // not text, so nothing can index them and no viewer can turn them on in their own language. A
+  // silent video also generates no auto-captions: YouTube's require intelligible speech. So the
+  // same caption data is emitted as a sidecar `.srt`, derived here rather than hand-written, which
+  // is the only way it stays true after a retake changes every timing.
+  const cues: { from: number; to: number; text: string }[] = [];
+  let tOut = 0;
+  for (const w of WINDOWS) {
+    if (!w.trailer) continue;
+    for (const c of w.caps ?? []) cues.push({ from: tOut + c.from, to: tOut + c.to, text: c.text });
+    tOut += w.srcDur / (w.speed ?? 1) - XFADE;
+  }
+  // The end card is three static lines, so it becomes one cue holding all three.
+  cues.push({ from: tOut + 0.3, to: tOut + END_DUR - 0.3, text: END_CARD.join('\n') });
+
+  // Each caption runs to the end of its own segment, but the *next* segment starts `XFADE` earlier
+  // than that — so consecutive cues overlap by 10-40ms. SubRip forbids overlapping cues and players
+  // handle them inconsistently, so each cue is clipped to just before its successor.
+  for (let i = 0; i < cues.length - 1; i++) {
+    cues[i].to = Math.min(cues[i].to, cues[i + 1].from - 0.001);
+  }
+
+  const srtFile = join(OUT, 'trailer.srt');
+  writeFileSync(
+    srtFile,
+    cues.map((c, i) => `${i + 1}\n${stamp(c.from)} --> ${stamp(c.to)}\n${c.text}\n`).join('\n'),
+    'utf8',
+  );
+  console.log(`  srt ${cues.length} cues → ${srtFile}`);
 
   // ------------------------------------------------------------------- crossfade chain
   // One `xfade` per join, all in a single graph, so the whole trailer is encoded once. Each
