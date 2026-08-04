@@ -167,7 +167,7 @@ const WINDOWS: Window[] = [
 const END_CARD = [
   'Read-only. Local. It never talks to an API.',
   'Built almost entirely by the agents it watches.',
-  'Not public yet. Reply if you want a build.',
+  'Free and MIT: github.com/Kostakurta8/roundtable',
 ];
 const END_DUR = 3.8;
 
