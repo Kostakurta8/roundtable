@@ -75,6 +75,11 @@ export type HubOptions = {
    */
   quietMs?: number;
   /**
+   * How long an unresolved tool call may hold an agent open. Defaults to `OPEN_TOOL_GRACE_MS`;
+   * tests shorten it so the release can be asserted in real time rather than in fifteen minutes.
+   */
+  openGraceMs?: number;
+  /**
    * How many read passes one drain round makes before yielding to the event loop. Lowering it
    * makes a catch-up read finer-grained, never incomplete: the round that runs out of passes
    * schedules its own continuation. Defaults to `MAX_DRAIN_PASSES`.
@@ -122,6 +127,20 @@ const LIVE_WINDOW_MS = 90_000;
  * writes again after being reported done is simply reported done again once it stops.
  */
 const AGENT_QUIET_MS = 45_000;
+
+/**
+ * How long an *unresolved tool call* may hold an agent open before the silence wins anyway.
+ *
+ * An open call is normally the difference between "waiting on a build" and "stopped for good", and
+ * without it every long `Bash` would send its agent home. But it is not always real: an agent that
+ * is killed mid-tool never writes the result, and a `tool_result` carried on a line over 1 MiB is
+ * dropped unparsed. Left unbounded, one of those pins an agent at a desk for the rest of the
+ * session — which is the very thing this sweep exists to stop, arriving by a different route. A
+ * transcript that has not moved in fifteen minutes has stopped, whatever it still has open.
+ *
+ * Mirrors `OPEN_TOOL_GRACE_MS` in `src/store.ts`, which makes the same judgement for the roster.
+ */
+const OPEN_TOOL_GRACE_MS = 15 * 60_000;
 /**
  * Passes a single `pump` will make before yielding. A first read of a long transcript can be tens
  * of megabytes and the tailer hands back one bounded batch per call, so the loop has to run — but
@@ -284,6 +303,14 @@ type Watch = {
   doneResult: Map<string, { ok: boolean; ts: number }>;
   /** agentId → when its transcript was last seen to grow. */
   lastWrite: Map<string, number>;
+  /**
+   * agentId → the `tool_use` ids it has open.
+   *
+   * An agent waiting on a long `Bash` writes nothing while it waits, which looks exactly like an
+   * agent that has stopped. This is the difference, and it is the only reason a quiet transcript
+   * can be trusted as evidence of finishing.
+   */
+  openTools: Map<string, Set<string>>;
   /** agentId → when `agentDone` was last emitted for it, so a repeat needs new work first. */
   doneAt: Map<string, number>;
   /** Idle-eviction timer, armed when the last follower leaves. */
@@ -319,6 +346,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   const backlogLimit = opts.backlogLimit ?? DEFAULT_BACKLOG;
   const rosterMs = opts.rosterMs ?? DEFAULT_ROSTER_MS;
   const quietMs = opts.quietMs ?? AGENT_QUIET_MS;
+  const openGraceMs = opts.openGraceMs ?? OPEN_TOOL_GRACE_MS;
   const drainPasses = Math.max(1, opts.drainPasses ?? MAX_DRAIN_PASSES);
 
   const watches = new Map<string, Watch>();
@@ -483,7 +511,16 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         if (parked) finish(ev.parentToolUseId, ev.ref.agentId, parked.ok, parked.ts);
         continue;
       }
+      // What an agent still has in flight. A transcript goes just as quiet during a five-minute
+      // build as it does after the agent has stopped for good, and only this tells the two apart.
+      if (ev.kind === 'toolStart') {
+        const open = w.openTools.get(ev.ref.agentId) ?? new Set<string>();
+        open.add(ev.toolUseId);
+        w.openTools.set(ev.ref.agentId, open);
+        continue;
+      }
       if (ev.kind !== 'toolResult') continue;
+      w.openTools.get(ev.ref.agentId)?.delete(ev.toolUseId);
       const child = w.spawnChild.get(ev.toolUseId);
       if (child) finish(ev.toolUseId, child, ev.ok, ev.ts);
       else if (w.spawnIds.has(ev.toolUseId) && !w.spawnDone.has(ev.toolUseId)) {
@@ -751,21 +788,29 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   }
 
   /**
-   * Reports the agents whose parent has returned a result *and* whose own transcript has stopped
-   * growing — which, unlike the result on its own, is evidence that they have finished.
+   * Reports the agents whose own transcript has stopped growing while they hold nothing open.
    *
-   * Re-armable on purpose. If a child writes again after being reported done it will be reported
-   * done a second time once it goes quiet again, because the alternative — reporting it once and
-   * never revisiting it — is what left the room full of agents that had finished hours earlier and
-   * would never leave. `doneAt` is what makes the repeat require new work rather than just time.
+   * The evidence is the child's, not the parent's. It used to require the parent's `tool_result`
+   * to have been joined to this agent first, and that quietly excluded every **Workflow** agent
+   * there is: `Workflow` is not in `SPAWN_TOOLS`, so its children get no `agentSpawn` at all, and
+   * one `Workflow` result could not be matched to the dozen agents it spawned even if it did. A
+   * session that fanned out through a workflow therefore filled the room with agents that could
+   * never be marked finished — fourteen at desks with one actually running.
+   *
+   * So a subagent is finished when its file has been still for `quietMs` and it has no tool call
+   * outstanding. The open-call test is what makes the quiet meaningful: a transcript is just as
+   * silent during a five-minute build as it is after the agent has stopped for good.
+   *
+   * Re-armable on purpose. If a child writes again after being reported done it is reported done
+   * again once it goes quiet again, because the alternative — reporting it once and never
+   * revisiting it — is what left the room full of agents that had finished hours earlier and would
+   * never leave. `doneAt` is what makes the repeat require new work rather than just time.
    */
   function sweepDone(w: Watch): void {
     const now = Date.now();
     const out: Ev[] = [];
     for (const [file, entry] of w.agents) {
       const agentId = entry.agentId;
-      const result = w.doneResult.get(agentId);
-      if (!result) continue;
       // The file's own mtime, not when this process happened to read it. Reading is the wrong
       // clock: pointing the observer at a session that finished last week would start every
       // agent's quiet window at the moment of the catch-up sweep, and the whole room would stand
@@ -773,13 +818,20 @@ export async function startServer(root: string, port: number, opts: HubOptions =
       const wrote = mtimeOf(file) ?? w.lastWrite.get(agentId) ?? 0;
       const told = w.doneAt.get(agentId) ?? 0;
       if (wrote <= told) continue; // nothing new since we last said so
-      if (now - wrote < quietMs) continue; // still going
+      const quiet = now - wrote;
+      // An outstanding call buys a longer silence, not an unlimited one.
+      if ((w.openTools.get(agentId)?.size ?? 0) > 0 && quiet < openGraceMs) continue;
+      if (quiet < quietMs) continue; // still going
       w.doneAt.set(agentId, now);
+      // The parent's verdict when there is one. Without it — a workflow agent, or a spawn whose
+      // result has not landed yet — "it stopped" is all that is actually known, and the room says
+      // finished rather than failed because nothing observed says otherwise.
+      const result = w.doneResult.get(agentId);
       out.push({
         kind: 'agentDone',
         ref: { sessionId: w.sessionId, agentId },
-        ok: result.ok,
-        ts: result.ts,
+        ok: result?.ok ?? true,
+        ts: result?.ts ?? wrote,
         seq: nextSeq(),
       });
     }
@@ -963,6 +1015,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         spawnBg: new Map(),
         doneResult: new Map(),
         lastWrite: new Map(),
+        openTools: new Map(),
         doneAt: new Map(),
         evict: null,
         backlog: [],

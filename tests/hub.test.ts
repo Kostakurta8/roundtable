@@ -168,14 +168,33 @@ function makeRoot(opts: { subagents?: boolean; sessionDir?: boolean } = {}): {
   else mkdirSync(opts.sessionDir ? sessionDir : slugDir, { recursive: true });
   const mainFile = join(slugDir, 'fix-sess.jsonl');
   copyFileSync(join('fixtures', 'main-session.jsonl'), mainFile);
+  freshen(mainFile);
   if (withSubagents) {
-    copyFileSync(join('fixtures', 'agent-abc123.jsonl'), join(subagentsDir, 'agent-abc123.jsonl'));
+    const agentFile = join(subagentsDir, 'agent-abc123.jsonl');
+    copyFileSync(join('fixtures', 'agent-abc123.jsonl'), agentFile);
+    freshen(agentFile);
   }
   return { root, slugDir, mainFile, sessionDir, subagentsDir };
 }
 
+/**
+ * Marks a copied fixture as having just been written.
+ *
+ * `copyFileSync` preserves the source's timestamps on Windows, so a transcript copied out of
+ * `fixtures/` arrives claiming it was last written whenever that file was committed — days ago.
+ * The hub reads a subagent's mtime to decide whether it has gone quiet and finished, so every test
+ * root was starting with its agents already eligible to be reported done, and which run saw it
+ * first came down to which one the 500ms sweep happened to reach.
+ */
+const freshen = (file: string): void => {
+  const now = new Date();
+  utimesSync(file, now, now);
+};
+
 const seedAgent = (subagentsDir: string, name = 'agent-abc123.jsonl'): void => {
-  copyFileSync(join('fixtures', 'agent-abc123.jsonl'), join(subagentsDir, name));
+  const file = join(subagentsDir, name);
+  copyFileSync(join('fixtures', 'agent-abc123.jsonl'), file);
+  freshen(file);
 };
 
 /**
@@ -504,6 +523,93 @@ describe('hub', () => {
       expect(done.ok).toBe(true);
     }, 20_000);
 
+    it('finishes a workflow agent, which has no parent result to wait for', async () => {
+      // The case that filled a real room with fourteen agents while one was running. `Workflow` is
+      // not in `SPAWN_TOOLS`, so its children get no `agentSpawn` — and one `Workflow` result could
+      // not be matched to the dozen agents it spawned even if it did. Requiring the parent's
+      // verdict meant these could never be reported finished at all.
+      const root = mkdtempSync(join(tmpdir(), 'rt-wf-'));
+      const wfDir = join(root, 'projects', 'demo', 'fix-sess', 'subagents', 'workflows', 'wf_abc');
+      mkdirSync(wfDir, { recursive: true });
+      copyFileSync(join('fixtures', 'main-session.jsonl'), join(root, 'projects', 'demo', 'fix-sess.jsonl'));
+      writeFileSync(join(wfDir, 'agent-wf1.jsonl'), assistantLine('workflow agent reporting', 'wf1'));
+      writeFileSync(join(wfDir, 'agent-wf1.meta.json'), JSON.stringify({ agentType: 'workflow-subagent' }));
+
+      const client = await connect(await start(root, { quietMs: 300 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      const done = await client.wait(evOf('agentDone', (e) => e.ref.agentId === 'wf1'), 8000);
+      expect(done.ok).toBe(true); // nothing observed says it failed, so it did not
+    }, 20_000);
+
+    it('does not call an agent finished while it is waiting on a tool', async () => {
+      // A transcript is exactly as quiet during a five-minute build as it is after the agent has
+      // stopped for good. Without the open-call test, every long tool call would send its agent
+      // home and bring it back the moment the result landed.
+      const root = mkdtempSync(join(tmpdir(), 'rt-open-'));
+      const subDir = join(root, 'projects', 'demo', 'fix-sess', 'subagents');
+      mkdirSync(subDir, { recursive: true });
+      copyFileSync(join('fixtures', 'main-session.jsonl'), join(root, 'projects', 'demo', 'fix-sess.jsonl'));
+      writeFileSync(
+        join(subDir, 'agent-slow.jsonl'),
+        `${JSON.stringify({
+          type: 'assistant',
+          isSidechain: true,
+          agentId: 'slow',
+          timestamp: '2026-08-03T10:00:00.000Z',
+          message: {
+            role: 'assistant',
+            model: 'claude-opus-5',
+            content: [{ type: 'tool_use', id: 'tuLong', name: 'Bash', input: { command: 'npm run build' } }],
+          },
+        })}\n`,
+      );
+
+      const client = await connect(await start(root, { quietMs: 300 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('toolStart', (e) => e.ref.agentId === 'slow'));
+      await delay(SETTLE_MS * 4); // many sweeps, all of which must decline
+      expect(client.events().some((e) => e.kind === 'agentDone' && e.ref.agentId === 'slow')).toBe(false);
+    }, 20_000);
+
+    it('gives up on an open tool call eventually, rather than never', async () => {
+      // An agent killed mid-tool never writes the result, and a `tool_result` on a line over 1 MiB
+      // is dropped unparsed. Either one pinned an agent at a desk for the rest of the session —
+      // the exact thing this sweep exists to stop, arriving by a different route. Seen for real:
+      // an agent idle for sixteen hours with one call still open, still on the floor.
+      const root = mkdtempSync(join(tmpdir(), 'rt-stuck-'));
+      const subDir = join(root, 'projects', 'demo', 'fix-sess', 'subagents');
+      mkdirSync(subDir, { recursive: true });
+      copyFileSync(join('fixtures', 'main-session.jsonl'), join(root, 'projects', 'demo', 'fix-sess.jsonl'));
+      const stuck = join(subDir, 'agent-stuck.jsonl');
+      writeFileSync(
+        stuck,
+        `${JSON.stringify({
+          type: 'assistant',
+          isSidechain: true,
+          agentId: 'stuck',
+          timestamp: '2026-08-03T10:00:00.000Z',
+          message: {
+            role: 'assistant',
+            model: 'claude-opus-5',
+            content: [{ type: 'tool_use', id: 'tuNever', name: 'Bash', input: { command: 'sleep 9999' } }],
+          },
+        })}\n`,
+      );
+
+      const client = await connect(await start(root, { quietMs: 200, openGraceMs: 600 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(evOf('toolStart', (e) => e.ref.agentId === 'stuck'));
+      // Held while the grace lasts…
+      await delay(300);
+      expect(client.events().some((e) => e.kind === 'agentDone' && e.ref.agentId === 'stuck')).toBe(false);
+      // …and released once it does not.
+      const done = await client.wait(evOf('agentDone', (e) => e.ref.agentId === 'stuck'), 8000);
+      expect(done.ok).toBe(true);
+    }, 20_000);
+
     it('trusts the result immediately for a foreground spawn, which really does block', async () => {
       // No quiet window is waited out here at all: `quietMs` is set high enough that the only way
       // this can pass is the foreground fast path.
@@ -750,7 +856,12 @@ describe('hub', () => {
   it(
     'tells a follower on the wire when the backlog cap dropped history',
     async () => {
-      const capped = await connect(await start(makeRoot().root, { backlogLimit: 2 }));
+      // `quietMs` well past the test's own lifetime in both runs. The fixture's subagent is
+      // finished the moment it is read — its transcript never grows again — so the quiet sweep
+      // would emit an `agentDone` on its own schedule, landing inside one run and not the other
+      // and making the conservation check below a race rather than an assertion.
+      const NO_SWEEP = { quietMs: 10 * 60_000 };
+      const capped = await connect(await start(makeRoot().root, { backlogLimit: 2, ...NO_SWEEP }));
       await capped.wait(isHello);
       capped.send({ cmd: 'follow', sessionId: 'fix-sess' });
 
@@ -762,13 +873,18 @@ describe('hub', () => {
       expect(capped.events()).toHaveLength(2); // only the retained tail
 
       // control run over identical fixtures: dropped + retained must account for every event
-      const full = await connect(await start(makeRoot().root, { backlogLimit: 1000 }));
+      const full = await connect(await start(makeRoot().root, { backlogLimit: 1000, ...NO_SWEEP }));
       await full.wait(isHello);
       full.send({ cmd: 'follow', sessionId: 'fix-sess' });
       await full.wait(evOf('userMessage'));
       await delay(SETTLE_MS);
       expect(full.seen.some(isTruncated)).toBe(false); // nothing dropped, nothing announced
-      expect(notice.dropped + capped.events().length).toBe(full.events().length);
+      const kinds = (c: TestClient): string =>
+        c.events().map((e) => `${e.kind}${'ref' in e ? `/${e.ref.agentId}` : ''}`).join(' ');
+      expect(
+        notice.dropped + capped.events().length,
+        `capped(dropped ${notice.dropped}): ${kinds(capped)}\nfull: ${kinds(full)}`,
+      ).toBe(full.events().length);
     },
     25_000,
   );
