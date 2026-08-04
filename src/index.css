@@ -623,6 +623,16 @@ body {
   background: var(--accent-wash);
   border-color: var(--accent-2);
 }
+/* Finished agents step back, so the rows still in play are the ones the eye lands on. Hover,
+   selection and keyboard focus restore full weight — dimmed must never mean unreachable. */
+.arow.done {
+  opacity: 0.55;
+}
+.arow.done:hover,
+.arow.done.on,
+.arow.done:focus-visible {
+  opacity: 1;
+}
 .arow .who {
   display: flex;
   flex-direction: column;
@@ -1461,6 +1471,74 @@ details.monologue[open] summary::before {
   color: var(--ink-3);
   flex: none;
 }
+/* --- help overlay ---
+   The palette's shell, holding prose instead of options: same width, same pop, same close. */
+.help {
+  width: min(560px, 92vw);
+  max-height: 74vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-3);
+  animation: pop-in 0.16s var(--ease);
+}
+.help-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+.help-body {
+  overflow-y: auto;
+  padding: 4px 14px 10px;
+}
+.help-body h3 {
+  margin: 12px 0 4px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+  font-weight: 700;
+}
+.help-body dl {
+  margin: 0;
+}
+.help-row {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 10px;
+  padding: 3px 0;
+}
+.help-row dt {
+  color: var(--ink);
+  font-size: 11px;
+}
+.help-row dd {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.help-ft {
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: 9.5px;
+}
+/* One column when the two would squeeze each other into slivers. */
+@media (max-width: 560px) {
+  .help-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
 kbd {
   font-family: var(--font-mono);
   font-size: 9px;

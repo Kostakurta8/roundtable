@@ -27,7 +27,7 @@
  *   "focused" and is exactly the claim this strip needs to make.
  */
 import { memo, useMemo, useRef, useState } from 'react';
-import { BUCKET_MS, type RtBucket } from '../store';
+import { BUCKET_CAP, BUCKET_MS, type RtBucket } from '../store';
 import { clockSec, duration } from './format';
 
 /** Columns drawn at once. Past this the strip shows the most recent window rather than shrinking. */
@@ -222,8 +222,26 @@ export const Timeline = memo(function Timeline({
             </span>
           ))}
         </div>
+        {/* The strip draws at most the recent window, while ELAPSED on the far side counts the
+            whole session — two numbers a day-long session puts hours apart. Saying which slice
+            the bars actually cover is what stops them being read as all of it.
+
+            "Whole" is decided by count, not by clock: buckets exist only for seconds something
+            happened in, so the first bar routinely sits seconds after `firstTs` (an opening user
+            turn bumps no bucket) and a time comparison called almost every intact session
+            truncated. If nothing was sliced here and the store never hit its cap, every bucket
+            that ever existed is on screen — that is what "whole" means. */}
         <span>
-          {msgs} turns · {seconds}s buckets
+          {msgs} turns ·{' '}
+          {shown.length === 0 || (shown.length === buckets.length && buckets.length < BUCKET_CAP)
+            ? 'whole session'
+            : lastTs - (shown[shown.length - 1].t + BUCKET_MS) < BUCKET_MS * 2
+              ? `bars cover the last ${duration(shown[shown.length - 1].t + BUCKET_MS - shown[0].t)}`
+              : // The covered stretch ended before the session did — an idle tail advances ELAPSED
+                // but bumps no bucket, and "the last X" would claim a window that is long over.
+                `bars cover ${duration(shown[shown.length - 1].t + BUCKET_MS - shown[0].t)} ending ${clockSec(
+                  shown[shown.length - 1].t + BUCKET_MS,
+                )}`}
         </span>
       </div>
 

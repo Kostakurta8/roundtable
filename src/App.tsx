@@ -17,6 +17,7 @@ import { initialState, roster as rosterOf, workingAgents } from './store';
 import { useTheme } from './theme';
 import { AgentsTab } from './ui/AgentsTab';
 import { clip, clockSec, shortId } from './ui/format';
+import { Help } from './ui/Help';
 import { Inspector } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
 import { Rail } from './ui/Rail';
@@ -29,6 +30,38 @@ import { useRtStream, WS_URL, type RtSession } from './ws';
 const TITLE_MAX = 110;
 /** The whiteboard is 220px of monospace: three lines fit, and the CSS clamps what does not. */
 const BOARD_MAX = 150;
+
+/**
+ * Where the picker's last explicit choice is remembered, so a reload shows the session that was
+ * on screen rather than whichever one happened to be touched most recently. Only a *choice* is
+ * written — the boot-time default is a default, and persisting it would promote a guess into a
+ * preference the user never expressed.
+ */
+const PIN_KEY = 'rt.pinned';
+
+const storePin = (id: string): void => {
+  try {
+    localStorage.setItem(PIN_KEY, id);
+  } catch {
+    // storage denied (private mode, exhausted quota) — the pin is a convenience, not a right
+  }
+};
+
+const readPin = (): string | null => {
+  try {
+    return localStorage.getItem(PIN_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const clearPin = (): void => {
+  try {
+    localStorage.removeItem(PIN_KEY);
+  } catch {
+    // same shrug as storePin — storage that cannot be written cannot be holding stale keys
+  }
+};
 
 type TabKey = 'chat' | 'agents' | 'tools';
 const TABS: readonly { key: TabKey; label: string }[] = [
@@ -132,6 +165,7 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('chat');
   const [dockOpen, setDockOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [seekTs, setSeekTs] = useState<number | null>(null);
   /** The roundtable's filter: only what the agents said to each other. */
   const [crossTalk, setCrossTalk] = useState(false);
@@ -180,11 +214,18 @@ export default function App() {
     return current ? [current, ...working] : working;
   }, [working, sessions, sessionId]);
 
-  // Follow the most recently touched session as soon as the roster lands: the observer exists
-  // to show what is happening now, and the hub sorts its roster newest first. A session the
-  // user picked themselves is never overridden.
+  // Follow the remembered pin if that session still exists, else the most recently touched one:
+  // the observer exists to show what is happening now, but a reload that silently switched the
+  // room to a *different* session — because a sibling happened to write last — read as the app
+  // losing its place. A session the user picked themselves is never overridden.
   useEffect(() => {
-    if (sessionId === null && sessions.length > 0) setSessionId(sessions[0].sessionId);
+    if (sessionId !== null || sessions.length === 0) return;
+    const pinned = readPin();
+    const restored = pinned !== null && sessions.some((s) => s.sessionId === pinned);
+    // A pin naming a transcript that no longer exists is not a preference, it is litter — left in
+    // place it would be re-checked against the roster on every boot for ever.
+    if (pinned !== null && !restored) clearPin();
+    setSessionId(restored ? pinned : sessions[0].sessionId);
   }, [sessionId, sessions]);
 
   // A selection is about one agent of one session; carrying it across a switch would highlight
@@ -225,7 +266,10 @@ export default function App() {
       ? 'nothing to observe yet'
       : 'waiting for a task…';
 
-  const pickSession = useCallback((id: string) => setSessionId(id), []);
+  const pickSession = useCallback((id: string) => {
+    setSessionId(id);
+    storePin(id); // an explicit choice, from the picker, a tab or the palette — remembered
+  }, []);
   const select = useCallback((id: string | null) => setSelected(id), []);
   /**
    * The way out of a seek. It lives in the top bar because the top bar is the one surface no
@@ -265,6 +309,7 @@ export default function App() {
       { id: 'theme-day', label: 'Theme: day', run: () => theme.set('day') },
       { id: 'theme-night', label: 'Theme: night', run: () => theme.set('night') },
       { id: 'theme-auto', label: 'Theme: follow the system', run: () => theme.set('auto') },
+      { id: 'help', label: 'Help: what am I looking at', hint: '?', run: () => setHelpOpen(true) },
       { id: 'dock', label: dockOpen ? 'Hide the side panel' : 'Show the side panel', hint: 'B', run: () => setDockOpen((v) => !v) },
       ...TABS.map((t) => ({ id: `tab-${t.key}`, label: `Panel: ${t.label.toLowerCase()}`, hint: 'panel', run: () => { setTab(t.key); setDockOpen(true); } })),
       { id: 'clear', label: 'Clear the agent selection', hint: 'Esc', run: () => setSelected(null) },
@@ -279,23 +324,29 @@ export default function App() {
       id: `session-${s.sessionId}`,
       label: `Observe ${s.name ?? s.sessionId.slice(0, 8)}${s.live ? ' (running)' : ''}`,
       hint: s.cwd ?? s.slug,
-      run: () => setSessionId(s.sessionId),
+      run: () => pickSession(s.sessionId),
     }));
     return [...base, ...agents, ...list];
-  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive]);
+  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession]);
 
   useKeys({
-    'mod+k': () => setPaletteOpen(true),
+    // The two overlays are exclusive on purpose: they share a z-index, so opening one over the
+    // other stacked an invisible dialog under a visible one — ⌘K over the help put focus in a
+    // palette nobody could see, and keystrokes ran commands off the screen.
+    'mod+k': () => { setPaletteOpen(true); setHelpOpen(false); },
     t: theme.cycle,
     b: () => setDockOpen((v) => !v),
+    '?': () => { setHelpOpen(true); setPaletteOpen(false); },
     '1': () => { setTab('chat'); setDockOpen(true); },
     '2': () => { setTab('agents'); setDockOpen(true); },
     '3': () => { setTab('tools'); setDockOpen(true); },
-    // Newest thing first, so each press undoes the most recent one: the palette is on top of the
-    // room, a seek is a state the whole room is held in, and a selection is the quietest of the
-    // three. Escape that only ever cleared the selection left the seek with no keyboard exit.
+    // Newest thing first, so each press undoes the most recent one: the overlays are on top of the
+    // room, a seek is a state the whole room is held in, and a selection is the quietest of them
+    // all. Escape that only ever cleared the selection left the seek with no keyboard exit.
+    // (An open top-bar menu is closed before any of these by `useDismiss`, in the capture phase.)
     Escape: () => {
       if (paletteOpen) setPaletteOpen(false);
+      else if (helpOpen) setHelpOpen(false);
       else if (seekTs !== null) setSeekTs(null);
       else setSelected(null);
     },
@@ -317,6 +368,7 @@ export default function App() {
         dockOpen={dockOpen}
         onToggleDock={() => setDockOpen((v) => !v)}
         onOpenPalette={() => setPaletteOpen(true)}
+        onOpenHelp={() => setHelpOpen(true)}
         seekTs={seekTs}
         onResumeLive={resumeLive}
         onRescan={rescan}
@@ -340,7 +392,7 @@ export default function App() {
                   aria-selected={on}
                   className={on ? 'session-tab on' : 'session-tab'}
                   title={s.cwd ?? s.slug}
-                  onClick={() => setSessionId(s.sessionId)}
+                  onClick={() => pickSession(s.sessionId)}
                 >
                   {/* The session being watched keeps its tab even after it goes quiet, so the tab
                       is not always a running one and must not always claim to be. */}
@@ -466,6 +518,7 @@ export default function App() {
       />
 
       {paletteOpen && <Palette commands={commands} onClose={() => setPaletteOpen(false)} />}
+      {helpOpen && <Help onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

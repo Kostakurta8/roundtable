@@ -37,6 +37,7 @@ export type TopBarProps = {
   dockOpen: boolean;
   onToggleDock: () => void;
   onOpenPalette: () => void;
+  onOpenHelp: () => void;
   /** The instant the room is replaying, or `null` when it is showing now. */
   seekTs: number | null;
   onResumeLive: () => void;
@@ -217,6 +218,18 @@ export function TopBar(props: TopBarProps) {
       </button>
       <button type="button" className="btn icon" onClick={props.onOpenPalette} title="commands (Ctrl+K)">
         ⌘K
+      </button>
+      {/* The metaphor's decoder ring. It sits with the other meta controls rather than in the room
+          because it is about the whole app — and the person who needs it most is the one who does
+          not yet know the room can be asked anything. */}
+      <button
+        type="button"
+        className="btn icon"
+        onClick={props.onOpenHelp}
+        title="what am I looking at? (?)"
+        aria-label="what am I looking at"
+      >
+        ?
       </button>
       <button
         type="button"

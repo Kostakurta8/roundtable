@@ -941,7 +941,13 @@ export const PixelOffice = memo(function PixelOffice({
       }
       if (cardNow && card && cur.hover !== null) {
         const meta = cur.agents[cur.hover];
-        const box = scene.current!.boxOf(cur.hover) ?? scene.current!.deskBoxOf(cur.hover);
+        // An off-site agent has no sprite on the floor and no desk — its box is its ghost's, and
+        // without that third fallback hovering the strip named nobody: the card existed, was never
+        // placed, and so was never shown.
+        const box =
+          scene.current!.boxOf(cur.hover) ??
+          scene.current!.deskBoxOf(cur.hover) ??
+          scene.current!.ghostBoxOf(cur.hover);
         if (box) {
           const cx = b.dx + (box.x + box.w / 2 - b.srcX) * b.px;
           const top = b.dy + (box.y - b.srcY) * b.px;
@@ -962,9 +968,13 @@ export const PixelOffice = memo(function PixelOffice({
           // for one frame before the loop places it reads as a flicker in the wrong place.
           if (!cardNow.classList.contains('on')) cardNow.classList.add('on');
         }
-        // A finished agent's clock stops at its last event; a live one's runs to now.
-        const end = hovered?.done ? meta?.lastTs ?? 0 : Date.now();
-        setText(card.act, actLine(hovered));
+        // A finished agent's clock stops at its last event; a live one's runs to now. A hovered
+        // ghost has no ActorState at all — it is off the floor — so its phase comes from the
+        // store, or the card would age a finished agent for ever and call a queued one "off the
+        // floor" while pointing straight at its head in the strip.
+        const done = hovered ? hovered.done : meta?.phase === 'done';
+        const end = done ? meta?.lastTs ?? 0 : Date.now();
+        setText(card.act, hovered ? actLine(hovered) : done ? 'finished' : 'waiting for a desk');
         setText(card.tok, `${fmtTokens(meta?.tokens ?? 0)} tokens`);
         setText(card.cost, money(meta?.cost));
         setText(card.age, meta && meta.firstTs > 0 ? duration(end - meta.firstTs) : '—');
@@ -1156,7 +1166,7 @@ export const PixelOffice = memo(function PixelOffice({
       // Anything with its own meaning has already handled this and stopped it; what is left is
       // the floor, the walls and the furniture nobody wired up — all of which mean "nobody".
       if (swallowed()) return;
-      if ((e.target as HTMLElement).closest('.actor, .desk, .fixture, .cam-ctl')) return;
+      if ((e.target as HTMLElement).closest('.actor, .desk, .ghost, .fixture, .cam-ctl')) return;
       onSelect(null);
     },
     [onSelect, swallowed],
@@ -1244,7 +1254,7 @@ export const PixelOffice = memo(function PixelOffice({
       onClick={onClick}
       onKeyDown={onKeyDown}
       onDoubleClick={(e) => {
-        if ((e.target as HTMLElement).closest('.actor, .desk, .fixture, .cam-ctl')) return;
+        if ((e.target as HTMLElement).closest('.actor, .desk, .ghost, .fixture, .cam-ctl')) return;
         home();
       }}
       data-follow={follow ? 'on' : 'off'}

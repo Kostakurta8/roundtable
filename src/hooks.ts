@@ -50,7 +50,10 @@ export function useKeys(bindings: Record<string, KeyHandler>): void {
   }, []);
 }
 
-/** Closes a popover when a pointer goes down anywhere outside it. */
+/**
+ * Closes a popover when a pointer goes down outside it, when focus lands outside it, or when
+ * Escape is pressed.
+ */
 export function useDismiss(open: boolean, close: () => void): React.RefObject<HTMLDivElement> {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -58,10 +61,37 @@ export function useDismiss(open: boolean, close: () => void): React.RefObject<HT
     const onDown = (e: PointerEvent): void => {
       if (!ref.current?.contains(e.target as Node)) close();
     };
+    // Capture phase, so an open menu wins the key over the shell: `useKeys` listens at the
+    // document in the bubble phase, and without the stop the same press that closed this menu
+    // would also clear the selection — or open the palette's Escape chain — behind it. An open
+    // popover is the innermost thing on screen, so Escape belongs to it first.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      // Escape took the focus's home away (the list unmounts under it), and a keyboard user
+      // dropped to `<body>` restarts the whole tab order. The popover's first button is its own
+      // trigger, which is exactly where the keyboard came from. Pointer dismissal never does this:
+      // the pointer's press already decided where focus goes next.
+      ref.current?.querySelector<HTMLElement>('button')?.focus();
+    };
+    // A dialog opened over the menu (⌘K, `?` — bubble-phase bindings this menu never sees) takes
+    // focus on mount; a menu that stayed open under it would then eat the dialog's own Escape at
+    // this capture listener, making the first press a visible no-op. Focus leaving is dismissal.
+    const onFocus = (e: FocusEvent): void => {
+      if (!ref.current?.contains(e.target as Node)) close();
+    };
     // `pointerdown` rather than `click`, so the menu is gone before the click lands on whatever
     // was underneath it — otherwise dismissing feels like it takes two presses.
     document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('focusin', onFocus, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('focusin', onFocus, true);
+    };
   }, [open, close]);
   return ref;
 }

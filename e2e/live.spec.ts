@@ -452,6 +452,12 @@ test('scrubbing the timeline and resuming live round-trips', async ({ page }) =>
   const resume = page.getByRole('button', { name: /resume live/i });
   await expect(resume).toHaveCount(0);
 
+  // The caption beside the legend states what slice the bars cover. This fixture's every bucket
+  // is on screen and the store is nowhere near its cap, so the honest claim is the whole session
+  // — asserted because the "whole" branch is decided by bucket *count*, and a time-based version
+  // of it shipped once, called nearly every intact session truncated, and died to this line.
+  await expect(page.locator('.timeline .tl-side').nth(1)).toContainText('whole session');
+
   // Clicked rather than tabbed to, because there is nothing to tab to: the bars are bare `div`s
   // with an `onClick`, no `tabIndex` and no key handler, under a `role="img"` that makes the whole
   // plot presentational. The app's only time-travel affordance is mouse-only. Also a known bug,
@@ -515,6 +521,19 @@ test('the off-site strip names the agents the room has no chair for', async ({ p
   // or the camera controls, because that is a person nobody can click.
   const crowded = await hits(page);
   expect(crowded.outside, `marks outside the actor layer: ${crowded.outside.join(', ')}`).toEqual([]);
+
+  // Present is not enough — a waiting agent has to answer the two questions any agent answers.
+  // Clicking one selects it: the stage's own click handler used to treat `.ghost` as furniture
+  // and cleared the selection in the same breath the mark set it, so the strip was clickable and
+  // clicking did nothing. The Inspector opening is the observable difference.
+  await first.click();
+  await expect(page.locator('.inspector')).toBeVisible();
+
+  // And hovering one answers "who is that": the peek card's box chain ended at desks, and an
+  // off-site agent has neither a sprite on the floor nor a desk, so the card was never placed and
+  // never shown. `.on` is the class the frame loop adds only once it has put the card somewhere.
+  await first.hover();
+  await expect(page.locator('.peek.on')).toBeVisible();
 
   await page.screenshot({ path: join(ARTIFACTS, 'offsite-strip.png'), fullPage: true });
 });

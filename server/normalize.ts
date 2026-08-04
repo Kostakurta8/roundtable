@@ -204,7 +204,7 @@ function errorText(content: unknown): string | undefined {
 const SOURCE_MARKERS: readonly (readonly [RegExp, UserSource])[] = [
   [/^\s*<local-command-caveat>/, 'caveat'],
   [/^\s*<(command-name|command-message|command-args|local-command-stdout|local-command-stderr)>/, 'command'],
-  [/^\s*<system-reminder>/, 'reminder'],
+  [/^\s*<(system-reminder|task-notification)>/, 'reminder'],
   [/^\s*(<user-prompt-submit-hook>|[A-Za-z ]*hook additional context:)/, 'hook'],
 ];
 

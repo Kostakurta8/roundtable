@@ -81,6 +81,10 @@ export function Palette({ commands, onClose }: { commands: Command[]; onClose: (
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') {
       e.preventDefault();
+      // Stopped so the shell's own Escape chain cannot also act on the press. Today both would
+      // merely close the palette twice; the day the chain gains a step, one press doing two
+      // things is the bug this line is here to never allow.
+      e.stopPropagation();
       onClose();
     } else if (e.key === 'Tab') {
       // The trap. The dialog holds exactly one focusable element today, so both directions land
@@ -109,7 +113,9 @@ export function Palette({ commands, onClose }: { commands: Command[]; onClose: (
   };
 
   return (
-    <div className="overlay" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+    // `click`, not `pointerdown`: unmounting on the down-stroke hands the up-stroke's click to
+    // the room underneath, which reads it as a floor click and clears the selection.
+    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div
         ref={dialog}
         className="palette"

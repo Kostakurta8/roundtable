@@ -468,6 +468,30 @@ describe('reduce — compaction summaries', () => {
     const msg = st.msgs.find((m) => m.agentId === 'user');
     expect(msg?.source).toBe('compaction');
   });
+
+  it('never lets harness machinery on the user lane become the session task', () => {
+    // End to end on purpose — the raw line through the real Normalizer, its events through the
+    // real fold — so this dies if either half regresses: the classifier calling the block human,
+    // or the latch accepting a non-human source. A hand-built event with `source: 'reminder'`
+    // already baked in would only ever test the second half.
+    const n = new Normalizer('s', 'main');
+    const raw = parseLine(
+      JSON.stringify({
+        type: 'user',
+        timestamp: '2026-08-03T09:00:00.000Z',
+        message: {
+          role: 'user',
+          content: '<task-notification>\n<task-id>abc</task-id>\nBackground task finished.\n</task-notification>',
+        },
+      }),
+    );
+    expect(raw).not.toBeNull();
+    const st = fold([...n.feed(raw!), userMessage('main', 'now make the tabs work', 2000)]);
+    expect(st.task).toBe('now make the tabs work');
+    expect(st.msgs.find((m) => m.agentId === 'user' && m.text.startsWith('<task-notification>'))?.source).toBe(
+      'reminder',
+    );
+  });
 });
 
 /**

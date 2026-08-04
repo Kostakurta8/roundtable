@@ -199,6 +199,16 @@ describe('Normalizer compaction summaries', () => {
     });
     expect(evs.find((e) => e.kind === 'userMessage')).toMatchObject({ source: 'human' });
   });
+
+  it('labels a task-notification block as the harness, not the human', () => {
+    const n = new Normalizer('s', 'main');
+    const evs = n.feed({
+      type: 'user',
+      timestamp: '2026-08-03T09:00:00.000Z',
+      message: { role: 'user', content: '<task-notification> <task-id>abc</task-id> Background task finished.' },
+    });
+    expect(evs.find((e) => e.kind === 'userMessage')).toMatchObject({ source: 'reminder' });
+  });
 });
 
 /**
