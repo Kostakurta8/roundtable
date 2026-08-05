@@ -5,6 +5,7 @@
   "scripts": {
     "start": "concurrently -k -n hub,web -c cyan,magenta \"tsx server/index.ts\" \"vite --open\"",
     "dev": "concurrently -k -n hub,web -c cyan,magenta \"tsx server/index.ts\" \"vite\"",
+    "demo": "concurrently -k -n demo,web -c cyan,magenta \"tsx scripts/demo.ts\" \"vite --open\"",
     "test": "vitest run",
     "e2e": "playwright test",
     "room": "tsx scripts/room.ts",
