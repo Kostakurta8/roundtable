@@ -11,10 +11,10 @@ and never writes to them, never talks to the API, and never leaves your machine.
 
 ![agents arriving, reporting to each other, and one verdict going each way](media/roundtable-demo.gif)
 
-**[▶ the whole thing, 52 seconds](media/roundtable-trailer.mp4)** — no narration, showing
-the whole thing: agents arriving, a red `REFUTED` and a green `CONFIRMED`, the timeline rewinding the
-room to an earlier second, two sessions in tabs, and the per-agent token and cost breakdown. Captions
-are burned in, and `media/roundtable-trailer.srt` has them as text.
+That is fourteen seconds of it. **[▶ the whole thing, 52 seconds](media/roundtable-trailer.mp4)** —
+no narration, and it carries the parts a loop cannot: the timeline rewinding the room to an earlier
+second, two sessions in tabs, and the per-agent token and cost breakdown. Captions are burned in,
+and `media/roundtable-trailer.srt` has them as text.
 
 Every frame is the real application driven by real events — only the *content* of the transcripts is
 synthetic, so that no private session appears in it. `scripts/promo/` is the harness that filmed it.
