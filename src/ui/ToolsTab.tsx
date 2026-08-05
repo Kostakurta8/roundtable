@@ -40,8 +40,8 @@ const URLISH = /^[a-z][a-z0-9+.-]*:\/\//i;
  * indiscriminately, which mattered little while a target was almost always a file; now that one
  * can be a web query, a task title or a page-evaluate function, the distinction earns its keep.
  *
- * A bare "has a separator and no spaces" test is not enough in either direction: half the paths on
- * this machine look like `D:\AI Projects\…`, and half the shell commands contain a slash.
+ * A bare "has a separator and no spaces" test is not enough in either direction: plenty of real
+ * paths contain a space (`D:\AI Projects\…`), and half the shell commands contain a slash.
  * So an absolute path is recognized by how it starts, and a relative one by having no whitespace
  * at all.
  */

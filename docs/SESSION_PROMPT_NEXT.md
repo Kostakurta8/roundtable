@@ -33,7 +33,7 @@ ask. Use as many subagents as the work needs, but read §"Traps" first.
 
 | Fact | Evidence | Cheap re-check |
 |---|---|---|
-| **Token + cost figures are ~50% low.** `server/normalize.ts` keeps the *first* line's `usage` for a response id. A streamed response's first line carries `output_tokens: 1`; the last carries the total. | Scanned all 2,548 transcripts under `~/.claude/projects/C--Users-dev`: 26,094 of 62,943 responses diverge. First-wins 39.7M vs last-wins 80.3M output tokens. Worst file: 15,682 shown vs 180,134 real. | Group `message.usage` by `message.id`; compare `[0]` to `[len-1]`. |
+| **Token + cost figures are ~50% low.** `server/normalize.ts` keeps the *first* line's `usage` for a response id. A streamed response's first line carries `output_tokens: 1`; the last carries the total. | Scanned all 2,548 transcripts under `~/.claude/projects/C--work-project`: 26,094 of 62,943 responses diverge. First-wins 39.7M vs last-wins 80.3M output tokens. Worst file: 15,682 shown vs 180,134 real. | Group `message.usage` by `message.id`; compare `[0]` to `[len-1]`. |
 | `last` is always `max` | Same scan, whole corpus. | — |
 | Divergence is concentrated in **subagent** transcripts | A 25-file sample of recent main-session files showed 0% — do not sample narrowly and conclude it is fixed. | — |
 | **`agentDone` fires while the agent is still working.** The hub derives it from the parent's `tool_result`, which returns immediately for `run_in_background` spawns. | 246 spawns where `agentDone` precedes the child's last written line, by up to 995 s. | Compare `agentDone` ts to the child transcript's last mtime/line. |
