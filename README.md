@@ -1,15 +1,17 @@
 # Roundtable
 
 Watch your Claude Code sessions as an office. Every agent is a person at a desk: they think, run
-tools, walk over to each other to deliver a result, argue about a verdict, and go and sit in the
-break corner when they finish. The same events are in a group chat beside the room, in words.
+tools, walk over to each other to deliver a result, argue about a verdict, and walk out through the
+door when they finish. The same events are in a group chat beside the room, in words.
 
 It is **read-only**. It watches the transcript files Claude Code already writes under `~/.claude`
 and never writes to them, never talks to the API, and never leaves your machine.
 
 ### See it first
 
-**[▶ media/roundtable-trailer.mp4](media/roundtable-trailer.mp4)** — 52 seconds, no narration, showing
+![agents arriving, reporting to each other, and one verdict going each way](media/roundtable-demo.gif)
+
+**[▶ the whole thing, 52 seconds](media/roundtable-trailer.mp4)** — no narration, showing
 the whole thing: agents arriving, a red `REFUTED` and a green `CONFIRMED`, the timeline rewinding the
 room to an earlier second, two sessions in tabs, and the per-agent token and cost breakdown. Captions
 are burned in, and `media/roundtable-trailer.srt` has them as text.
@@ -26,6 +28,23 @@ npm start
 
 That is the whole thing. It opens `http://localhost:5173` and starts showing whatever session ran
 most recently. If you have a session running right now, you are watching it live.
+
+### If you don't have Claude Code, or nothing is running
+
+```
+npm run demo
+```
+
+An office with nobody in it is what an idle machine honestly looks like, and it is a poor way to
+find out what this does. `npm run demo` writes a synthetic `~/.claude` root under your temp
+directory and points the observer at that instead: agents arrive, work, report to each other, hand
+down verdicts, fill the desks past the point where there are chairs, and go home — and then it
+keeps going, so the room is still moving when you come back to it.
+
+Nothing about it is faked except the transcripts. The lines go to disk and come back through the
+same watcher, parser, normalizer, socket and store as a real session, and the hub's timing is left
+at its shipped defaults. It never reads your own `~/.claude`, so no prompt, path or project name of
+yours can appear in it. `Ctrl+C` deletes the staged root on the way out.
 
 ### The desktop icon
 
@@ -74,10 +93,10 @@ shortcut points into the checkout.
 **The room.** Each agent walks in through the door and takes a desk. Working at a desk means a tool
 is running; a thought bubble is a real `thinking` block; walking to someone and speaking is that
 agent reporting a result. A red bubble is a `REFUTED` verdict, a green one `CONFIRMED`. When an
-agent finishes it gives up its chair — so somebody waiting outside can have it — and goes to sit in
-the corner for a couple of minutes before heading home. So the corner filling up tells you work is
-landing, and the room a few minutes later is only the people still working. Whoever has left is
-still in the **AGENTS** panel with their tokens, their cost and everything they said.
+agent finishes it gives up its chair — so somebody waiting outside can have it — walks to the door
+and leaves. So the room is always only the people still working, and the desks that are free are
+free because somebody actually finished. Whoever has left is still in the **AGENTS** panel with
+their tokens, their cost and everything they said.
 
 If one of them turns out not to have finished after all — which happens, because a background agent
 is reported done the moment it is *launched* — it walks back in through the door and takes a desk
@@ -160,7 +179,7 @@ says so rather than quietly showing you less than there is.
 
 ```
 npm run dev          # same as start, without opening a browser
-npm test             # 340 unit tests
+npm test             # 376 unit tests
 npx tsc --noEmit     # types
 npm run e2e          # Playwright — needs 7411 and 5173 free, so stop `npm start` first
 npm run room         # render the office to .preview/room-{day,night,spawn}.png
