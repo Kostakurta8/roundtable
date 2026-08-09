@@ -1,7 +1,3 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 /*
  * The observer shell: tokens, the app grid, and every panel that is not the room itself.
  *
@@ -16,15 +12,87 @@
  * lamps and monitors rather than windows.
  */
 
+/* ============================================================== reset ==== */
+
 /*
- * Owned locally, not inherited from Tailwind's Preflight. Panels across the shell size themselves
- * by `max-width` against padding and a border, so a content-box would quietly add both on top of
- * the width they were laid out to. Tailwind is otherwise unused here.
+ * The shell's own reset.
+ *
+ * Tailwind was installed, configured and injected here for three `@tailwind` directives and zero
+ * utility classes anywhere in `src/` — a build dependency, a PostCSS pass and a config file
+ * earning nothing but its Preflight. Preflight was doing real work, though, so removing it
+ * without this would have been a silent visual regression rather than a clean deletion: the
+ * session picker's `<ul>` would grow bullets and an indent, every `<dl>` in the inspector and the
+ * help overlay would gain a margin, and `<h3>` would jump to a browser default size the type
+ * scale never asked for.
+ *
+ * So this replaces exactly what the shell was leaning on, for exactly the elements it uses, and
+ * nothing else. Anything added here should be because a real element needed it.
  */
+
+/* Panels across the shell size themselves by `max-width` against padding and a border, so a
+   content-box would quietly add both on top of the width they were laid out to. */
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+body,
+h1,
+h2,
+h3,
+h4,
+p,
+dl,
+dd,
+ul,
+ol,
+figure,
+blockquote,
+fieldset,
+legend {
+  margin: 0;
+  padding: 0;
+}
+
+/* Headings carry weight through the type scale, not through the user-agent's own idea of it. */
+h1,
+h2,
+h3,
+h4 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+/* Form controls do not inherit the page font on their own, and a picker row rendered in the
+   browser's default sans in the middle of a monospaced shell is the giveaway. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* An inline SVG sits on the text baseline and takes descender space with it — which is what put a
+   few stray pixels under the wordmark and under every icon button in the top bar. */
+svg,
+img,
+canvas {
+  display: block;
 }
 
 /* ============================================================= tokens ==== */
@@ -490,6 +558,21 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/*
+ * What the session is actually doing, under its name.
+ *
+ * The CLI names a session after the directory it runs in plus a counter, so six sessions started
+ * from the same place read `dev-52`, `dev-70`, `dev-ef` — different by two hex characters
+ * and by nothing a person can choose with. This row carries the session's opening human turn,
+ * which is the thing that tells them apart.
+ */
+.session-list .about {
+  grid-column: 2 / -1;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .session-list .empty {
   padding: 8px;
   font-size: 10px;
@@ -555,6 +638,21 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/*
+ * The same disambiguating line on a tab, where space is much tighter.
+ *
+ * Clamped rather than wrapped: a tab is a glance, and a strip whose tabs grow to fit their text
+ * stops being a strip. The accessible name carries the whole thing, because this is precisely the
+ * text CSS is about to clip and a screen reader hearing six identical tab names has the original
+ * bug back.
+ */
+.session-tab .slug {
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
 }
 /* The working-agent count is the reason the tab exists, so it is the loudest thing on it. */
 .session-tab .n {
@@ -1189,6 +1287,20 @@ details.monologue[open] summary::before {
   color: var(--ink-3);
   direction: rtl; /* a clipped path should lose its head, not its filename */
   text-align: left;
+}
+/*
+ * `+12 −3` beside a path — how much a file edit actually changed.
+ *
+ * `tabular-nums` because these sit in a vertical stack and a proportional `1` makes a column of
+ * counts look ragged when it is in fact aligned. Absent counts render nothing at all rather than
+ * `0`: the tools that do not carry the strings to count are a real category, and a zero would say
+ * "changed nothing" about an edit whose size is simply unknown.
+ */
+.trow .edits,
+.chip .edits {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .trow .ms {
   color: var(--ink-3);

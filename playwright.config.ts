@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { DEFAULT_WEB_PORT } from './shared/net';
 
 /**
  * End-to-end config for the observer.
@@ -22,15 +23,15 @@ export default defineConfig({
   expect: { timeout: 5_000 },
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: `http://localhost:${DEFAULT_WEB_PORT}`,
     // The mockup's own basis, so an e2e screenshot is directly comparable to docs/mockup.
     viewport: { width: 1600, height: 900 },
     trace: 'off',
   },
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
   webServer: {
-    command: 'npx vite --port 5173 --strictPort',
-    url: 'http://localhost:5173',
+    command: `npx vite --port ${DEFAULT_WEB_PORT} --strictPort`,
+    url: `http://localhost:${DEFAULT_WEB_PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     stdout: 'ignore',

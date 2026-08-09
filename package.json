@@ -1,7 +1,10 @@
 {
   "name": "roundtable",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "start": "concurrently -k -n hub,web -c cyan,magenta \"tsx server/index.ts\" \"vite --open\"",
     "dev": "concurrently -k -n hub,web -c cyan,magenta \"tsx server/index.ts\" \"vite\"",
@@ -28,8 +31,8 @@
     "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.5.4",
     "concurrently": "^10.0.4",
+    "jsdom": "^29.1.1",
     "postcss": "^8.5.25",
-    "tailwindcss": "^3.4.19",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
