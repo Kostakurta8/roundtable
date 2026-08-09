@@ -124,8 +124,11 @@ const SECRET_KV =
  * The header form is a fixed phrase rather than a `key=value`, so `SECRET_KV` cannot see it; the
  * MySQL form is worse — `-p` is glued to the password with no separator at all, which is why it is
  * matched as its own shape rather than by a general rule.
+ *
+ * The header's token is captured rather than merely consumed so that `redactProse` can look at it
+ * before deciding; the `'$1$2 ***'` replacement below ignores the group and is unaffected.
  */
-const SECRET_HEADER = /\b(Authorization\s*:\s*)(Bearer|Basic)\s+\S+/gi;
+const SECRET_HEADER = /\b(Authorization\s*:\s*)(Bearer|Basic)\s+(\S+)/gi;
 const SECRET_MYSQL_P = /(\s-p)(?!assword\b)([^\s'"]+)/g;
 
 /**
@@ -142,6 +145,10 @@ const SECRET_MYSQL_P = /(\s-p)(?!assword\b)([^\s'"]+)/g;
  *
  * Gating on the word costs nothing where it matters: a `mysql -p…` worth masking is, by
  * construction, inside a command that says `mysql`.
+ *
+ * The gate is only as good as the text it is applied to, which is why `redactProse` does not use
+ * this rule at all: over one line, "mentions mysql" means "is a mysql command"; over a page of
+ * reasoning it means almost nothing, and everything else on the page pays for it.
  */
 const MYSQL_CONTEXT = /\bmysql\b/i;
 
@@ -161,6 +168,57 @@ const redact = (s: string): string => {
     .replace(SECRET_TOKEN, '$1***');
   return MYSQL_CONTEXT.test(s) ? masked.replace(SECRET_MYSQL_P, '$1***') : masked;
 };
+
+/**
+ * A value position that is provably not a secret: a shell or template variable, an angle-bracket
+ * placeholder, an already-masked run, an ellipsis.
+ *
+ * Matched as a prefix, not as a whole value, because the value `SECRET_KV` captures stops at the
+ * first space — `<YOUR TOKEN>` arrives here as `<YOUR`. The `$` form insists on a following letter
+ * or `{` so that a bcrypt hash (`$2b$…`), which really is worth masking, is not waved through.
+ *
+ * This can only ever *reduce* what is masked, so it cannot corrupt a line; the risk it carries is
+ * the other one — a real secret that looks exactly like a template expression, which is not a thing
+ * secrets do.
+ */
+const PLACEHOLDER = /^(?:\*{2,}|\.{3}|…|<|\$\{?[A-Za-z_]|%[A-Za-z0-9_]+%|\{\{)/;
+
+/**
+ * The same masking, over the model's own prose — `agentText` and `thinking`.
+ *
+ * These two lanes carried their text through untouched until a key quoted back out of a `.env`
+ * made it onto the wire, so they now get the three rules whose shape is a secret and nothing else:
+ * a named credential with a value, an `Authorization:` header, and the token prefixes that are
+ * recognisable on sight. Between them they cover what a model actually leaks — it quotes a config
+ * file it just read, or pastes the header of the request that 401'd.
+ *
+ * Two deliberate differences from `redact`, both in the same direction:
+ *
+ *   1. `SECRET_MYSQL_P` is not applied. Its `\bmysql\b` gate is sound over a one-line tool target
+ *      and meaningless over paragraphs — see `MYSQL_CONTEXT`. The command it exists for is already
+ *      masked where it enters the socket as a `target`, so leaving it off here forfeits a
+ *      duplicate and avoids turning every `-print` in a page of reasoning into `-p***`.
+ *   2. A value that is a placeholder is left as written, because an agent explaining an
+ *      integration writes far more `Authorization: Bearer <token>` than it ever leaks, and a
+ *      masked placeholder is a working instruction turned into a puzzle.
+ *
+ * What is *not* here is a length cap. `userMessage` is capped because that lane also carries
+ * machinery — a task-notification with a whole subagent report inside it. These two lanes are the
+ * long-form ones and the feed renders them in full on purpose; clipping them would be the app
+ * withholding the thing it was built to show.
+ *
+ * The regexes are shared with `redact` rather than copied, so the two can differ in policy — which
+ * rules run, and when they hold off — but never in what a credential looks like.
+ */
+const redactProse = (s: string): string =>
+  s
+    .replace(SECRET_KV, (m: string, lead: string, key: string, sep: string, quote: string, value: string) =>
+      PLACEHOLDER.test(value) ? m : `${lead}${key}${sep}${quote}***${quote}`,
+    )
+    .replace(SECRET_HEADER, (m: string, head: string, scheme: string, value: string) =>
+      PLACEHOLDER.test(value) ? m : `${head}${scheme} ***`,
+    )
+    .replace(SECRET_TOKEN, '$1***');
 
 /** Whitespace runs — including newlines — collapsed to single spaces, then trimmed. */
 const flatten = (s: string): string => s.replace(/\s+/g, ' ').trim();
@@ -561,7 +619,7 @@ export class Normalizer {
         const b = block as Record<string, unknown>;
 
         if (b.type === 'thinking' && nonEmpty(b.thinking)) {
-          push({ kind: 'thinking', ref: this.ref(), text: b.thinking, ts });
+          push({ kind: 'thinking', ref: this.ref(), text: redactProse(b.thinking), ts });
           continue;
         }
 
@@ -569,7 +627,7 @@ export class Normalizer {
           // An assistant turn that is only whitespace is a real thing in transcripts (a turn that
           // went straight to tools). It would render as an empty card and, in the office, as an
           // agent walking a blank note across the room.
-          if (nonEmpty(b.text)) push({ kind: 'agentText', ref: this.ref(), text: b.text, ts });
+          if (nonEmpty(b.text)) push({ kind: 'agentText', ref: this.ref(), text: redactProse(b.text), ts });
           continue;
         }
 

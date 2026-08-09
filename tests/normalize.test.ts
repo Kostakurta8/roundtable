@@ -907,3 +907,145 @@ describe('a response interrupted and resumed', () => {
     expect(totalOut(out)).toBe(317);
   });
 });
+
+/**
+ * The model's own prose — the two lanes redaction did not reach.
+ *
+ * `redact()` ran on a tool's `target`, a failed result's error text and a `userMessage`. It did not
+ * run on `agentText` or `thinking`, so anything the model itself wrote crossed the socket verbatim:
+ * a key quoted back out of a `.env` it had just read, an `Authorization:` header pasted into an
+ * explanation of why a request failed.
+ *
+ * The reason it stayed that way is the reason this file leads with the false-positive cases. Model
+ * prose is *more* prose-like than a prompt, not less — it is full of flags, absolute paths, globs,
+ * quoted shell output and inline code — and a redactor that mangles an agent's account of what it
+ * just did has damaged the exact thing this application exists to show. A `***` in the middle of an
+ * explanation is unfalsifiable from the outside: the reader cannot tell whether the app corrupted
+ * the sentence or the agent really wrote that.
+ *
+ * So the rule for these two lanes is high precision only, and the cases below pin both directions.
+ */
+describe("the model's own prose", () => {
+  /** The `text` of the single `agentText` / `thinking` event one assistant line produces. */
+  const proseText = (kind: 'agentText' | 'thinking', text: string): string => {
+    const block = kind === 'thinking' ? { type: 'thinking', thinking: text } : { type: 'text', text };
+    const ev = new Normalizer('s', 'main')
+      .feed({
+        type: 'assistant',
+        timestamp: '2026-08-09T12:00:00.000Z',
+        message: { role: 'assistant', content: [block] },
+      })
+      .find((e) => e.kind === kind);
+    if (ev === undefined) throw new Error(`no ${kind} event was emitted`);
+    if (ev.kind !== 'agentText' && ev.kind !== 'thinking') throw new Error(`unexpected ${ev.kind}`);
+    return ev.text;
+  };
+
+  /**
+   * A paragraph in the register these lanes actually carry: flags, a glob, an absolute path, a
+   * quoted error string, inline code. Every character of it has to survive.
+   */
+  const REAL_PROSE = [
+    'I ran `find . -name "*.test.ts" -print` under /srv/app/packages/core and it listed 12 files.',
+    'The mysql container was already up, so the next check was `git log -p --stat -- "src/**/*.ts"`,',
+    'which printed "fatal: ambiguous argument HEAD" until I passed `--` explicitly.',
+    "Then `rg -n 'loadConfig' -g '!dist' --print0` found it at line 42 of config/loader.ts.",
+  ].join('\n');
+
+  describe.each(['agentText', 'thinking'] as const)('on the %s lane', (kind) => {
+    it('leaves ordinary agent prose byte-identical', () => {
+      expect(proseText(kind, REAL_PROSE)).toBe(REAL_PROSE);
+    });
+
+    /**
+     * The one rule that is deliberately not on this lane, and the test that says why.
+     *
+     * `SECRET_MYSQL_P` has to be "`-p` then a run of non-space" because that is the shape of
+     * `mysql -phunter2`. Against a one-line tool target the `\bmysql\b` gate makes that safe: a
+     * line that mentions mysql *is* a mysql command. A thinking block is not one line — it is
+     * paragraphs — so the gate degrades to "somewhere in these three thousand characters the word
+     * mysql appears", and every `-print`, `-pretty` and `-p2` in the rest of the block is
+     * collateral. The same command is already masked where it enters as a tool `target`, so
+     * running the rule here would buy a duplicate at the price of the one failure that cannot be
+     * detected from the outside.
+     */
+    it('does not mask a -p flag because the block mentioned mysql somewhere else', () => {
+      const text = 'Restarted mysql to clear the pool.\n\nThen `find . -print` listed the fixtures.';
+      expect(proseText(kind, text)).toBe(text);
+    });
+
+    /**
+     * The glued form itself, left alone here on purpose — see the test above for the reasoning.
+     * Pinned so that turning the rule on for this lane is a decision somebody has to take, rather
+     * than something that happens because "redaction" sounded like one thing.
+     */
+    it('leaves a quoted mysql -p command alone here, unlike on the target lane', () => {
+      const text = 'I connected with `mysql -uroot -phunter2 shopdb` to check the index.';
+      expect(proseText(kind, text)).toBe(text);
+    });
+
+    /**
+     * What an agent writes when it is explaining an integration rather than leaking one. A value
+     * that is a shell variable, a template expression or an angle-bracket placeholder is provably
+     * not a secret, and masking it turns a working instruction into a puzzle.
+     */
+    it('leaves placeholder and template values alone', () => {
+      const env = 'Set API_KEY=$SERVICE_KEY in the env before running the worker.';
+      expect(proseText(kind, env)).toBe(env);
+      const header = 'Then send Authorization: Bearer <YOUR_TOKEN> with every request.';
+      expect(proseText(kind, header)).toBe(header);
+      const interp = 'The client passes password: ${cfg.dbPassword} straight through.';
+      expect(proseText(kind, interp)).toBe(interp);
+    });
+
+    /**
+     * No length cap on these two lanes, deliberately. `userMessage` is capped because that lane
+     * also carries machinery — a task-notification with a whole subagent report in it. These lanes
+     * carry the thing the app was built to show, and the feed renders them in full.
+     */
+    it('carries a block far longer than the user-lane cap through whole', () => {
+      const long = 'The agent narrates its plan in some detail. '.repeat(800);
+      expect(long.length).toBeGreaterThan(16_384);
+      expect(proseText(kind, long)).toBe(long);
+    });
+
+    /**
+     * The leak SECURITY.md names: a model quoting a config file it just read. Also the
+     * `\b`-after-underscore trap — `\b` does not match between `_` and `P`, which is how an earlier
+     * version of the pattern missed every `DB_PASSWORD=` there was — and the lead character, which
+     * has to be consumed to prove the key is not part of a longer word and put back afterwards.
+     */
+    it('masks a named credential quoted back out of a file', () => {
+      expect(proseText(kind, 'The .env had ANTHROPIC_API_KEY=sk-ant-api03-AAAABBBBCCCCDDDDEEEE on line 3.')).toBe(
+        'The .env had ANTHROPIC_API_KEY=*** on line 3.',
+      );
+      expect(proseText(kind, 'and export DB_PASSWORD=hunter2ABCDEF was still in the profile')).toBe(
+        'and export DB_PASSWORD=*** was still in the profile',
+      );
+    });
+
+    it('masks a recognizable token with no key beside it', () => {
+      expect(proseText(kind, 'The failing call used sk-ant-api03-AAAABBBBCCCCDDDDEEEE as its header value.')).toBe(
+        'The failing call used sk-ant-*** as its header value.',
+      );
+    });
+
+    it('masks a real bearer token in an explanation', () => {
+      expect(proseText(kind, 'I retried with Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.QQQQRRRR and got a 200.')).toBe(
+        'I retried with Authorization: Bearer *** and got a 200.',
+      );
+    });
+
+    /**
+     * The known cost of accepting `:` as a separator, pinned rather than hidden: a credential-named
+     * field in a type or a schema loses its type name and keeps its field name. The alternative is
+     * dropping the colon form, which would let a YAML `password: hunter2` — the shape a model
+     * quotes most often — through untouched. The reader still sees the field; nothing is deleted.
+     */
+    it('costs a credential-named type annotation its type name', () => {
+      expect(proseText(kind, 'The record is `{ api_key: string }` in the loader.')).toBe(
+        'The record is `{ api_key: *** }` in the loader.',
+      );
+    });
+  });
+});

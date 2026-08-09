@@ -86,6 +86,16 @@ text of a failed `tool_result`, and the text of a `userMessage`. That is not dec
 corpus this was built against, 5 of 2 291 error results carried a plaintext password, every one of
 them a Python traceback re-printing the `connect(…, password='…')` line that raised.
 
+**The model's own prose goes through a narrower rule.** `agentText` and `thinking` are redacted by
+`redactProse()` in the same file, which shares those patterns and runs all of them except MySQL's
+glued `-p<password>`. That one has to match "`-p` then a run of non-space", which is precise over a
+one-line command and destructive over paragraphs: the `\bmysql\b` gate that makes it safe on a tool
+target means almost nothing across a page of reasoning, and `find . -print` in an explanation would
+come out as `find . -p***`. The command it exists for is already masked where it enters as a tool
+`target`. For the same reason `redactProse()` leaves a value that is plainly a placeholder —
+`<YOUR_TOKEN>`, `$SERVICE_KEY`, `${cfg.password}` — exactly as the model wrote it. Neither lane is
+truncated: the feed renders them in full on purpose.
+
 ## Known residual risks
 
 These are deliberate. They are written down rather than hidden, because a security file that only
@@ -113,13 +123,15 @@ same filesystem or a query parameter in a URL that ends up in browser history.
 It is still an increase in convenience for an attacker, and if your threat model includes hostile
 software running as your own user, do not leave the hub up.
 
-**Redaction is pattern-matching, and it does not cover every field.** It runs on tool targets,
-tool-result error text, and user message text. It does **not** run on the model's own prose:
-`agentText` and `thinking` events carry their text through verbatim, so a secret a model repeats
-back inside an explanation — quoting a config file it just read, reasoning out loud about a key —
-crosses the socket and appears in the feed unchanged. Even in the fields it does cover it can only
-catch what it can recognise: a bare literal inside an `insert into … values (…)` looks like every
-other string. Treat redaction as a courtesy that removes the common accidents, never as a
+**Redaction is pattern-matching.** It runs on every field that carries text — tool targets,
+tool-result error text, user messages, and the model's own `agentText` and `thinking` — but it can
+only catch what it can recognise. A bare literal inside an `insert into … values (…)` looks like
+every other string; a credential written the way JSON writes it, `"password": "hunter2"`, is not
+matched by the `key=value` rule, because that rule needs the separator to follow the key directly;
+a connection string like `DATABASE_URL=postgres://user:s3cret@host/db` carries its password past a
+key that is not credential-named; and the MySQL `-p<password>` form is deliberately not applied to
+the two prose lanes (see above), so a `mysql -phunter2` an agent quotes back inside a sentence
+stays as written. Treat redaction as a courtesy that removes the common accidents, never as a
 guarantee.
 
 **No authentication on the socket.** The `Origin` header is the whole gate. There is no token, no
