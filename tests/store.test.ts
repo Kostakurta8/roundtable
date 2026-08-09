@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Ev } from '../shared/events';
+import { DEFAULT_HUB_PORT, hubWsUrl } from '../shared/net';
+import type { SessionSummary } from '../shared/protocol';
 import { Normalizer } from '../server/normalize';
 import { parseLine } from '../server/parse';
 import {
@@ -10,10 +12,12 @@ import {
   MSG_CAP,
   OPEN_TOOL_GRACE_MS,
   reduce,
+  turnCount,
   workingAgents,
   WORKING_WINDOW_MS,
   type RtState,
 } from '../src/store';
+import { sessionAbout, sessionName } from '../src/ui/format';
 
 /** Same helper the Normalizer tests use: a whole fixture file → the events it produces. */
 const feedAll = (file: string, agentId: 'main' | string): Ev[] => {
@@ -45,9 +49,15 @@ const thinking = (agentId: string, t: string, ts = 1000): Ev => ({
 const toolStart = (agentId: string, tool: string, target?: string, ts = 1000): Ev => ({
   kind: 'toolStart', ref: ref(agentId), tool, target, toolUseId: `tu${SEQ}`, ts, seq: next(),
 });
-const fileEdit = (agentId: string, path: string, ts = 1000): Ev => ({
-  kind: 'fileEdit', ref: ref(agentId), path, ts, seq: next(),
+const fileEdit = (
+  agentId: string,
+  path: string,
+  lines: { added?: number; removed?: number } = {},
+  ts = 1000,
+): Ev => ({
+  kind: 'fileEdit', ref: ref(agentId), path, ...lines, ts, seq: next(),
 });
+const idOf = (ev: Ev): string => (ev.kind === 'toolStart' ? ev.toolUseId : '');
 const agentSeen = (agentId: string, model?: string, ts = 1000): Ev => ({
   kind: 'agentSeen', ref: ref(agentId), model, ts, seq: next(),
 });
@@ -56,6 +66,37 @@ const userMessage = (agentId: string, t: string, ts = 1000): Ev => ({
 });
 const usage = (agentId: string, inTok: number, outTok: number, ts = 1000): Ev => ({
   kind: 'usage', ref: ref(agentId), inTok, outTok, ts, seq: next(),
+});
+
+describe('an edit belongs to the call that made it', () => {
+  /**
+   * The join used to be positional — the agent's most recent *still-open* call — which is correct
+   * only because the normalizer happens to publish `fileEdit` immediately after the `toolStart` it
+   * derived it from. That is a true statement about today's normalizer and not a property of the
+   * data: one reordering, one batch boundary, one future event emitted in between, and the counts
+   * silently land on the wrong file with nothing to notice it by. Carrying the `tool_use` id makes
+   * the join exact and the ordering irrelevant.
+   */
+  it('joins by tool_use id, not by whichever open call happens to be newest', () => {
+    const a = toolStart('main', 'Edit', 'src/a.ts');
+    const b = toolStart('main', 'Edit', 'src/b.ts');
+    const st = fold([
+      a,
+      b,
+      { ...fileEdit('main', 'src/a.ts', { added: 12, removed: 3 }), toolUseId: idOf(a) } as Ev,
+    ]);
+
+    expect(st.tools.find((t) => t.target === 'src/a.ts')).toMatchObject({ added: 12, removed: 3 });
+    expect(st.tools.find((t) => t.target === 'src/b.ts')?.added).toBeUndefined();
+  });
+
+  it('still falls back to the newest open call when the event carries no id', () => {
+    // A backlog replayed by an older hub has no id on the event. Losing the counts entirely would
+    // be a worse answer than the heuristic that was right for every case before the id existed.
+    const a = toolStart('main', 'Edit', 'src/only.ts');
+    const st = fold([a, fileEdit('main', 'src/only.ts', { added: 4, removed: 1 })]);
+    expect(st.tools.find((t) => t.target === 'src/only.ts')).toMatchObject({ added: 4, removed: 1 });
+  });
 });
 
 describe('reduce — fixture stream', () => {
@@ -380,6 +421,237 @@ describe('reduce — feed cap', () => {
 });
 
 /**
+ * How many turns a session has *had*, which is not how many rows the feed is holding.
+ *
+ * The cap pins `msgs.length` at `MSG_CAP`, so every session past a thousand turns reported exactly
+ * a thousand for the rest of its life — the count froze at the precise moment it started to be
+ * interesting, and it froze silently, on a number that had been true an hour earlier. `trimmed` is
+ * the other half of the answer and was tracked but never added back.
+ */
+describe('turnCount', () => {
+  it('adds back what the cap dropped', () => {
+    const over = 40;
+    const st = fold([...Array(MSG_CAP + over).keys()].map((i) => text('a', `line ${i}`, 1000 + i)));
+    expect(st.msgs).toHaveLength(MSG_CAP); // the feed is still capped…
+    expect(turnCount(st)).toBe(MSG_CAP + over); // …and the count no longer is
+  });
+
+  it('is the feed length exactly while nothing has been trimmed', () => {
+    const st = fold([text('a', 'one', 1), text('a', 'two', 2), text('a', 'three', 3)]);
+    expect(turnCount(st)).toBe(3);
+    expect(turnCount(st)).toBe(st.msgs.length);
+  });
+
+  it('is zero for a session that has said nothing', () => {
+    expect(turnCount(initialState)).toBe(0);
+  });
+
+  it('keeps counting as the cap keeps trimming', () => {
+    // The failure this guards is a count that stops moving: it must rise by one per turn for ever,
+    // not settle at the cap the way `msgs.length` does.
+    const first = fold([...Array(MSG_CAP + 10).keys()].map((i) => text('a', `line ${i}`, 1000 + i)));
+    const later = fold([text('a', 'one more', 9_000_000)], first);
+    expect(later.msgs.length).toBe(first.msgs.length); // the feed did not grow
+    expect(turnCount(later)).toBe(turnCount(first) + 1); // the session did
+  });
+});
+
+/**
+ * What an edit actually did.
+ *
+ * `fileEdit` names a path and nothing else, so the app could say an agent had touched a file and
+ * never what it did to it. The line counts ride on the tool call the edit came from, because that
+ * is the row a person reads when they are asking what happened to their code — the tools stream,
+ * the chip on the message that announced it, and the inspector's recent calls are all the same
+ * object.
+ *
+ * Absent and zero are different facts: `undefined` is "the tool call did not carry enough to
+ * count" and `0` is "nothing changed", and printing the first as the second invents a measurement.
+ */
+describe('reduce — what a file edit changed', () => {
+  const edited = (st: RtState) => st.tools[st.tools.length - 1];
+
+  it('puts the counts on the call that made the change', () => {
+    const st = fold([
+      text('a', 'patching it'),
+      toolStart('a', 'Edit', 'src/x.ts'),
+      fileEdit('a', 'src/x.ts', { added: 12, removed: 3 }),
+    ]);
+    expect(edited(st)).toMatchObject({ tool: 'Edit', added: 12, removed: 3 });
+    // The same call, on the card that announced it — one object, three places it is drawn.
+    expect(st.msgs[0].tools[0]).toMatchObject({ added: 12, removed: 3 });
+  });
+
+  it('keeps the counts when the call comes back', () => {
+    // `resolveTool` rebuilt the finished row from the copy it had held in `pending.open`, so
+    // anything written on to the call between its start and its result was silently thrown away
+    // — which is every edit that took longer than zero milliseconds, i.e. all of them.
+    const st = fold([
+      text('a', 'patching it'),
+      toolStart('a', 'Edit', 'src/x.ts'),
+      fileEdit('a', 'src/x.ts', { added: 12, removed: 3 }),
+      { kind: 'toolResult', ref: ref('a'), toolUseId: `tu${SEQ - 2}`, ok: true, ts: 1200, seq: next() },
+    ]);
+    expect(edited(st)).toMatchObject({ ok: true, added: 12, removed: 3 });
+    expect(st.msgs[0].tools[0]).toMatchObject({ ok: true, added: 12, removed: 3 });
+  });
+
+  it('leaves the counts absent when the tool did not carry them', () => {
+    const st = fold([text('a', 'writing'), toolStart('a', 'NotebookEdit', 'nb.ipynb'), fileEdit('a', 'nb.ipynb')]);
+    expect(edited(st).added).toBeUndefined();
+    expect(edited(st).removed).toBeUndefined();
+  });
+
+  it('reports a genuinely empty change as zero rather than as unknown', () => {
+    const st = fold([
+      text('a', 'no-op'),
+      toolStart('a', 'Write', 'src/same.ts'),
+      fileEdit('a', 'src/same.ts', { added: 0, removed: 0 }),
+    ]);
+    expect(edited(st).added).toBe(0);
+    expect(edited(st).removed).toBe(0);
+  });
+
+  it('gives each of two edits in one turn its own counts', () => {
+    const st = fold([
+      text('a', 'two files'),
+      toolStart('a', 'Edit', 'src/one.ts'),
+      fileEdit('a', 'src/one.ts', { added: 1, removed: 0 }),
+      toolStart('a', 'Edit', 'src/two.ts'),
+      fileEdit('a', 'src/two.ts', { added: 9, removed: 4 }),
+    ]);
+    expect(st.msgs[0].tools.map((t) => [t.target, t.added, t.removed])).toEqual([
+      ['src/one.ts', 1, 0],
+      ['src/two.ts', 9, 4],
+    ]);
+  });
+
+  it('does not rewrite a call that has already reported back', () => {
+    // A truncated backlog can deliver a `fileEdit` whose own `toolStart` was never read. It must
+    // not then land on whatever the agent last did — a Bash that ran an hour ago is not an edit.
+    const st = fold([
+      text('a', 'ran the suite'),
+      toolStart('a', 'Bash', 'npm test'),
+      { kind: 'toolResult', ref: ref('a'), toolUseId: `tu${SEQ - 1}`, ok: true, ts: 1100, seq: next() },
+      fileEdit('a', 'src/x.ts', { added: 5, removed: 5 }),
+    ]);
+    expect(edited(st).tool).toBe('Bash');
+    expect(edited(st).added).toBeUndefined();
+  });
+
+  it('never lends one agent\'s edit to another agent\'s call', () => {
+    const st = fold([
+      text('a', 'a works'), toolStart('a', 'Edit', 'src/a.ts'),
+      text('b', 'b works'), toolStart('b', 'Edit', 'src/b.ts'),
+      fileEdit('a', 'src/a.ts', { added: 7, removed: 1 }),
+    ]);
+    expect(st.tools.find((t) => t.agentId === 'a')).toMatchObject({ added: 7, removed: 1 });
+    expect(st.tools.find((t) => t.agentId === 'b')?.added).toBeUndefined();
+  });
+
+  it('still reports the edit in the agent status when there is no call to hang it on', () => {
+    const st = fold([text('a', 'writing'), fileEdit('a', 'src/x.ts', { added: 4, removed: 0 })]);
+    expect(st.agents.a.status).toBe('Edit src/x.ts');
+    expect(st.msgs[0].tools).toEqual([]); // and it still invents no chip of its own
+  });
+});
+
+/**
+ * Which session is which.
+ *
+ * The CLI names a session after its cwd leaf plus a counter, so six sessions started in the same
+ * directory are `dev-c8`, `dev-52`, `dev-ff`… — six tabs that differ by two hex characters
+ * and by nothing a person can choose between. The name stays the identity; the label is what makes
+ * it choosable, and when there is no label the fallback has to be something real.
+ */
+describe('session identity', () => {
+  const summary = (over: Partial<SessionSummary> = {}): SessionSummary => ({
+    sessionId: 'c8f0e1d2-a3b4',
+    slug: 'C--work-project',
+    mtime: 0,
+    live: true,
+    name: 'dev-c8',
+    ...over,
+  });
+
+  it('keeps the CLI\'s own name as the identity', () => {
+    expect(sessionName(summary())).toBe('dev-c8');
+  });
+
+  it('falls back to the short id when the CLI has no name for it', () => {
+    // A historical transcript has a file and nothing else; the id is the only real name it has.
+    expect(sessionName(summary({ name: undefined }))).toBe('c8f0e1d2');
+  });
+
+  it('tells two identically-named sessions apart by what they were asked to do', () => {
+    const a = summary({ name: 'dev-c8', label: 'fix the flaky scheduler test' });
+    const b = summary({ name: 'dev-52', label: 'write the release notes' });
+    expect(sessionAbout(a)).toBe('fix the flaky scheduler test');
+    expect(sessionAbout(a)).not.toBe(sessionAbout(b));
+  });
+
+  it('falls back to the working directory\'s leaf rather than inventing a line', () => {
+    expect(sessionAbout(summary({ label: undefined, cwd: 'D:\\Relocated\\AI Projects\\roundtable' }))).toBe(
+      'roundtable',
+    );
+    expect(sessionAbout(summary({ label: undefined, cwd: '/home/dev/work/pathfinder' }))).toBe('pathfinder');
+  });
+
+  it('does not read a trailing separator as the leaf', () => {
+    expect(sessionAbout(summary({ label: undefined, cwd: 'D:\\work\\roundtable\\' }))).toBe('roundtable');
+  });
+
+  it('falls back to the slug when even the directory is unknown', () => {
+    expect(sessionAbout(summary({ label: undefined, cwd: undefined }))).toBe('C--work-project');
+  });
+
+  it('never answers with the empty string, whatever it is handed', () => {
+    // Every one of these is a real shape off the wire: a session whose opening turn was blank, and
+    // a cwd that is a bare root with no leaf to take.
+    expect(sessionAbout(summary({ label: '', cwd: 'C:\\work\\project' }))).toBe('project');
+    expect(sessionAbout(summary({ label: '   ', cwd: 'C:\\work\\project' }))).toBe('project');
+    expect(sessionAbout(summary({ label: undefined, cwd: '/' }))).toBe('C--work-project');
+    expect(sessionAbout(summary({ label: undefined, cwd: '' }))).toBe('C--work-project');
+  });
+});
+
+/**
+ * Where the socket dials.
+ *
+ * `ws.ts` has no test file of its own, and this is the client's. The URL is the only thing in that
+ * module that is a value rather than a socket, and getting it wrong produces the least debuggable
+ * failure the app has: a hub that is up, a page that loads, and OFFLINE in the top bar for ever.
+ */
+describe('the socket URL', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  const dialled = async (port?: string): Promise<string> => {
+    if (port !== undefined) vi.stubEnv('VITE_ROUNDTABLE_PORT', port);
+    vi.resetModules(); // WS_URL is computed once, at module load
+    return (await import('../src/ws')).WS_URL;
+  };
+
+  it('is built from the shared default, not from a literal of its own', async () => {
+    expect(await dialled()).toBe(hubWsUrl(DEFAULT_HUB_PORT));
+  });
+
+  it('honours a Vite-time port override', async () => {
+    expect(await dialled('9931')).toBe(hubWsUrl(9931));
+  });
+
+  it('falls back rather than dialling a nonsense port', async () => {
+    expect(await dialled('not-a-port')).toBe(hubWsUrl(DEFAULT_HUB_PORT));
+    expect(await dialled('99999')).toBe(hubWsUrl(DEFAULT_HUB_PORT));
+    // `0` is a valid argument to `listen` — "any free port" — and useless to a client, which is
+    // why `readPort` refuses it rather than passing it through.
+    expect(await dialled('0')).toBe(hubWsUrl(DEFAULT_HUB_PORT));
+  });
+});
+
+/**
  * Pricing. The store used to hold one model per agent and price that agent's whole total with it,
  * which is wrong by the ratio between two rate cards the moment a session switches models — 9% of
  * real transcripts do, from a `/model` switch or an overload fallback, and between Opus and Haiku
@@ -488,9 +760,10 @@ describe('reduce — compaction summaries', () => {
     expect(raw).not.toBeNull();
     const st = fold([...n.feed(raw!), userMessage('main', 'now make the tabs work', 2000)]);
     expect(st.task).toBe('now make the tabs work');
-    expect(st.msgs.find((m) => m.agentId === 'user' && m.text.startsWith('<task-notification>'))?.source).toBe(
-      'reminder',
-    );
+    // Found by what the line says rather than by the envelope it arrived in: the normalizer now
+    // unwraps the CLI's own markup, and this test is about the classification, not the brackets.
+    const harness = st.msgs.find((m) => m.agentId === 'user' && m.text.includes('Background task finished'));
+    expect(harness?.source).toBe('reminder');
   });
 });
 

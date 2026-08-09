@@ -11,11 +11,11 @@
  * number or the `title` beside it carries the meaning on its own. See the `.topbar` media queries
  * in `index.css` — every child here is `flex: none`, so the bar cannot wrap and must shed instead.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type CSSProperties } from 'react';
 import type { SessionSummary } from '../../shared/protocol';
 import { useDismiss, useNow } from '../hooks';
 import type { ThemeApi } from '../theme';
-import { ago, clip, clockSec, money, shortId, tokens } from './format';
+import { ago, clip, clockSec, money, sessionAbout, sessionName, tokens } from './format';
 
 const THEME_LABEL: Record<ThemeApi['choice'], { glyph: string; word: string }> = {
   auto: { glyph: '◐', word: 'auto' },
@@ -45,6 +45,15 @@ export type TopBarProps = {
   onRescan: () => void;
 };
 
+/**
+ * The line that makes a row choosable, when the session has one.
+ *
+ * Only when it says something the name has not: with no opening prompt yet `sessionAbout` falls
+ * back to the working directory's leaf, and this row already prints the whole directory underneath
+ * — a line reading `project` above `C:\work\project` is a row that got taller and no clearer.
+ */
+const ABOUT: CSSProperties = { color: 'var(--ink-2)' };
+
 /** One row of the picker. Live sessions read differently from the historical ones below them. */
 function SessionRow({
   s,
@@ -57,12 +66,23 @@ function SessionRow({
   current: boolean;
   onPick: (id: string) => void;
 }) {
+  const name = sessionName(s);
+  const about = sessionAbout(s);
+  const says = s.label?.trim() ? about : undefined;
   return (
     <li>
       <button type="button" className={current ? 'on' : undefined} onClick={() => onPick(s.sessionId)}>
         <span className={s.live ? 'dot live' : 'dot'} title={s.live ? 'running' : 'not running'} />
-        <b>{s.name ?? shortId(s.sessionId)}</b>
+        <b>{name}</b>
         <time dateTime={new Date(s.mtime).toISOString()}>{ago(s.mtime, now)}</time>
+        {/* What this session was asked to do — the only thing that tells six sessions started in
+            one directory apart, and the reason this row is more than a timestamp. It is part of
+            the button's text, so it is part of the button's accessible name too. */}
+        {says && (
+          <span className="cwd" style={ABOUT} title={says}>
+            {says}
+          </span>
+        )}
         <span className="cwd">
           {s.cwd ?? s.slug}
           {s.status ? ` · ${s.status}` : ''}
@@ -120,12 +140,20 @@ export function TopBar(props: TopBarProps) {
           aria-expanded={picking}
           aria-haspopup="listbox"
           onClick={() => setPicking((p) => !p)}
-          title={current?.cwd ?? current?.slug ?? 'choose a session to observe'}
+          // The bar has room for the name and the directory; what the session was *asked* to do is
+          // the fact that identifies it, so the hover carries it rather than nothing carrying it.
+          title={
+            current
+              ? [sessionName(current), sessionAbout(current), current.cwd ?? current.slug]
+                  .filter(Boolean)
+                  .join(' · ')
+              : 'choose a session to observe'
+          }
         >
           {current ? (
             <>
               <span className={current.live ? 'dot live' : 'dot'} />
-              <b>{current.name ?? shortId(current.sessionId)}</b>
+              <b>{sessionName(current)}</b>
               <span className="slug">{clip(current.cwd ?? current.slug, 28)}</span>
             </>
           ) : (

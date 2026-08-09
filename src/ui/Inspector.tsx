@@ -8,7 +8,7 @@
 import { memo } from 'react';
 import { modelInfo } from '../../shared/models';
 import { agentLook, type RtMsg, type RtState } from '../store';
-import { clip, clockSec, duration, money, oneLine, shortPath, tokens } from './format';
+import { clip, clockSec, duration, editLines, money, oneLine, shortPath, tokens } from './format';
 import { MiniHead } from './MiniHead';
 
 const LAST_TOOLS = 5;
@@ -83,14 +83,19 @@ export const Inspector = memo(function Inspector({ state, agentId, now, onClose 
       {recent.length > 0 && (
         <>
           <div className="section-hd">RECENT TOOLS</div>
-          {recent.map((t) => (
-            <div className={t.ok === false ? 'trow failed' : 'trow'} key={t.id}>
-              <span className={`phase ${t.ok === undefined ? 'working' : 'idle'}`} aria-hidden="true" />
-              <span className="tool">{t.tool}</span>
-              <bdi className="target">{t.target ? shortPath(t.target) : ''}</bdi>
-              <span className="ms">{t.ms === undefined ? clockSec(t.ts) : duration(t.ms)}</span>
-            </div>
-          ))}
+          {recent.map((t) => {
+            const lines = editLines(t.added, t.removed);
+            return (
+              <div className={t.ok === false ? 'trow failed' : 'trow'} key={t.id}>
+                <span className={`phase ${t.ok === undefined ? 'working' : 'idle'}`} aria-hidden="true" />
+                <span className="tool">{t.tool}</span>
+                <bdi className="target">{t.target ? shortPath(t.target) : ''}</bdi>
+                {/* What this agent did to that file, on the row that names it. */}
+                {lines && <span className="edits">{lines}</span>}
+                <span className="ms">{t.ms === undefined ? clockSec(t.ts) : duration(t.ms)}</span>
+              </div>
+            );
+          })}
         </>
       )}
 

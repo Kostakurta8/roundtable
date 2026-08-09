@@ -68,7 +68,13 @@ export type TimelineProps = {
   buckets: RtBucket[];
   firstTs: number;
   lastTs: number;
-  msgs: number;
+  /**
+   * How many turns the session has had — every one of them, including the ones the feed's cap has
+   * already dropped. Named for what it is: it used to be handed `msgs.length`, which stops rising
+   * at a thousand, so the strip's own summary line quietly froze on a session long enough to be
+   * worth summarising.
+   */
+  turns: number;
   /**
    * The instant the room is replaying, or `null` while it is live.
    *
@@ -84,7 +90,7 @@ export const Timeline = memo(function Timeline({
   buckets,
   firstTs,
   lastTs,
-  msgs,
+  turns,
   seekTs,
   onSeek,
 }: TimelineProps) {
@@ -232,7 +238,7 @@ export const Timeline = memo(function Timeline({
             truncated. If nothing was sliced here and the store never hit its cap, every bucket
             that ever existed is on screen — that is what "whole" means. */}
         <span>
-          {msgs} turns ·{' '}
+          {turns} turns ·{' '}
           {shown.length === 0 || (shown.length === buckets.length && buckets.length < BUCKET_CAP)
             ? 'whole session'
             : lastTs - (shown[shown.length - 1].t + BUCKET_MS) < BUCKET_MS * 2

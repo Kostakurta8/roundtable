@@ -83,6 +83,20 @@ export type RtTool = {
    * than rendering an empty box.
    */
   error?: string;
+  /**
+   * Lines this call added to a file and removed from it, when it changed one.
+   *
+   * They live on the call rather than in a list of their own because the call is what every
+   * surface already draws — the tools stream, the chip on the message that announced it, the
+   * inspector's recent calls — so "what did this agent do to my code" is answered in the place the
+   * question is asked, with no fourth panel to go and find.
+   *
+   * Absent is not zero. `undefined` means the tool call did not carry enough to count (a
+   * `NotebookEdit`, or a vintage that shapes its input differently); `0` means the change really
+   * was empty. Rendering the first as the second would state a measurement nobody made.
+   */
+  added?: number;
+  removed?: number;
 };
 
 export type RtMsg = {
@@ -331,30 +345,95 @@ function attachTool(state: RtState, agentId: string, tool: RtTool): RtState {
 }
 
 /**
- * Rewrites a tool call in place wherever it ended up — on a message card, in the live strip, or
- * still held as pending. A result can arrive long after its call, and after the card it belongs
- * to has scrolled past a thousand others, so all three homes are checked.
+ * Rewrites one tool call in place wherever it ended up — on a message card, in the live strip,
+ * still held as pending, and in the open-call table. A result can arrive long after its call, and
+ * after the card it belongs to has scrolled past a thousand others, so every home is checked.
+ *
+ * The open-call table is one of them, which it did not used to be. `resolveTool` rebuilt the
+ * finished row from the copy parked there at `toolStart`, so anything written on to a call between
+ * its start and its result was discarded the moment it came back — silently, and for every edit
+ * that took longer than nothing.
+ *
+ * A patch, not a replacement, and one pass per home: a list with no matching call keeps its
+ * identity, so the memoised feed does not re-diff a thousand cards over a call that is not on any
+ * of them.
  */
+function patchTool(state: RtState, id: string, agentId: string, patch: Partial<RtTool>): RtState {
+  /** The list with the call patched, or `null` when the call is not in it. */
+  const patched = (list: readonly RtTool[]): RtTool[] | null => {
+    let out: RtTool[] | null = null;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].id !== id) continue;
+      if (out === null) out = list.slice();
+      out[i] = { ...list[i], ...patch };
+    }
+    return out;
+  };
+
+  let msgs = state.msgs;
+  for (let i = 0; i < msgs.length; i++) {
+    const tools = patched(msgs[i].tools);
+    if (tools === null) continue;
+    if (msgs === state.msgs) msgs = msgs.slice();
+    msgs[i] = { ...msgs[i], tools };
+  }
+
+  const tools = patched(state.tools) ?? state.tools;
+
+  const heldFor = state.pending.tools[agentId];
+  const heldPatched = heldFor ? patched(heldFor) : null;
+  const held = heldPatched ? { ...state.pending.tools, [agentId]: heldPatched } : state.pending.tools;
+
+  const openCall = state.pending.open[id];
+  const open = openCall ? { ...state.pending.open, [id]: { ...openCall, ...patch } } : state.pending.open;
+
+  return { ...state, msgs, tools, pending: { ...state.pending, tools: held, open } };
+}
+
+/** Marks a call finished wherever it lives, and stops waiting on it. */
 function resolveTool(state: RtState, id: string, ok: boolean, ts: number, error?: string): RtState {
   const open = state.pending.open[id];
   if (!open) return state;
-  const done: RtTool = { ...open, ok, ms: Math.max(0, ts - open.ts), ...(error === undefined ? {} : { error }) };
+  const s = patchTool(state, id, open.agentId, {
+    ok,
+    ms: Math.max(0, ts - open.ts),
+    ...(error === undefined ? {} : { error }),
+  });
+  return { ...s, pending: { ...s.pending, open: without(s.pending.open, id) } };
+}
 
-  const msgs = state.msgs.map((m) =>
-    m.tools.some((t) => t.id === id) ? { ...m, tools: m.tools.map((t) => (t.id === id ? done : t)) } : m,
-  );
-  const tools = state.tools.map((t) => (t.id === id ? done : t));
-  const heldFor = state.pending.tools[open.agentId];
-  const held = heldFor?.some((t) => t.id === id)
-    ? { ...state.pending.tools, [open.agentId]: heldFor.map((t) => (t.id === id ? done : t)) }
-    : state.pending.tools;
+/**
+ * The agent's most recent tool call, but only while it is still open.
+ *
+ * `fileEdit` carries no `tool_use` id of its own, so this is the join: the normalizer derives it
+ * from a `tool_use` it has just published as `toolStart`, and nothing of that agent's can have
+ * landed in between. Refusing a call that has already reported back is what keeps a stray edit —
+ * from a backlog that lost the `toolStart` — off whatever the agent happened to do last.
+ */
+function lastOpenCallOf(state: RtState, agentId: string): RtTool | undefined {
+  for (let i = state.tools.length - 1; i >= 0; i--) {
+    const t = state.tools[i];
+    if (t.agentId !== agentId) continue;
+    return t.ok === undefined ? t : undefined;
+  }
+  return undefined;
+}
 
-  return {
-    ...state,
-    msgs,
-    tools,
-    pending: { ...state.pending, tools: held, open: without(state.pending.open, id) },
-  };
+/**
+ * That agent's call with this `tool_use` id, whether or not it has already reported back.
+ *
+ * Scanned from the end because the call being looked for is almost always the most recent one, and
+ * scoped to the agent because a `tool_use` id is only unique within the process that minted it.
+ * Unlike `lastOpenCallOf` this does not refuse a call that has returned: an id is proof of which
+ * call the edit belongs to, so a result that happened to land first is no reason to drop the
+ * counts on the floor.
+ */
+function callById(state: RtState, toolUseId: string, agentId: string): RtTool | undefined {
+  for (let i = state.tools.length - 1; i >= 0; i--) {
+    const t = state.tools[i];
+    if (t.id === toolUseId && t.agentId === agentId) return t;
+  }
+  return undefined;
 }
 
 /** Drops a key from a record without touching the original. */
@@ -585,7 +664,20 @@ export function reduce(state: RtState, ev: Ev): RtState {
       // The status is still set here: it is the signal that survives if a truncated backlog ate
       // the toolStart, and it is what the office view reads to know a file is being changed.
       const id = ev.ref.agentId;
-      return touch(s0, id, ev.ts, { phase: 'working', status: clip(`Edit ${ev.path}`, STATUS_MAX) });
+      const s = touch(s0, id, ev.ts, { phase: 'working', status: clip(`Edit ${ev.path}`, STATUS_MAX) });
+      // What the edit *did*, folded on to the call that did it. Absent counts are left absent
+      // rather than written as zero: "the input did not say" and "nothing changed" are two facts
+      // and only one of them is worth printing.
+      if (ev.added === undefined && ev.removed === undefined) return s;
+      // The id when the hub sends one, the heuristic when it does not. A hub of an older vintage
+      // omits it, and losing the counts outright would be a worse answer than the positional
+      // guess that was right for every case before the id existed.
+      const call = ev.toolUseId === undefined ? lastOpenCallOf(s, id) : callById(s, ev.toolUseId, id);
+      if (!call) return s;
+      return patchTool(s, call.id, id, {
+        ...(ev.added === undefined ? {} : { added: ev.added }),
+        ...(ev.removed === undefined ? {} : { removed: ev.removed }),
+      });
     }
 
     case 'toolResult': {
@@ -698,6 +790,19 @@ export function reduce(state: RtState, ev: Ev): RtState {
 }
 
 // ------------------------------------------------------------------ derived
+
+/**
+ * How many turns this session has had — not how many rows the feed is holding.
+ *
+ * The two were the same number until the cap bit, and then they parted for ever: `msgs.length`
+ * stops at `MSG_CAP` and stays there, so a session that had been running for an hour reported
+ * exactly a thousand turns for the rest of its life. It froze at the moment it became interesting,
+ * and it froze on a number that had been true earlier, which is the kind of wrong that is never
+ * noticed. `trimmed` is the rest of the answer.
+ *
+ * Anything asking "how many cards am I about to render" wants `msgs.length` and should keep it.
+ */
+export const turnCount = (state: RtState): number => state.msgs.length + state.trimmed;
 
 /** The roster in office order, which is the order agents were first seen. */
 export const roster = (state: RtState): RtAgent[] =>

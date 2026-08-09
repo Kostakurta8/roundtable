@@ -12,7 +12,7 @@
 import { memo, useMemo, useState, type CSSProperties } from 'react';
 import type { RtState, RtTool } from '../store';
 import { agentLook } from '../store';
-import { clockSec, duration, shortPath } from './format';
+import { clockSec, duration, editLines, shortPath } from './format';
 import { toolHistogram } from './roster';
 
 /** Newest first: a live stream is read from the top. */
@@ -78,13 +78,16 @@ function Row({
   const outcome = outcomeOf(t);
   const cls = outcome === 'failed' ? 'trow failed' : outcome === 'running' ? 'trow running' : 'trow';
   const pathish = t.target !== undefined && isPathish(t.target);
+  // Beside the path, because that is the question it answers. Absent for every call that changed
+  // no file, and absent — not `+0` — for an edit whose input could not be counted.
+  const lines = editLines(t.added, t.removed);
   return (
     <div>
       <button
         type="button"
         className={cls}
         style={ROW}
-        title={`${name} · ${t.label}`}
+        title={`${name} · ${t.label}${lines ? ` · ${lines} lines` : ''}`}
         aria-expanded={open}
         onClick={onToggle}
       >
@@ -97,12 +100,14 @@ function Row({
         <bdi className="target" style={pathish ? undefined : { direction: 'ltr' }}>
           {t.target ? (pathish ? shortPath(t.target) : t.target) : ''}
         </bdi>
+        {lines && <span className="edits">{lines}</span>}
         <span className="ms">{t.ms === undefined ? clockSec(t.ts) : duration(t.ms)}</span>
       </button>
       {open && (
         <div className="monologue-body">
           <div>
             {name} · {outcome}
+            {lines ? ` · ${lines} lines` : ''}
             {t.ms === undefined ? '' : ` · ${duration(t.ms)}`} · {clockSec(t.ts)}
           </div>
           {/* The whole target, not the row's shortened one — the row had sixty pixels, this does not. */}

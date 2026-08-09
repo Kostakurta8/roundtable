@@ -9,14 +9,14 @@
  * Selection is the shell's own state rather than either half's, because it crosses both: picking
  * a person in the room filters the feed, and picking a row in the roster highlights the person.
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Chat } from './chat/Chat';
 import { useKeys, useNow } from './hooks';
 import { PixelOffice, useOffice } from './office/PixelOffice';
-import { initialState, roster as rosterOf, workingAgents } from './store';
+import { initialState, roster as rosterOf, turnCount, workingAgents } from './store';
 import { useTheme } from './theme';
 import { AgentsTab } from './ui/AgentsTab';
-import { clip, clockSec, shortId } from './ui/format';
+import { clip, clockSec, sessionAbout, sessionName, shortId } from './ui/format';
 import { Help } from './ui/Help';
 import { Inspector } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
@@ -30,6 +30,39 @@ import { useRtStream, WS_URL, type RtSession } from './ws';
 const TITLE_MAX = 110;
 /** The whiteboard is 220px of monospace: three lines fit, and the CSS clamps what does not. */
 const BOARD_MAX = 150;
+/**
+ * How much of a session's opening prompt a tab may carry. A tab is a glance, not a paragraph: past
+ * this the CSS ellipsis is doing all the work anyway, and the accessible name is the surface that
+ * has to be complete — it gets the same string, so the two cannot drift.
+ */
+const TAB_ABOUT_MAX = 90;
+
+/**
+ * The clamp on a tab's second line.
+ *
+ * Inline because `index.css` is not this session's to edit and `.session-tab .slug` has no rule of
+ * its own — without a ceiling a session whose opening prompt is a sentence would push every other
+ * tab out of the strip. `.session-tabs` already scrolls, so nothing is lost; this is what keeps the
+ * scrolling from being needed on two tabs.
+ */
+const TAB_ABOUT: CSSProperties = {
+  maxWidth: 168,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  color: 'var(--ink-3)',
+};
+
+/**
+ * Whether the distinguishing line says anything the name has not already said.
+ *
+ * With no label to show, `sessionAbout` falls back to the working directory's leaf — which is the
+ * very thing the CLI built the name out of, so a tab would read `dev-c8 · project` and be wider for
+ * no information at all. Dropping it there is not hiding anything: it is declining to say the same
+ * word twice.
+ */
+const addsSomething = (name: string, about: string): boolean =>
+  !name.toLowerCase().startsWith(about.toLowerCase());
 
 /**
  * Where the picker's last explicit choice is remembered, so a reload shows the session that was
@@ -238,6 +271,15 @@ export default function App() {
   const rows = useMemo(() => rosterTree(state), [state]);
   const agentCount = rosterOf(state).length;
   const current = sessions.find((s) => s.sessionId === sessionId);
+  /**
+   * How many turns this session has had.
+   *
+   * Not `state.msgs.length`: the feed is capped at a thousand, so that number stops rising exactly
+   * when a session becomes long enough for the question to be worth asking, and it stops without
+   * saying so. Everything below that shows a *turn count* reads this; the two places that mean
+   * "rows I am about to render" — the feed's own window, the tools strip — deliberately do not.
+   */
+  const turns = turnCount(state);
 
   const stageRef = useRef<HTMLElement>(null);
   // `Rail` renders nothing without rows, so this is also the question "is there a rail to measure".
@@ -261,7 +303,11 @@ export default function App() {
   // The whiteboard is the fourth surface that had an opinion about this. An empty room whose board
   // says "waiting for a task…" is waiting for a session that was never asked to exist.
   const board = task
-    ? `TASK: ${clip(task, BOARD_MAX)}`
+    ? // No `TASK:` label. The board is a whiteboard in an office and visibly already is the task;
+      // spending six of the thirty-odd characters it can hold on saying so cost more than it
+      // explained. `scene.ts` still strips the old prefix defensively, so a stale client and this
+      // one produce the same board rather than one reading `TASK: TASK: …`.
+      clip(task, BOARD_MAX)
     : sessionId === null
       ? 'nothing to observe yet'
       : 'waiting for a task…';
@@ -320,12 +366,20 @@ export default function App() {
       hint: 'agent',
       run: () => setSelected(agent.id),
     }));
-    const list: Command[] = sessions.slice(0, 25).map((s) => ({
-      id: `session-${s.sessionId}`,
-      label: `Observe ${s.name ?? s.sessionId.slice(0, 8)}${s.live ? ' (running)' : ''}`,
-      hint: s.cwd ?? s.slug,
-      run: () => pickSession(s.sessionId),
-    }));
+    // The third place a session has to be told from its neighbours — and the one that is searched
+    // by typing, so carrying the opening prompt here means a session can be found by what it is
+    // doing rather than only by a name it shares with five others.
+    const list: Command[] = sessions.slice(0, 25).map((s) => {
+      const name = sessionName(s);
+      const about = sessionAbout(s);
+      const says = addsSomething(name, about) ? ` — ${clip(about, TAB_ABOUT_MAX)}` : '';
+      return {
+        id: `session-${s.sessionId}`,
+        label: `Observe ${name}${says}${s.live ? ' (running)' : ''}`,
+        hint: s.cwd ?? s.slug,
+        run: () => pickSession(s.sessionId),
+      };
+    });
     return [...base, ...agents, ...list];
   }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession]);
 
@@ -384,6 +438,19 @@ export default function App() {
             {tabs.map((s) => {
               const busy = workingAgents(states[s.sessionId] ?? initialState, now).length;
               const on = s.sessionId === sessionId;
+              const name = sessionName(s);
+              /**
+               * What tells this tab apart from the five beside it.
+               *
+               * The name cannot: the CLI builds it from the working directory's leaf plus a
+               * counter, so six sessions started in the same place read `dev-c8`, `dev-52`,
+               * `dev-ff` — six words that differ by two hex characters. What differs is what
+               * each was asked to do, and when nothing was asked yet the directory is the honest
+               * remainder rather than a sentence invented here.
+               */
+              const about = sessionAbout(s);
+              const says = addsSomething(name, about) ? clip(about, TAB_ABOUT_MAX) : undefined;
+              const where = says === undefined ? (s.cwd ?? s.slug) : undefined;
               return (
                 <button
                   key={s.sessionId}
@@ -391,13 +458,34 @@ export default function App() {
                   role="tab"
                   aria-selected={on}
                   className={on ? 'session-tab on' : 'session-tab'}
-                  title={s.cwd ?? s.slug}
+                  title={[name, says, s.cwd ?? s.slug].filter(Boolean).join(' · ')}
+                  /*
+                   * Spelt out rather than left to the visible text. Six tabs whose accessible
+                   * names are six near-identical slugs is the same bug as six identical tabs on
+                   * screen — and the text that distinguishes them is the one thing CSS is
+                   * clipping. The dot and the badge are silent to a screen reader too, so what
+                   * they mean is said here in words.
+                   */
+                  aria-label={[
+                    name,
+                    says,
+                    where,
+                    s.live ? 'running' : 'not running',
+                    busy > 0 ? `${busy} agent${busy === 1 ? '' : 's'} working` : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(' — ')}
                   onClick={() => pickSession(s.sessionId)}
                 >
                   {/* The session being watched keeps its tab even after it goes quiet, so the tab
                       is not always a running one and must not always claim to be. */}
                   <span className={s.live ? 'dot live' : 'dot'} />
-                  <b>{s.name ?? s.sessionId.slice(0, 8)}</b>
+                  <b>{name}</b>
+                  {says && (
+                    <span className="slug" style={TAB_ABOUT}>
+                      {says}
+                    </span>
+                  )}
                   {/* Only when there is something to count. A tab is now raised by a session merely
                       running, so a badge reading `0` would be on most of them most of the time —
                       and a number that is nearly always zero stops being read at all. */}
@@ -416,7 +504,7 @@ export default function App() {
           sessionId={sessionId}
           agents={state.agents}
           task={board}
-          turns={state.msgs.length}
+          turns={turns}
           selected={selected}
           onSelect={select}
           insetLeft={railInset}
@@ -452,8 +540,11 @@ export default function App() {
               onClick={() => setTab(t.key)}
             >
               {t.label}
+              {/* CHAT counts the session's turns, cap included — it is the same claim the strip
+                  below makes and the two must not disagree. AGENTS and TOOLS count rows: the
+                  roster is every agent there is, and the tool strip is a live window by design. */}
               <span className="n">
-                {t.key === 'chat' ? state.msgs.length : t.key === 'agents' ? rows.length : state.tools.length}
+                {t.key === 'chat' ? turns : t.key === 'agents' ? rows.length : state.tools.length}
               </span>
             </button>
           ))}
@@ -506,7 +597,7 @@ export default function App() {
         buckets={state.buckets}
         firstTs={state.firstTs}
         lastTs={state.lastTs}
-        msgs={state.msgs.length}
+        turns={turns}
         // The strip is what put the room in the past, so it is the surface that marks where the
         // past is — `aria-current` on the column, and a live region that says so out loud.
         seekTs={seekTs}

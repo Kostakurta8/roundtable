@@ -16,13 +16,32 @@
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { evSession, isEv, type Ev } from '../shared/events';
+import { DEFAULT_HUB_PORT, hubWsUrl, readPort } from '../shared/net';
 // From `shared/`, never from `server/hub`: the hub pulls in node:fs, chokidar and ws, and an
 // `import type` is only one careless edit away from becoming a value import that bundles them.
 import type { FollowCmd, RescanCmd, SessionSummary } from '../shared/protocol';
 import { initialState, reduce, type RtState } from './store';
 
+/**
+ * Where the hub is, as this build was told at bundle time.
+ *
+ * `shared/net.ts` is deliberately pure — it may be imported by `tsx` on the server and by a
+ * browser bundle here, so it cannot reach for `process.env` or `import.meta`. Reading the
+ * environment is therefore this file's job, and deciding what a port *is* stays that file's:
+ * `readPort` falls back on anything unusable rather than throwing, because a typo in an optional
+ * variable must not be the reason the observer cannot open a socket.
+ *
+ * The property is spelt out in full, and that is load-bearing rather than a style choice.
+ * `vite.config.ts` forwards the hub's own `ROUNDTABLE_PORT` into this variable with `define`,
+ * which substitutes the *exact expression text* — write it as `import.meta.env?.VITE_…` and the
+ * substitution no longer matches, leaving the override silently inert and the client dialling the
+ * default while the hub listens somewhere else. The presence check is kept separate for that
+ * reason: it guards the object without touching the expression the build has to recognize.
+ */
+const VITE_PORT: unknown = import.meta.env ? import.meta.env.VITE_ROUNDTABLE_PORT : undefined;
+
 /** Loopback, always. The observer reads one machine's transcripts: its own. */
-export const WS_URL = 'ws://127.0.0.1:7411/ws';
+export const WS_URL = hubWsUrl(readPort(typeof VITE_PORT === 'string' ? VITE_PORT : undefined, DEFAULT_HUB_PORT));
 
 /** A row of the hub's session roster. Same shape the hub publishes, by construction. */
 export type RtSession = SessionSummary;
