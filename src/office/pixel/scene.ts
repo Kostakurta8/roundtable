@@ -257,6 +257,19 @@ type Mem = {
   resolved: number;
   /** A reaction to that outcome, with its own 0..1 life. */
   react?: { kind: 'cheer' | 'slump'; age: number };
+  /**
+   * The seal a landed call stamps over the head, with its own 0..1 life.
+   *
+   * Fired on exactly the edge `react` is fired on, and never on its own. A seal for every resolved
+   * call would put a badge over a desk several times a second during a grep-heavy stretch, which is
+   * how juice becomes noise; the room already decides which outcomes are worth remarking on, and
+   * this makes that decision *visible* rather than making a second, louder one.
+   */
+  pop?: { age: number; ok: boolean };
+  /** The burst an agent's desk throws when its work is done, with its own 0..1 life. */
+  finish?: { age: number; ok: boolean };
+  /** Whether `done` had landed last frame, so the *edge* can be caught rather than the state. */
+  wasDone: boolean;
   seed: number;
   hairStyle: number;
 };
@@ -658,6 +671,11 @@ export class Scene {
           py: y,
           dir: 'front',
           flip: false,
+          // An agent that is already finished when the renderer first sees it — a replay opened
+          // partway through, a tab switched back to — must not burst. The burst belongs to the
+          // transition, and seeding this from the actor's current state rather than from `false`
+          // is what keeps a rebuilt room from throwing confetti for work that ended an hour ago.
+          wasDone: a.done === true,
           stillMs: 0,
           stepAcc: 0,
           walkAcc: 0,
@@ -765,10 +783,30 @@ export class Scene {
         // Only a *streak* of failures is worth a reaction. One failed grep is a Tuesday.
         if (worse && a.fails >= FAILS_BEFORE_MESS) m.react = { kind: 'slump', age: 0 };
         else if (!worse && a.fails === 0 && a.act === undefined) m.react = { kind: 'cheer', age: 0 };
+        // The seal rides the reaction rather than the raw edge. A badge for every resolved call
+        // would fire several times a second through a grep-heavy stretch; the room already decides
+        // which outcomes are worth remarking on, and this says that decision out loud.
+        if (m.react) m.pop = { age: 0, ok: m.react.kind === 'cheer' };
       }
       if (m.react) {
         m.react.age += dt / REACT_MS;
         if (m.react.age >= 1) m.react = undefined;
+      }
+      if (m.pop) {
+        m.pop.age += dt / JU.VERDICT_MS;
+        if (m.pop.age >= 1) m.pop = undefined;
+      }
+
+      // The finish, caught as an edge rather than a state: `done` stays true for as long as the
+      // agent is still on the floor walking to the door, and a burst that re-fired every frame of
+      // that walk would be a strobe rather than a moment.
+      if (a.done === true && !m.wasDone) {
+        m.finish = { age: 0, ok: a.doneOk !== false };
+      }
+      m.wasDone = a.done === true;
+      if (m.finish) {
+        m.finish.age += dt / JU.FINISH_MS;
+        if (m.finish.age >= 1) m.finish = undefined;
       }
 
       // An emote pop: `!` the moment a verdict comes back bad, `?` after a long idle stretch.
@@ -1148,6 +1186,38 @@ export class Scene {
   private overlays(ctx: CanvasRenderingContext2D, input: SceneInput, t: number): void {
     const sorted = [...input.actors].sort((a, b) => a.y - b.y);
 
+    // The two desk-and-head beats, drawn before the plates so a celebration never sits on top of
+    // the name of whoever is celebrating. A burst comes off the desk's surface; a seal lands on the
+    // same row `emotePop` uses, so a verdict and a reaction can never disagree about where a
+    // reaction goes.
+    const still = input.still === true;
+    for (const a of input.actors) {
+      const m = this.mem.get(a.id);
+      if (!m) continue;
+      if (m.finish) {
+        const atDesk = a.deskIndex >= 0 || a.deskIndex === MANAGER_DESK_INDEX;
+        JU.finishBurst(ctx, Math.round(m.px), atDesk ? deskSurfaceOf(a) : Math.round(m.py), {
+          age: m.finish.age,
+          ok: m.finish.ok,
+          tint: input.agents[a.id]?.look.tint ?? PAL.acc,
+          // What lifts off is the paper the agent actually put there, so an agent that changed
+          // thirty files finishes louder than one that answered a question. Capped, because past
+          // a handful the desk is simply covered and more sheets stop reading as more work.
+          papers: Math.min(6, a.edits),
+          seed: m.seed,
+          still,
+        });
+      }
+      if (m.pop) {
+        JU.verdictPop(ctx, Math.round(m.px), Math.round(m.py) - CH.CHAR.h - 1, {
+          age: m.pop.age,
+          ok: m.pop.ok,
+          seed: m.seed,
+          still,
+        });
+      }
+    }
+
     type Plate = { a: ActorState; m: Mem; x: number; y: number; w: number; h: number; label: string };
     const placed: Plate[] = [];
 
@@ -1422,6 +1492,19 @@ function deskTopOf(a: ActorState): number {
   const seat = manager ? WAYPOINTS.managerSeat : podSeat(a.deskIndex);
   const base = Math.round(sy(seat.y)) - DESK_ABOVE_SEAT;
   return base - DESK_SURFACE - (manager ? FUR.MONITOR.smallH + 2 : FUR.MONITOR.h);
+}
+
+/**
+ * The desk's own working surface — the row the keyboard and the loose paper sit on.
+ *
+ * `deskTopOf` is the top of the whole desk *including* the monitor standing on it, because that is
+ * where a nameplate has to clear. A burst comes off the surface instead, so this adds the monitor
+ * back rather than restating the arithmetic: whichever way `deskTopOf` changes, the two stay a
+ * monitor apart, which is the only relationship between them that has to hold.
+ */
+function deskSurfaceOf(a: ActorState): number {
+  const manager = a.deskIndex === MANAGER_DESK_INDEX;
+  return deskTopOf(a) + (manager ? FUR.MONITOR.smallH + 2 : FUR.MONITOR.h);
 }
 
 /** A stepped ring under the selected actor — the room's half of the shell-wide selection. */
