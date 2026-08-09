@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { evSession, isEv, type Ev } from '../shared/events';
+import { pageOrigins } from '../shared/net';
 import { MAX_BATCH_BYTES } from '../server/tail';
 import type { ReadyMsg, ResetMsg, TailNoticeMsg } from '../shared/protocol';
 import { startServer, type HubOptions, type StopServer } from '../server/hub';
@@ -448,6 +449,52 @@ describe('hub', () => {
       const firstOtherEv = frames.findIndex((m) => isEv(m) && evSession(m) === 'other-sess');
       expect(resetAt).toBeGreaterThanOrEqual(0);
       expect(firstOtherEv).toBeGreaterThan(resetAt);
+    },
+    20_000,
+  );
+
+  it(
+    'labels each session with its opening human turn, and leaves it off when there is none',
+    async () => {
+      // Six tabs reading `dev-52`, `dev-70`, `dev-ef` are six tabs a person cannot choose
+      // between: the CLI names a session after its cwd leaf plus a counter, so sessions started in
+      // the same directory are indistinguishable by name. What they were asked to do is not.
+      const { root, slugDir } = makeRoot({ subagents: false });
+      const mute = join(slugDir, 'mute-sess.jsonl');
+      writeFileSync(mute, userLine('<local-command-caveat>Caveat: …</local-command-caveat>'));
+      freshen(mute);
+
+      const client = await connect(await start(root));
+      const hello = await client.wait(isHello);
+
+      const sessions = hello.sessions as { sessionId: string; label?: string }[];
+      expect(sessions.find((s) => s.sessionId === 'fix-sess')?.label).toBe('find the flaky test');
+      // Talked at by the CLI and nothing else: absent, rather than labelled with boilerplate.
+      expect(sessions.find((s) => s.sessionId === 'mute-sess')).toBeDefined();
+      expect(sessions.find((s) => s.sessionId === 'mute-sess')?.label).toBeUndefined();
+    },
+    20_000,
+  );
+
+  it(
+    'carries the sidecar’s parentAgentId out to the client',
+    async () => {
+      // The client rebuilds the spawn tree from the parent's `Task` call, which only resolves
+      // while that line is still in its store. A depth-2 agent whose grandparent's spawn has been
+      // trimmed past the message cap therefore re-roots at `main` — the wrong tree drawn, and the
+      // wrong half of the room dimmed when somebody clicks an agent. The sidecar says it outright.
+      const { root, subagentsDir } = makeRoot();
+      writeFileSync(
+        join(subagentsDir, 'agent-abc123.meta.json'),
+        JSON.stringify({ agentType: 'general-purpose', description: 'dig', parentAgentId: 'grandkid', spawnDepth: 2 }),
+      );
+      const client = await connect(await start(root));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+
+      const seen = await client.wait(evOf('agentSeen', (e) => e.ref.agentId === 'abc123' && !!e.parentAgentId));
+      expect(seen.parentAgentId).toBe('grandkid');
+      expect(seen.spawnDepth).toBe(2);
     },
     20_000,
   );
@@ -941,6 +988,24 @@ describe('hub', () => {
       // …and an allowed origin is a full client, not just a greeted one.
       app.send({ cmd: 'follow', sessionId: 'fix-sess' });
       await app.wait(evOf('userMessage'));
+    },
+    20_000,
+  );
+
+  it(
+    'accepts every origin the app actually serves from, derived not transcribed',
+    async () => {
+      // The gate and the servers it guards used to be four literals in two files with nothing
+      // tying them together, so moving Vite off 5173 produced a hub no page could reach — and
+      // that failure is indistinguishable from a crashed server: page loads, hub up, OFFLINE
+      // for ever. This asserts the tie rather than the numbers, so it still means something the
+      // day the ports change.
+      const { root } = makeRoot({ subagents: false });
+      const port = await start(root);
+      for (const origin of pageOrigins()) {
+        const client = await connect(port, origin);
+        expect((await client.wait(isHello)).sessions.map((s) => s.sessionId), origin).toContain('fix-sess');
+      }
     },
     20_000,
   );

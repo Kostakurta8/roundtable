@@ -26,6 +26,16 @@ export type AgentMeta = {
   agentType?: string;
   /** The parent's `tool_use` id for the `Task` call that spawned this agent. */
   parentToolUseId?: string;
+  /**
+   * The parent agent's own id, when the sidecar states it.
+   *
+   * `parentToolUseId` is the usual link and needs the parent's `Task` call to still be in the
+   * store to resolve; a depth-2 agent whose grandparent's spawn line has been trimmed past
+   * `MSG_CAP` therefore loses its parent and re-roots at `main`, which draws the wrong tree and
+   * dims the wrong half of the room when somebody clicks an agent. This is the authoritative
+   * answer when it is present, and it needs nothing else to be resolvable.
+   */
+  parentAgentId?: string;
   /** 1 for a child of the session, 2 for a child of a child. */
   spawnDepth?: number;
   /** The `wf_…` run this agent belongs to, when a Workflow script spawned it. */
@@ -162,7 +172,35 @@ export type Ev =
       ts: number;
       seq: number;
     }
-  | { kind: 'fileEdit'; ref: AgentRef; path: string; ts: number; seq: number }
+  /**
+   * A file changed on disk, and by roughly how much.
+   *
+   * `added`/`removed` are line counts derived from the tool's own input — an `Edit` carries
+   * `old_string` and `new_string`, a `Write` carries the whole `content` — so the panel can say
+   * "+12 −3" rather than only naming the path. They are absent when the tool call did not carry
+   * the strings to count (`NotebookEdit`, or a vintage that shapes the input differently), which
+   * is why they are optional rather than zero: a genuine zero-line change and an unknown change
+   * are different facts and only one of them is worth printing.
+   */
+  | {
+      kind: 'fileEdit';
+      ref: AgentRef;
+      path: string;
+      /**
+       * The `tool_use` id of the call this edit was derived from.
+       *
+       * Optional only so a backlog replayed by an older hub still folds. The client's join used to
+       * be positional — the agent's most recent still-open call — which is correct only because
+       * the normalizer publishes this immediately after the `toolStart` it came from. That is a
+       * fact about today's emit order, not a property of the data, and when it stops being true
+       * the line counts land on the wrong file with nothing to notice it by.
+       */
+      toolUseId?: string;
+      added?: number;
+      removed?: number;
+      ts: number;
+      seq: number;
+    }
   | {
       kind: 'agentSpawn';
       ref: AgentRef;

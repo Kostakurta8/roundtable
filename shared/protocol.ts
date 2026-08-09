@@ -27,6 +27,17 @@ export type SessionSummary = {
   cwd?: string;
   /** The CLI's own name for the session, e.g. `dev-67`. */
   name?: string;
+  /**
+   * One line that tells this session apart from its neighbours, when its name cannot.
+   *
+   * The CLI names a session after the directory it runs in plus a counter, so every session
+   * started from the same place is `dev-52`, `dev-70`, `dev-ef` — six tabs that differ by
+   * two hex characters and by nothing a person can use. What distinguishes them is what they were
+   * asked to do, so this carries the session's opening human turn, clipped. Absent when the
+   * session has not been asked anything yet, which is itself worth showing as absent rather than
+   * filled in with a guess.
+   */
+  label?: string;
   /** Whatever the CLI last wrote: `idle`, `running`, … */
   status?: string;
   /** True when the session is registered *and* something touched it recently. */

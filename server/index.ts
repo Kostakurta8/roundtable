@@ -1,8 +1,12 @@
 /** Entry point: serve the observer hub on loopback for the Vite client to connect to. */
+import { DEFAULT_HUB_PORT, PORT_ENV, readPort } from '../shared/net';
 import { startServer } from './hub';
 import { claudeRoot } from './sessions';
 
-const PORT = 7411;
+// The one place the port is decided, and the same builders the client uses to find it. A literal
+// here was a literal the client had no way to learn about: the hub would be up, the page would
+// load, and the top bar would say OFFLINE for ever.
+const PORT = readPort(process.env[PORT_ENV], DEFAULT_HUB_PORT);
 const root = claudeRoot();
 
 startServer(root, PORT, {

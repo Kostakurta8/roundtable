@@ -7,10 +7,12 @@
  * be caught half-written, and none of that may take the observer down — an unreadable entry is
  * simply absent.
  */
-import { readdirSync, readFileSync, statSync, type Stats } from 'node:fs';
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentMeta } from '../shared/events';
+import { classifyUserSource, oneLine } from './normalize';
+import { parseLine, type RawLine } from './parse';
 
 const JSONL_EXT = '.jsonl';
 const META_EXT = '.meta.json';
@@ -72,6 +74,118 @@ export function listSessions(root: string): SessionFile[] {
     }
   }
   return out;
+}
+
+// --------------------------------------------------------------- the label
+
+/**
+ * How much of a session's opening turn a tab can hold.
+ *
+ * Long enough that two sessions started in the same directory are told apart by their first
+ * sentence, short enough that the picker is a list of tabs and not a list of paragraphs.
+ */
+const LABEL_MAX_LEN = 60;
+
+/**
+ * How far into a transcript the opening human turn is looked for, and how much is read at a time.
+ *
+ * This runs for **every** session on the machine on every roster sweep — 174 in one slug here, 438
+ * across all of them — so reading a transcript to find one sentence is not an option: they run to
+ * tens of megabytes. The bound is the design, and a session whose first human turn is past it
+ * simply has no label, which is the same answer as a session nobody has asked anything yet.
+ *
+ * 64 KiB is measured, not guessed. Across the 427 sessions on this machine that contain a human
+ * turn at all, the first one ends 14 229 bytes in at the median and 29 421 at the 90th percentile
+ * — much further than "the first line" because the CLI's opening `user` line carries the injected
+ * project context alongside the human's words. 64 KiB finds 407 of the 427 (95%); 8 KiB would find
+ * one. The 16 KiB chunk is what keeps the typical cost to a single read: the scan stops at the
+ * first human line, so the median session never asks for the other three chunks.
+ */
+export const LABEL_SCAN_BYTES = 64 * 1024;
+const LABEL_CHUNK_BYTES = 16 * 1024;
+
+const NEWLINE = 0x0a;
+
+/** The human's own words on one `user` line, already flattened, redacted and clipped. */
+function humanTurn(line: RawLine): string | undefined {
+  if (line.type !== 'user') return undefined;
+  const content = line.message?.content;
+  const compacted = line.isCompactSummary === true;
+
+  const texts: string[] =
+    typeof content === 'string'
+      ? [content]
+      : Array.isArray(content)
+        ? content
+            .filter((b): b is { text: string } => !!b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string')
+            .map((b) => b.text)
+        : [];
+
+  for (const text of texts) {
+    // Not a hook, not a caveat, not a slash-command echo, and never a compaction summary — that
+    // last one is ~14 500 characters of the CLI's own boilerplate written as a user turn, and it
+    // would make every long session's tab identical.
+    if (classifyUserSource(text, compacted) !== 'human') continue;
+    const label = oneLine(text, LABEL_MAX_LEN);
+    if (label.length > 0) return label;
+  }
+  return undefined;
+}
+
+/**
+ * The session's opening human turn, or `undefined` if it has not been asked anything yet.
+ *
+ * The CLI names a session after its cwd leaf plus a counter, so every session started in the same
+ * directory is `dev-52`, `dev-70`, `dev-ef` — tabs that differ by two hex characters and by
+ * nothing a person can use. What distinguishes them is what they were asked to do.
+ *
+ * Reads a bounded prefix and stops at the first hit; see `LABEL_SCAN_BYTES`. Only complete lines
+ * are parsed, so the torn last line of a file another process is appending to is stepped over
+ * rather than guessed at.
+ */
+export function sessionLabel(file: string): string | undefined {
+  let fd: number;
+  try {
+    fd = openSync(file, 'r');
+  } catch {
+    return undefined; // gone, or racing a delete — treat as absent, exactly like everything here
+  }
+  try {
+    const buf = Buffer.allocUnsafe(LABEL_SCAN_BYTES);
+    let filled = 0; // bytes of the file held in `buf`
+    let start = 0; // where the first not-yet-scanned line begins
+
+    while (filled < LABEL_SCAN_BYTES) {
+      const want = Math.min(LABEL_CHUNK_BYTES, LABEL_SCAN_BYTES - filled);
+      // `readSync` may return short of what was asked for, and does on some filesystems.
+      let got = 0;
+      while (got < want) {
+        const n = readSync(fd, buf, filled + got, want - got, filled + got);
+        if (n <= 0) break;
+        got += n;
+      }
+      if (got === 0) return undefined; // end of file, and nothing human in it
+      const end = filled + got;
+
+      for (;;) {
+        const nl = buf.indexOf(NEWLINE, start);
+        // `allocUnsafe` leaves whatever was in that memory past `end`; a newline found out there
+        // is not data, and decoding up to it would hand `JSON.parse` somebody else's bytes.
+        if (nl === -1 || nl >= end) break;
+        const raw = buf.toString('utf8', start, nl);
+        start = nl + 1;
+        const parsed = raw.trim().length > 0 ? parseLine(raw) : null;
+        const label = parsed ? humanTurn(parsed) : undefined;
+        if (label) return label;
+      }
+
+      filled = end;
+      if (got < want) return undefined; // short read: that was the end of the file
+    }
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // ------------------------------------------------------------------ liveness
@@ -218,6 +332,11 @@ export function readAgentMeta(metaFile: string, workflowId?: string): AgentMeta 
   const label = str(raw.description);
   const agentType = str(raw.agentType);
   const parentToolUseId = str(raw.toolUseId);
+  // The authoritative parent link, and the only one that resolves on its own. `toolUseId` needs
+  // the parent's `Task` call to still be in the client's store, so a depth-2 agent whose
+  // grandparent's spawn line has been trimmed past the message cap loses its parent and re-roots
+  // at `main`. 79 of the 2 105 sidecars on this machine carry it, every one at `spawnDepth: 2`.
+  const parentAgentId = str(raw.parentAgentId);
   const spawnDepth = num(raw.spawnDepth);
 
   if (model) meta.model = model;
@@ -225,6 +344,7 @@ export function readAgentMeta(metaFile: string, workflowId?: string): AgentMeta 
   else if (agentType) meta.label = agentType;
   if (agentType) meta.agentType = agentType;
   if (parentToolUseId) meta.parentToolUseId = parentToolUseId;
+  if (parentAgentId) meta.parentAgentId = parentAgentId;
   if (spawnDepth !== undefined) meta.spawnDepth = spawnDepth;
 
   return meta;

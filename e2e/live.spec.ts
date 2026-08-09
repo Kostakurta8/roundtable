@@ -22,14 +22,15 @@ import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSyn
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startServer, type StopServer } from '../server/hub';
+import { DEFAULT_HUB_PORT } from '../shared/net';
 // The floor plan's own number, imported rather than transcribed: the last test here is entirely
 // about what happens when there are more agents than chairs, and a copy of `13` in this file would
 // stop meaning that the day somebody adds a desk. `engine.ts` imports nothing but types, so this
 // costs the test process no DOM and no bundler.
 import { MAX_SEATS } from '../src/office/engine';
 
-/** The port the client hardcodes in `src/ws.ts`; the hub has to be here or nothing connects. */
-const PORT = 7411;
+/** The port both halves agree on; the hub has to be here or the page never connects. */
+const PORT = DEFAULT_HUB_PORT;
 /** Polling beats fs.watch for determinism on Windows, and 200ms fits inside the 5s budget. */
 const WATCH = { usePolling: true, interval: 200 } as const;
 

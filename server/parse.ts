@@ -15,8 +15,6 @@ export type RawLine = {
   cwd?: string;
   version?: string;
   gitBranch?: string;
-  /** True on subagent transcripts — the CLI's own marker for a spawned conversation. */
-  isSidechain?: boolean;
   /**
    * True on the one `user` line the CLI writes after compacting a conversation.
    *

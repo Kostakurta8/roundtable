@@ -16,19 +16,6 @@ import { closeSync, openSync, readSync, statSync } from 'node:fs';
  */
 export const MAX_BATCH_BYTES = 1 << 20; // 1 MiB
 
-/**
- * A line that does not fit in one batch is skipped rather than parsed.
- *
- * Transcripts embed base64 images inline, and a multi-megabyte string carries nothing this
- * observer renders — but it would be parsed, normalized, pushed into the backlog and broadcast to
- * every follower. The cap is deliberately *the batch size itself*: an earlier version had a
- * separate, larger line cap, and any line between the two sizes filled a whole batch without
- * containing a newline while still failing the "is it oversized yet" test — so the offset never
- * moved and the file was wedged forever. A full batch with no terminator in it is already proof
- * that the line is longer than a batch; nothing else needs to be measured.
- */
-export const MAX_LINE_BYTES = MAX_BATCH_BYTES;
-
 const NL = 0x0a;
 
 export type TailStats = {
@@ -111,6 +98,12 @@ export class Tailer {
       // No terminator anywhere. Two cases, and they must be told apart: a batch that came back
       // full is a line longer than a batch, and stepping over it is the only way forward; a short
       // read is the writer being mid-line, and the rest of that line is still on its way.
+      //
+      // Note what the oversize test is: a full batch containing no newline is *itself* the proof
+      // that the line is longer than a batch, and nothing else is measured. An earlier version
+      // kept a separate, larger line cap, and any line between the two sizes filled a whole batch
+      // without a terminator while still failing the "is it oversized yet" question — so the
+      // offset never moved and the file was wedged forever. Never reintroduce a second cap here.
       if (read === want && want === MAX_BATCH_BYTES) {
         this.stats.skipped += 1;
         this.offsets.set(filePath, off + read); // the next newline resynchronizes

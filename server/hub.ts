@@ -26,6 +26,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { AgentMeta, Ev } from '../shared/events';
+import { pageOrigins } from '../shared/net';
 import type {
   BacklogTruncatedMsg,
   HelloMsg,
@@ -42,6 +43,7 @@ import {
   listSessions,
   readAgentMeta,
   registeredSessions,
+  sessionLabel,
   subagentFiles,
   type AgentFile,
 } from './sessions';
@@ -179,13 +181,12 @@ const STREAM_CAP = 12;
  * user happens to have open could connect to the hub, take the `hello` roster, `follow` a
  * session and read their private transcripts, with no prompt and nothing on screen. The Origin
  * header is the one thing a browser will not let a page lie about, so it is what the gate reads.
+ *
+ * Derived from `shared/net.ts` rather than written out here, because a gate that names a port the
+ * app no longer serves is a hub no page can reach, and it fails exactly like a crashed server: the
+ * page loads, the hub is up, and the top bar says OFFLINE.
  */
-const ALLOWED_ORIGINS = new Set([
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:4173',
-  'http://127.0.0.1:4173',
-]);
+const ALLOWED_ORIGINS = new Set(pageOrigins());
 
 /**
  * An absent Origin is allowed: only browsers send one, so its absence means no web page is
@@ -402,11 +403,31 @@ export async function startServer(root: string, port: number, opts: HubOptions =
 
   // ------------------------------------------------------------- transcripts
 
+  /**
+   * One label per session, remembered until that transcript is written to again.
+   *
+   * The roster is rebuilt every few seconds over every session on the machine — 438 of them here —
+   * and all but the two or three that are running have not changed since the last sweep and never
+   * will again. Keying on mtime means each of those is read once for the lifetime of the hub
+   * rather than every four seconds, while a live session (whose opening turn can still be the
+   * *next* thing typed) is re-read as it grows. One small entry per session id; the roster is
+   * already a list of all of them, so this adds no order of magnitude to what the hub holds.
+   */
+  const labels = new Map<string, { mtime: number; label?: string }>();
+
+  function labelFor(sessionId: string, file: string, mtime: number): string | undefined {
+    const cached = labels.get(sessionId);
+    if (cached && cached.mtime === mtime) return cached.label;
+    const label = sessionLabel(file);
+    labels.set(sessionId, { mtime, label });
+    return label;
+  }
+
   function roster(): SessionSummary[] {
     const registry = registeredSessions(root);
     const now = Date.now();
     return listSessions(root)
-      .map(({ sessionId, slug, mtime }): SessionSummary => {
+      .map(({ sessionId, slug, mtime, file }): SessionSummary => {
         const reg = registry.get(sessionId);
         // Registered, and its process still running.
         //
@@ -425,6 +446,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         const live =
           reg !== undefined &&
           (reg.pid !== undefined ? alive(reg.pid) : now - touched < LIVE_WINDOW_MS);
+        const label = labelFor(sessionId, file, mtime);
         return {
           sessionId,
           slug,
@@ -433,6 +455,9 @@ export async function startServer(root: string, port: number, opts: HubOptions =
           ...(reg?.cwd ? { cwd: reg.cwd } : {}),
           ...(reg?.name ? { name: reg.name } : {}),
           ...(reg?.status ? { status: reg.status } : {}),
+          // What the session was actually asked to do — the only thing that tells apart six tabs
+          // the CLI named after the same directory. Absent until somebody has asked it something.
+          ...(label ? { label } : {}),
         };
       })
       .sort((a, b) => b.mtime - a.mtime); // most recently touched first
