@@ -327,6 +327,19 @@ export const WALL_FIXTURES = {
     { x: 455, y: FLOOR_Y - 10, variant: 2 },
   ],
   clock: { x: 253, y: FLOOR_Y - 22 },
+  /**
+   * Two plants hung from the ceiling, in the wall's two remaining gaps: 296..318, between the third
+   * window and the picture that moved off the whiteboard, and 463..480 in the right-hand corner.
+   *
+   * `drawHangingPlant` is the one prop in the module anchored by its **top** row, because a ceiling
+   * hook is fixed where it is screwed in — which is why it can hang here at all, where everything
+   * else on this wall is positioned from its base. It had never been called by anything, and the
+   * ceiling was the one surface in the room with nothing on it at all.
+   */
+  hanging: [
+    { x: 307, yTop: 2, seed: 5 },
+    { x: 471, yTop: 2, seed: 19 },
+  ],
   vent: { x: 108, y: 7 },
   shelf: { x: 385, y: FLOOR_Y - 6 },
   // One over the break corner too. Without it that whole side of the room went black after hours
@@ -599,6 +612,10 @@ export class Scene {
     ENV.drawVent(ctx, WALL_FIXTURES.vent.x, WALL_FIXTURES.vent.y);
     paintFixture(ctx, 'whiteboard', input);
     for (const a of WALL_FIXTURES.art) ENV.drawWallArt(ctx, a.x, a.y, a.variant);
+    // Same `sway` the floor plants use, so everything growing in this room stands in the same air.
+    for (const p of WALL_FIXTURES.hanging) {
+      PR.drawHangingPlant(ctx, p.x, p.yTop, FX.sway(t, p.seed));
+    }
     ENV.drawClock(ctx, WALL_FIXTURES.clock.x, WALL_FIXTURES.clock.y, clockTurn(input.clockMs));
     FUR.drawShelf(ctx, WALL_FIXTURES.shelf.x, WALL_FIXTURES.shelf.y);
     for (const x of WALL_FIXTURES.lamps) ENV.drawCeilingLamp(ctx, x, 9, night);
@@ -963,6 +980,17 @@ export class Scene {
               screen: 'blank',
               mood: 'done',
             });
+            // A machine nobody is sitting at is asleep, not dead. `breathe` was written for exactly
+            // this — its doc calls it "the pulse of a standby light" — and it had never been called
+            // by anything. Eleven black rectangles is what made a one-agent session read as a
+            // ghost town; eleven slowly pulsing standby lights read as an office at four in the
+            // morning, which is what it actually is. Seeded per desk so they do not blink in
+            // unison, which would look like a machine rather than a room.
+            //
+            // Reduced motion needs no special case here: `this.t` stops advancing when `still` is
+            // set, so the pulse holds at whatever value it was showing instead of switching off.
+            const standby = FX.breathe(t, deskIndex * 97 + 11);
+            rect(ctx, cx + (manager ? -3 : 9), surface + 4, 1, 1, PAL.ok, 0.15 + 0.45 * standby);
             PR.drawKeyboard(ctx, cx - (manager ? 10 : 0), surface + 6, 0);
             PR.drawMouse(ctx, cx + (manager ? 12 : 11), surface + 6);
             if (left > 0) PR.drawPapers(ctx, cx - (manager ? 24 : 16), surface + 6, left);
