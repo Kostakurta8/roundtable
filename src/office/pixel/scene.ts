@@ -42,6 +42,7 @@ import { drawText, drawTextOutlined, FONT_HEIGHT, PAL, PIX, pool, rect, textWidt
 import * as CH from './characters';
 import * as ENV from './environment';
 import * as FX from './effects';
+import * as JU from './juice';
 import * as FUR from './furniture';
 import * as PR from './props';
 
@@ -1122,16 +1123,17 @@ export class Scene {
       // to point at, and an arrow into the ghost strip would be pointing at a decoration.
       if (!m || !kid) continue;
       const tint = input.agents[a.id]?.look.tint ?? PAL.acc;
-      PR.drawLink(
-        ctx,
-        Math.round(m.px),
-        Math.round(m.py) - CH.CHAR.h,
-        Math.round(kid.px),
-        Math.round(kid.py) - CH.CHAR.h,
-        a.link.label,
-        m.linkAge,
-        tint,
-      );
+      const ax = Math.round(m.px);
+      const ay = Math.round(m.py) - CH.CHAR.h;
+      const bx = Math.round(kid.px);
+      const by = Math.round(kid.py) - CH.CHAR.h;
+      PR.drawLink(ctx, ax, ay, bx, by, a.link.label, m.linkAge, tint);
+      // The line says a spawn edge exists; the pulse says the brief is *travelling down it*, and
+      // arrives. Same `linkAge` the line already draws itself in with, so the packet cannot get
+      // out of step with its own wire, and the same `still` the rest of the room honours — under
+      // reduced motion the packet is simply parked at the child's end, which is the one thing the
+      // motion was there to tell you.
+      JU.linkPulse(ctx, ax, ay, bx, by, m.linkAge, tint, input.still === true);
     }
   }
 

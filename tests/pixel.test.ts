@@ -27,6 +27,7 @@ import {
 import type { RtAgent } from '../src/store';
 import { drawArt, drawText, PAL, PIX, pool, textWidth, type Art, type Look } from '../src/office/pixel/art';
 import { nightGrade } from '../src/office/pixel/effects';
+import * as JU from '../src/office/pixel/juice';
 import * as ENV from '../src/office/pixel/environment';
 import { BOARD_TALLY_W, BOARD_TEXT, wrapBoard } from '../src/office/pixel/environment';
 import {
@@ -71,6 +72,90 @@ const inkColumns = (ctx: SoftCtx): number[] => {
   }
   return cols;
 };
+
+describe('the three moments', () => {
+  /** The whole buffer as a string — the cheapest way to ask "is this frame the same frame". */
+  const frame = (draw: (c: CanvasRenderingContext2D) => void, w = 120, h = 64): string => {
+    const ctx = new SoftCtx(w, h);
+    draw(asCtx(ctx));
+    return [...ctx.data].join(',');
+  };
+  const EMPTY = frame(() => {});
+
+  const pulse = (age: number, still = false): string =>
+    frame((c) => JU.linkPulse(c, 8, 48, 112, 16, age, PAL.acc, still));
+
+  // A poisoned age is the failure mode this module is most exposed to: a delta over a duration
+  // somebody set to zero is all it takes, every comparison against NaN is false, and the result is
+  // not a throw but the *first* branch of a beat painted for ever. These four must draw nothing.
+  it('paints nothing for an age that is not a live age', () => {
+    for (const bad of [NaN, Infinity, -Infinity, -0.5, 1, 4]) {
+      expect(pulse(bad), `age ${bad} painted something`).toBe(EMPTY);
+      expect(frame((c) => JU.verdictPop(c, 60, 40, { age: bad, ok: true, seed: 7 }))).toBe(EMPTY);
+      expect(
+        frame((c) => JU.finishBurst(c, 60, 40, { age: bad, ok: true, tint: PAL.acc, papers: 2, seed: 7 })),
+      ).toBe(EMPTY);
+    }
+  });
+
+  // The point of the pulse is that the brief *travels*. Four ages that all painted the same pixels
+  // would be a packet sitting still, which is exactly what the still-frame version is for — and a
+  // baseline hash could not tell the two apart.
+  // The beat has a lead-in and an exit, and both are deliberate: the wire draws *itself* in before
+  // anything travels down it, and the packet is gone before the line is. Sampling outside that
+  // window is how the first version of the test below failed — it asked whether a packet that had
+  // not launched yet looked different from one that had.
+  it('leaves the wire to draw itself in, and clears out before the end', () => {
+    for (const early of [0.02, 0.05, 0.15]) expect(pulse(early)).toBe(EMPTY);
+    expect(pulse(0.95)).toBe(EMPTY);
+  });
+
+  it('moves the packet down the wire', () => {
+    const ages = [0.25, 0.45, 0.6, 0.7];
+    const seen = ages.map((a) => pulse(a));
+    for (const f of seen) expect(f).not.toBe(EMPTY);
+    for (let i = 0; i < seen.length; i++) {
+      for (let j = i + 1; j < seen.length; j++) {
+        expect(seen[i], `ages ${ages[i]} and ${ages[j]} drew the same frame`).not.toBe(seen[j]);
+      }
+    }
+  });
+
+  // Reduced motion is not "draw nothing". The packet still says a brief went to that child; it just
+  // does not move between one frame and the next, which is the thing the setting actually asks for.
+  it('parks the packet under reduced motion instead of hiding it', () => {
+    const parked = pulse(0.3, true);
+    expect(parked).not.toBe(EMPTY);
+    for (const age of [0.45, 0.6, 0.7]) {
+      expect(pulse(age, true), 'a still packet moved').toBe(parked);
+    }
+  });
+
+  // Both beats carry an outcome, and both are drawn in the agent's own colour on top of it. If ok
+  // and err ever collapsed to the same pixels the room would be announcing that something landed
+  // while refusing to say how — which is worse than not announcing it.
+  it('says how it landed, not just that it landed', () => {
+    const seal = (ok: boolean): string =>
+      frame((c) => JU.verdictPop(c, 60, 40, { age: 0.5, ok, seed: 7 }));
+    const burst = (ok: boolean): string =>
+      frame((c) => JU.finishBurst(c, 60, 48, { age: 0.35, ok, tint: PAL.acc, papers: 2, seed: 7 }));
+    expect(seal(true)).not.toBe(EMPTY);
+    expect(burst(true)).not.toBe(EMPTY);
+    expect(seal(true)).not.toBe(seal(false));
+    expect(burst(true)).not.toBe(burst(false));
+  });
+
+  // No `Math.random` anywhere in the module: the same moment rebuilt from the timeline has to
+  // explode the same way, or the scrubber is showing you a different past every time you drag it.
+  it('is deterministic, so a replayed moment is the moment', () => {
+    for (const age of [0.2, 0.55, 0.9]) {
+      expect(pulse(age)).toBe(pulse(age));
+      const shot = (): string =>
+        frame((c) => JU.finishBurst(c, 60, 48, { age, ok: true, tint: PAL.acc, papers: 2, seed: 7 }));
+      expect(shot()).toBe(shot());
+    }
+  });
+});
 
 describe('the label font', () => {
   // Every character the room can be asked to draw: agent ids and labels are arbitrary text, and a
