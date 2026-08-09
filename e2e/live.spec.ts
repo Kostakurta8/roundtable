@@ -31,8 +31,21 @@ import { MAX_SEATS } from '../src/office/engine';
 
 /** The port both halves agree on; the hub has to be here or the page never connects. */
 const PORT = DEFAULT_HUB_PORT;
-/** Polling beats fs.watch for determinism on Windows, and 200ms fits inside the 5s budget. */
-const WATCH = { usePolling: true, interval: 200 } as const;
+/**
+ * Polling beats fs.watch for determinism on Windows, and 200ms fits inside the 5s budget, so it is
+ * what this suite asks for by default.
+ *
+ * It is also, everywhere else, the wrong default. `hub.ts` resolves the watcher as
+ * `opts.usePolling ?? process.platform === 'win32'` — so every macOS and Linux user runs on
+ * `fs.watch`, while every test in this repo forced polling. The green matrix therefore said nothing
+ * whatsoever about the code path most users are actually on, which makes "it doesn't work on my
+ * Mac" the most likely first bug report from a stranger.
+ *
+ * `ROUNDTABLE_E2E_WATCH=native` passes no watcher options at all, so the hub takes its platform
+ * default — on a Linux runner, the real `fs.watch`. CI runs this suite both ways.
+ */
+const WATCH: { usePolling?: boolean; interval?: number } =
+  process.env.ROUNDTABLE_E2E_WATCH === 'native' ? {} : { usePolling: true, interval: 200 };
 
 /** The thinking block of the fixture's assistant line — bubble in the office, monologue in chat. */
 const THOUGHT = 'scheduler.spec mixes timers';

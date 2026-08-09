@@ -62,24 +62,31 @@ jobs:
         run: npx vite build
 
   e2e:
-    name: e2e (opt-in, unproven in CI)
-    # Manual only, deliberately. Honest statement of what is known about this job:
+    name: e2e (linux, ${{ matrix.watch }} watcher)
+    # This job was manual-only until it had ever passed on a runner. It has now: run 31331751587,
+    # 2026-08-09, headless Chromium on ubuntu-latest, green on the first attempt. So it gates
+    # pushes and pull requests like everything else. What is still true about it:
     #
-    #   * The Playwright suite has only ever been run on Windows, against a locally installed
-    #     Chromium, by a human watching it. It has never been run on a CI runner at all, so
-    #     nothing here is evidence that it passes headless on Linux — treat a green result as the
-    #     first data point and a red one as equally likely to be the harness as the app.
     #   * It binds 5173 (Vite, `strictPort`) and 7411 (an in-process hub started inside the spec),
     #     which is why it cannot share a runner with anything else and why it is not in the matrix.
     #   * `playwright.config.ts` sets `reuseExistingServer: !process.env.CI`, so on a runner it
     #     starts its own Vite rather than adopting a stray one.
-    #   * The spec forces `usePolling: true` on the watcher, so even a green run says nothing about
-    #     the `fs.watch` path that Linux and macOS use by default.
-    #
-    # Run it from the Actions tab when you want that first data point.
-    if: github.event_name == 'workflow_dispatch'
+    #   * The spec forces `usePolling: true` on the watcher, so a green run here still says nothing
+    #     about the `fs.watch` path that Linux and macOS use by default. That gap is the matrix's
+    #     to close, not this job's.
+    #   * Before this ran, the suite had only ever executed on Windows against a locally installed
+    #     Chromium with a human watching. One green Linux run is one data point, not a warranty.
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    strategy:
+      # Two legs because the watcher is the one thing the rest of CI cannot reach. The unit suite
+      # forces `usePolling: true` in every hub test, so `fs.watch` — what every non-Windows user
+      # actually runs on — was exercised by nothing at all. The `native` leg is the only place in
+      # this repo where the production default is under test.
+      fail-fast: false
+      matrix:
+        watch: [polling, native]
 
     steps:
       - uses: actions/checkout@v4
@@ -98,11 +105,16 @@ jobs:
 
       - name: Playwright
         run: npm run e2e
+        env:
+          ROUNDTABLE_E2E_WATCH: ${{ matrix.watch }}
 
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: e2e-artifacts
+          # One name per leg: `upload-artifact@v4` refuses a second upload under a name that already
+          # exists, so a shared name would lose whichever leg finished second — the failing one, if
+          # it ran longer.
+          name: e2e-artifacts-${{ matrix.watch }}
           path: e2e/artifacts
           retention-days: 7
           if-no-files-found: ignore
