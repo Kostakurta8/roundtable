@@ -9,8 +9,8 @@
  */
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync, type Stats } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import type { AgentMeta } from '../shared/events';
+import { basename, join } from 'node:path';
+import type { AgentMeta, WorkflowAgentState, WorkflowPhase, WorkflowPhaseAgent } from '../shared/events';
 import { classifyUserSource, oneLine } from './normalize';
 import { parseLine, type RawLine } from './parse';
 
@@ -348,4 +348,191 @@ export function readAgentMeta(metaFile: string, workflowId?: string): AgentMeta 
   if (spawnDepth !== undefined) meta.spawnDepth = spawnDepth;
 
   return meta;
+}
+
+// ----------------------------------------------------------------- workflows
+
+/**
+ * How large a run file may be before it is refused rather than parsed.
+ *
+ * These are not sidecars and `MAX_SIDECAR_BYTES` cannot be reused: real run files reach 1.4 MB,
+ * almost all of it the workflow script plus a 400-character prompt and result preview per agent,
+ * and a 64 KiB cap would silently drop most of the runs on this machine. The cap that matters is
+ * the one that keeps a single pathological file off the hub's event loop, so it is set well above
+ * anything observed and well below anything that would stall a sweep.
+ */
+export const MAX_WORKFLOW_BYTES = 8 * 1024 * 1024;
+
+const WORKFLOW_PREFIX = 'wf_';
+const JSON_EXT = '.json';
+
+/** A run file, and a stamp that changes when its bytes do. */
+export type WorkflowRunFile = { workflowId: string; file: string; stamp: string };
+
+/**
+ * Every Workflow run this session has finished.
+ *
+ * These live in the session's *own* `workflows` directory — a sibling of `subagents`, not the
+ * `workflows` directory nested inside it that holds the run's agent transcripts. Both exist, both
+ * are named the same, and only this one holds the phase record.
+ *
+ * Returns a stamp rather than the contents so a caller can skip a file it has already read. That
+ * is the whole cost story: the hub sweeps this every half-second while a session is followed, and
+ * a run file is written exactly once and never touched again, so after the first read every later
+ * sweep costs one directory listing and one stat per run.
+ */
+export function workflowRunFiles(root: string, slug: string, sessionId: string): WorkflowRunFile[] {
+  const dir = join(root, 'projects', slug, sessionId, WORKFLOWS_DIR);
+  const out: WorkflowRunFile[] = [];
+
+  for (const name of tryReadDir(dir)) {
+    if (!name.startsWith(WORKFLOW_PREFIX) || !name.endsWith(JSON_EXT)) continue;
+    const file = join(dir, name);
+    const st = tryStat(file);
+    if (!st?.isFile()) continue; // a directory that happens to be named like a run file
+    out.push({
+      workflowId: name.slice(0, -JSON_EXT.length),
+      file,
+      stamp: `${st.mtimeMs}:${st.size}`,
+    });
+  }
+  return out;
+}
+
+/** One run's phase record, as `readWorkflowRun` recovers it. */
+export type WorkflowRun = {
+  workflowId: string;
+  workflowName?: string;
+  status: string;
+  phases: WorkflowPhase[];
+  activePhase?: number;
+  /** When the run ended, from its own numbers where it wrote them and the file's mtime otherwise. */
+  endedAt: number;
+};
+
+const AGENT_STATES: ReadonlySet<string> = new Set<WorkflowAgentState>([
+  'start',
+  'progress',
+  'done',
+  'error',
+]);
+
+const FINISHED: ReadonlySet<string> = new Set<WorkflowAgentState>(['done', 'error']);
+
+/** What is being accumulated for one phase while the progress rows are walked. */
+type PhaseAcc = {
+  index: number;
+  title?: string;
+  /** Earliest queue time of any agent in it; `Infinity` for a phase that never got one. */
+  rank: number;
+  /** Where this phase was first mentioned, as the tie-break for phases with no times at all. */
+  seenAt: number;
+  agents: WorkflowPhaseAgent[];
+};
+
+/**
+ * The phase record of one finished Workflow run, or `undefined` if the file cannot be believed.
+ *
+ * Two things here are taken from the real corpus rather than from the shape the file suggests.
+ *
+ * The phase roster comes from the progress rows, not from the top-level `phases` array: that array
+ * is a declaration written by the script's author and one real run declares a single phase while
+ * its own agents are attributed to two. An agent naming a phase nothing registered still gets that
+ * phase, because losing it would lose the agent.
+ *
+ * The order comes from when the agents were queued, not from the declared `index`. The index is a
+ * registration number — on one real run the very first agent queued carries `phaseIndex: 2` and
+ * the 88 after it carry `phaseIndex: 1` — so sorting by it draws the run running backwards.
+ */
+export function readWorkflowRun(file: string): WorkflowRun | undefined {
+  const st = tryStat(file);
+  if (!st?.isFile() || st.size > MAX_WORKFLOW_BYTES) return undefined;
+
+  let raw: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    raw = parsed as Record<string, unknown>;
+  } catch {
+    return undefined; // mid-write, or not JSON at all
+  }
+
+  const rows: unknown[] = Array.isArray(raw.workflowProgress) ? raw.workflowProgress : [];
+  const acc = new Map<number, PhaseAcc>();
+
+  const phaseFor = (index: number, seenAt: number): PhaseAcc => {
+    let p = acc.get(index);
+    if (!p) {
+      p = { index, rank: Number.POSITIVE_INFINITY, seenAt, agents: [] };
+      acc.set(index, p);
+    }
+    return p;
+  };
+
+  rows.forEach((row, at) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return;
+    const r = row as Record<string, unknown>;
+    const index = num(r.phaseIndex) ?? num(r.index);
+    if (index === undefined) return;
+
+    if (r.type === 'workflow_phase') {
+      const p = phaseFor(index, at);
+      p.title ??= str(r.title);
+      return;
+    }
+    if (r.type !== 'workflow_agent') return;
+
+    const agentId = str(r.agentId);
+    const state = str(r.state);
+    if (!agentId || !state || !AGENT_STATES.has(state)) return;
+
+    const p = phaseFor(index, at);
+    // The agent's own copy of the title, which is the only record of it when the run was killed
+    // before the phase was registered.
+    p.title ??= str(r.phaseTitle);
+
+    const label = str(r.label);
+    const attempt = num(r.attempt);
+    const queuedAt = num(r.queuedAt) ?? num(r.startedAt);
+    if (queuedAt !== undefined) p.rank = Math.min(p.rank, queuedAt);
+
+    p.agents.push({
+      agentId,
+      state: state as WorkflowAgentState,
+      ...(label ? { label } : {}),
+      ...(attempt !== undefined ? { attempt } : {}),
+      ...(queuedAt !== undefined ? { queuedAt } : {}),
+    });
+  });
+
+  if (acc.size === 0) return undefined; // valid JSON, but nothing that describes a run
+
+  const ordered = [...acc.values()].sort((a, b) => a.rank - b.rank || a.seenAt - b.seenAt);
+  const phases: WorkflowPhase[] = ordered.map((p, order) => ({
+    index: p.index,
+    title: p.title ?? `Phase ${p.index}`,
+    order,
+    agents: p.agents,
+  }));
+
+  // Where the run was standing when it stopped: the last phase still holding an agent that never
+  // reached an end. `error` is an end — a failed agent is finished, not stuck.
+  let activePhase: number | undefined;
+  for (const phase of phases) {
+    if (phase.agents.some((a) => !FINISHED.has(a.state))) activePhase = phase.order;
+  }
+
+  const workflowId = str(raw.runId) ?? basename(file, JSON_EXT);
+  const workflowName = str(raw.workflowName);
+  const startTime = num(raw.startTime);
+  const durationMs = num(raw.durationMs);
+
+  return {
+    workflowId,
+    ...(workflowName ? { workflowName } : {}),
+    status: str(raw.status) ?? 'unknown',
+    phases,
+    ...(activePhase !== undefined ? { activePhase } : {}),
+    endedAt: startTime !== undefined && durationMs !== undefined ? startTime + durationMs : st.mtimeMs,
+  };
 }

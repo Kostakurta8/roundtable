@@ -1150,4 +1150,150 @@ describe('hub', () => {
     },
     20_000,
   );
+
+  /**
+   * Workflow phases.
+   *
+   * A `Workflow` call spawns agents that carry no `agentSpawn` — `Workflow` is not in
+   * `SPAWN_TOOLS` — so nothing else in the stream groups them. The run's own record is the only
+   * thing that does, and it appears in the session's `workflows` directory when the run ends.
+   * See `docs/notes/workflow-journal-findings.md` for what is and is not in it.
+   */
+  describe('workflow phases', () => {
+    /** Drops a run record into the session's own workflows directory, as the CLI does at run end. */
+    const writeRun = (sessionDir: string, runId: string, body: Record<string, unknown>): string => {
+      const dir = join(sessionDir, 'workflows');
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, `${runId}.json`);
+      writeFileSync(file, JSON.stringify(body));
+      return file;
+    };
+
+    const twoPhaseRun = (runId: string, status = 'killed'): Record<string, unknown> => ({
+      runId,
+      workflowName: 'nightly',
+      status,
+      startTime: 1_000,
+      durationMs: 2_000,
+      // Declared in the opposite order to the one they ran in, which is what the real files do.
+      workflowProgress: [
+        { type: 'workflow_phase', index: 1, title: 'Second' },
+        { type: 'workflow_phase', index: 2, title: 'First' },
+        {
+          type: 'workflow_agent',
+          index: 1,
+          label: 'first:one',
+          phaseIndex: 2,
+          phaseTitle: 'First',
+          agentId: 'a1111111111111111',
+          state: 'done',
+          queuedAt: 1_010,
+          attempt: 1,
+        },
+        {
+          type: 'workflow_agent',
+          index: 2,
+          label: 'second:one',
+          phaseIndex: 1,
+          phaseTitle: 'Second',
+          agentId: 'a2222222222222222',
+          state: 'progress',
+          queuedAt: 2_500,
+          attempt: 1,
+        },
+      ],
+    });
+
+    it(
+      'publishes a run as one phase event, in the order the phases ran, and only once',
+      async () => {
+        const { root, sessionDir } = makeRoot();
+        const client = await connect(await start(root));
+        await client.wait(isHello);
+        client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+        await client.wait(evOf('userMessage'));
+
+        writeRun(sessionDir, 'wf_abcdef12-345', twoPhaseRun('wf_abcdef12-345'));
+
+        const ev = await client.wait(evOf('workflowPhase'));
+        expect(ev).toMatchObject({
+          sessionId: 'fix-sess',
+          workflowId: 'wf_abcdef12-345',
+          workflowName: 'nightly',
+          status: 'killed',
+          ts: 3_000, // the run's own end, not when the hub happened to read the file
+        });
+        // Execution order, not the declared index order — the trap the real corpus is full of.
+        expect(ev.phases.map((p) => p.title)).toEqual(['First', 'Second']);
+        expect(ev.phases.map((p) => p.index)).toEqual([2, 1]);
+        // Which agents belong to which phase: the question the event exists to answer.
+        expect(ev.phases[0].agents.map((a) => a.agentId)).toEqual(['a1111111111111111']);
+        expect(ev.phases[1].agents.map((a) => a.agentId)).toEqual(['a2222222222222222']);
+        // It was cut off in `Second`, which still held an agent that never finished.
+        expect(ev.activePhase).toBe(1);
+
+        // The sweep runs twice a second over every followed session. An unchanged run file must
+        // not be re-read, and must certainly not be re-published — the client folds by `seq`, so a
+        // repeat would be a second workflow rather than the same one seen twice.
+        await delay(SETTLE_MS * 3);
+        expect(client.events().filter((e) => e.kind === 'workflowPhase')).toHaveLength(1);
+        expect(errors).toEqual([]);
+      },
+      25_000,
+    );
+
+    it(
+      'publishes again only when the file itself changes, and survives one that cannot be read',
+      async () => {
+        const { root, sessionDir } = makeRoot();
+        const client = await connect(await start(root));
+        await client.wait(isHello);
+        client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+        await client.wait(evOf('userMessage'));
+
+        // Torn mid-write, which is exactly how a sweep can catch a file the CLI is still writing.
+        // It must neither throw nor be retried forever.
+        writeFileSync(join(mkdirRuns(sessionDir), 'wf_torn-000.json'), '{"runId":"wf_torn-000","workflowProg');
+
+        const file = writeRun(sessionDir, 'wf_abcdef12-345', twoPhaseRun('wf_abcdef12-345'));
+        const first = await client.wait(evOf('workflowPhase'));
+        expect(first.status).toBe('killed');
+
+        // A genuine rewrite: new bytes, new mtime. `utimesSync` because a rewrite inside the same
+        // filesystem timestamp granularity would otherwise be indistinguishable from no change.
+        writeFileSync(file, JSON.stringify(twoPhaseRun('wf_abcdef12-345', 'completed')));
+        const later = new Date(Date.now() + 5_000);
+        utimesSync(file, later, later);
+
+        const again = await client.wait(evOf('workflowPhase', (e) => e.status === 'completed'));
+        expect(again.workflowId).toBe('wf_abcdef12-345');
+        expect(client.events().filter((e) => e.kind === 'workflowPhase')).toHaveLength(2);
+        expect(errors).toEqual([]);
+      },
+      25_000,
+    );
+
+    it(
+      'says nothing for a session that has never run a workflow',
+      async () => {
+        const { root, mainFile } = makeRoot();
+        const client = await connect(await start(root));
+        await client.wait(isHello);
+        client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+        appendFileSync(mainFile, assistantLine(LIVE_TEXT));
+        await client.wait(evOf('agentText', (e) => e.text === LIVE_TEXT));
+        await delay(SETTLE_MS * 2);
+
+        expect(client.events().filter((e) => e.kind === 'workflowPhase')).toEqual([]);
+      },
+      25_000,
+    );
+  });
 });
+
+/** The session's own workflows directory, created on demand. */
+function mkdirRuns(sessionDir: string): string {
+  const dir = join(sessionDir, 'workflows');
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}

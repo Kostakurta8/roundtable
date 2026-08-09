@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -6,9 +6,12 @@ import {
   claudeRoot,
   LABEL_SCAN_BYTES,
   listSessions,
+  MAX_WORKFLOW_BYTES,
   readAgentMeta,
+  readWorkflowRun,
   sessionLabel,
   subagentFiles,
+  workflowRunFiles,
 } from '../server/sessions';
 
 it('discovers sessions and subagent files', () => {
@@ -238,6 +241,213 @@ describe('readAgentMeta', () => {
 
   it('ignores a parentAgentId that is not a string', () => {
     expect(withSidecar({ agentType: 'Explore', parentAgentId: 42 }).parentAgentId).toBeUndefined();
+  });
+});
+
+/**
+ * The phase record a Workflow run leaves behind.
+ *
+ * Measured against the 78 real runs on the machine this was written on, and every expectation
+ * below is a fact taken off one of them rather than off the design spec — which described a
+ * `journal.jsonl` ingestion that does not match what that file actually holds. See
+ * `docs/notes/workflow-journal-findings.md`.
+ */
+describe('workflow runs', () => {
+  /** Builds a session root with one run file under the session's own workflows directory. */
+  function withRun(runId: string, body: Record<string, unknown>): { root: string; file: string } {
+    const root = mkdtempSync(join(tmpdir(), 'rt-wf-'));
+    const dir = join(root, 'projects', 'demo', 'fix-sess', 'workflows');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${runId}.json`);
+    writeFileSync(file, JSON.stringify(body));
+    return { root, file };
+  }
+
+  const agentRow = (over: Record<string, unknown>): Record<string, unknown> => ({
+    type: 'workflow_agent',
+    index: 1,
+    label: 'step:one',
+    phaseIndex: 1,
+    phaseTitle: 'One',
+    agentId: 'a0000000000000001',
+    state: 'done',
+    queuedAt: 1_000,
+    startedAt: 1_010,
+    attempt: 1,
+    ...over,
+  });
+
+  it('groups a run into phases, each naming the agents that belong to it', () => {
+    const { file } = withRun('wf_aaaaaaaa-111', {
+      runId: 'wf_aaaaaaaa-111',
+      workflowName: 'nightly',
+      status: 'completed',
+      startTime: 1_000,
+      durationMs: 500,
+      phases: [{ title: 'One' }, { title: 'Two' }],
+      workflowProgress: [
+        { type: 'workflow_phase', index: 1, title: 'One' },
+        { type: 'workflow_phase', index: 2, title: 'Two' },
+        agentRow({ index: 1, agentId: 'a1', queuedAt: 1_000 }),
+        agentRow({ index: 2, agentId: 'a2', queuedAt: 1_005 }),
+        agentRow({ index: 3, agentId: 'a3', phaseIndex: 2, phaseTitle: 'Two', queuedAt: 2_000 }),
+      ],
+    });
+
+    const run = readWorkflowRun(file);
+    expect(run).toMatchObject({ workflowId: 'wf_aaaaaaaa-111', workflowName: 'nightly', status: 'completed' });
+    expect(run?.phases.map((p) => p.title)).toEqual(['One', 'Two']);
+    // The whole point of the event: a consumer can answer "which agents are in this phase".
+    expect(run?.phases[0].agents.map((a) => a.agentId)).toEqual(['a1', 'a2']);
+    expect(run?.phases[1].agents.map((a) => a.agentId)).toEqual(['a3']);
+    // The end of the run, so the frame is stamped with when it happened and not when it was read.
+    expect(run?.endedAt).toBe(1_500);
+  });
+
+  /**
+   * The trap this test exists for.
+   *
+   * On a real killed run the *first* agent the runtime queued carries `phaseIndex: 2`, and the 88
+   * that followed carry `phaseIndex: 1`. The declared index is a registration id, not a position
+   * in time, so anything that sorts by it draws the phases in the wrong order — and the office
+   * would show a run moving backwards through itself.
+   */
+  it('orders phases by when their agents were queued, not by the declared index', () => {
+    const { file } = withRun('wf_bbbbbbbb-222', {
+      runId: 'wf_bbbbbbbb-222',
+      status: 'killed',
+      workflowProgress: [
+        { type: 'workflow_phase', index: 1, title: 'Second' },
+        { type: 'workflow_phase', index: 2, title: 'First' },
+        agentRow({ agentId: 'early', phaseIndex: 2, phaseTitle: 'First', queuedAt: 100 }),
+        agentRow({ agentId: 'late', phaseIndex: 1, phaseTitle: 'Second', queuedAt: 900 }),
+      ],
+    });
+
+    const run = readWorkflowRun(file);
+    expect(run?.phases.map((p) => p.title)).toEqual(['First', 'Second']);
+    // `order` is the position in time; `index` stays whatever the runtime called it.
+    expect(run?.phases.map((p) => p.order)).toEqual([0, 1]);
+    expect(run?.phases.map((p) => p.index)).toEqual([2, 1]);
+  });
+
+  /**
+   * Top-level `phases` is a declaration written by the script author and is not always complete —
+   * one real run declares a single phase while its progress rows attribute agents to two. Trusting
+   * it would drop every agent of the phase it forgot to mention.
+   */
+  it('takes the phase roster from the progress rows, not from the declared phases array', () => {
+    const { file } = withRun('wf_cccccccc-333', {
+      runId: 'wf_cccccccc-333',
+      status: 'killed',
+      phases: [{ title: 'Declared', detail: 'the only one the author wrote down' }],
+      workflowProgress: [
+        { type: 'workflow_phase', index: 1, title: 'Declared' },
+        { type: 'workflow_phase', index: 2, title: 'Undeclared' },
+        agentRow({ agentId: 'a1', phaseIndex: 2, phaseTitle: 'Undeclared', queuedAt: 10 }),
+        agentRow({ agentId: 'a2', phaseIndex: 1, phaseTitle: 'Declared', queuedAt: 20 }),
+      ],
+    });
+    expect(readWorkflowRun(file)?.phases.map((p) => p.title)).toEqual(['Undeclared', 'Declared']);
+  });
+
+  /**
+   * A phase named only by the agents in it still has to appear.
+   *
+   * The `workflow_phase` rows and the agents' own `phaseTitle` are two independent records of the
+   * same fact, and a run that was killed before a phase was registered has the second without the
+   * first. Dropping those agents would lose them from the office entirely.
+   */
+  it('recovers a phase that only the agent rows mention', () => {
+    const { file } = withRun('wf_dddddddd-444', {
+      runId: 'wf_dddddddd-444',
+      status: 'failed',
+      workflowProgress: [agentRow({ agentId: 'orphan', phaseIndex: 7, phaseTitle: 'Unregistered' })],
+    });
+    expect(readWorkflowRun(file)?.phases).toEqual([
+      expect.objectContaining({ index: 7, title: 'Unregistered', order: 0 }),
+    ]);
+  });
+
+  it('names the phase the run was in when it stopped, and leaves it absent once every agent finished', () => {
+    const stalled = withRun('wf_eeeeeeee-555', {
+      runId: 'wf_eeeeeeee-555',
+      status: 'killed',
+      workflowProgress: [
+        agentRow({ agentId: 'a1', phaseIndex: 1, phaseTitle: 'One', state: 'done', queuedAt: 10 }),
+        agentRow({ agentId: 'a2', phaseIndex: 2, phaseTitle: 'Two', state: 'progress', queuedAt: 20 }),
+        agentRow({ agentId: 'a3', phaseIndex: 2, phaseTitle: 'Two', state: 'start', queuedAt: 21 }),
+      ],
+    });
+    // `order` 1 is "Two" — where the run was when it was killed, which is the only moment this
+    // artifact can describe: it is written once, when the run terminates.
+    expect(readWorkflowRun(stalled.file)?.activePhase).toBe(1);
+
+    const finished = withRun('wf_ffffffff-666', {
+      runId: 'wf_ffffffff-666',
+      status: 'completed',
+      workflowProgress: [
+        agentRow({ agentId: 'a1', state: 'done' }),
+        agentRow({ agentId: 'a2', state: 'error', queuedAt: 20 }),
+      ],
+    });
+    // `error` is finished, not stuck. A run where everything reached an end is in no phase at all.
+    expect(readWorkflowRun(finished.file)?.activePhase).toBeUndefined();
+  });
+
+  it('refuses a file past the byte cap rather than parsing it', () => {
+    const { file } = withRun('wf_99999999-777', {
+      runId: 'wf_99999999-777',
+      status: 'completed',
+      // Real run files reach 1.4 MB, almost all of it prompt and result previews. The cap is what
+      // stops one pathological file from being parsed on the hub's event loop.
+      script: 'x'.repeat(MAX_WORKFLOW_BYTES + 1),
+      workflowProgress: [agentRow({})],
+    });
+    expect(readWorkflowRun(file)).toBeUndefined();
+  });
+
+  it('returns nothing for a half-written or malformed file instead of throwing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rt-wf-'));
+    const dir = join(root, 'projects', 'demo', 'fix-sess', 'workflows');
+    mkdirSync(dir, { recursive: true });
+    const torn = join(dir, 'wf_torn-888.json');
+    writeFileSync(torn, '{"runId":"wf_torn-888","workflowProg');
+    expect(readWorkflowRun(torn)).toBeUndefined();
+    expect(readWorkflowRun(join(dir, 'wf_absent-999.json'))).toBeUndefined();
+    // Valid JSON, but nothing that describes a run: no phases, no agents, so nothing to publish.
+    const empty = join(dir, 'wf_empty-000.json');
+    writeFileSync(empty, JSON.stringify({ runId: 'wf_empty-000', status: 'completed' }));
+    expect(readWorkflowRun(empty)).toBeUndefined();
+  });
+
+  it('lists run files with a stamp that changes only when the file does', () => {
+    const { root, file } = withRun('wf_aaaaaaaa-111', {
+      runId: 'wf_aaaaaaaa-111',
+      status: 'completed',
+      workflowProgress: [agentRow({})],
+    });
+    const dir = join(root, 'projects', 'demo', 'fix-sess', 'workflows');
+    // Neither of these is a run file, and both sit in the same directory on a real machine.
+    writeFileSync(join(dir, 'notes.txt'), 'not a run');
+    mkdirSync(join(dir, 'wf_a-dir.json'), { recursive: true });
+
+    const first = workflowRunFiles(root, 'demo', 'fix-sess');
+    expect(first.map((r) => r.file)).toEqual([file]);
+    expect(workflowRunFiles(root, 'demo', 'fix-sess')[0].stamp).toBe(first[0].stamp);
+
+    // The stamp is (mtime, size), so a rewrite that changes neither would be missed — which is
+    // safe here precisely because these files are written exactly once and never edited.
+    writeFileSync(file, JSON.stringify({ runId: 'wf_aaaaaaaa-111', status: 'failed', workflowProgress: [] }));
+    const later = new Date(Date.now() + 5_000);
+    utimesSync(file, later, later);
+    expect(workflowRunFiles(root, 'demo', 'fix-sess')[0].stamp).not.toBe(first[0].stamp);
+  });
+
+  it('returns an empty list when the session has never run a workflow', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rt-wf-'));
+    mkdirSync(join(root, 'projects', 'demo', 'fix-sess'), { recursive: true });
+    expect(workflowRunFiles(root, 'demo', 'fix-sess')).toEqual([]);
   });
 });
 

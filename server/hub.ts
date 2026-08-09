@@ -42,9 +42,11 @@ import {
   agentDirs,
   listSessions,
   readAgentMeta,
+  readWorkflowRun,
   registeredSessions,
   sessionLabel,
   subagentFiles,
+  workflowRunFiles,
   type AgentFile,
 } from './sessions';
 import { Tailer } from './tail';
@@ -263,6 +265,15 @@ type Watch = {
   agents: Map<string, AgentEntry>;
   /** file path → its own Normalizer, so per-file state (agentSeen, model) is not shared. */
   normalizers: Map<string, Normalizer>;
+  /**
+   * Workflow run file → the `(mtime, size)` stamp it was last published from.
+   *
+   * A run file is written exactly once, when the run ends, and never touched again, so this makes
+   * each one parsed once for the lifetime of the watch and every later sweep a stat. That matters:
+   * the sweep runs twice a second per followed session, and these files reach 1.4 MB. A file that
+   * turns out to be unreadable or oversized is stamped too, so a torn write is not retried forever.
+   */
+  workflowSeen: Map<string, string>;
   /**
    * A parent's `Task` tool_use id → the child agent it spawned, once the child's sidecar names
    * it. This is the only link between the two halves of a spawn, and it is what turns the
@@ -610,6 +621,10 @@ export async function startServer(root: string, port: number, opts: HubOptions =
     w.spawnPending.clear();
     w.spawnIds.clear();
     w.spawnDone.clear();
+    // The backlog these were published into has just been declared invalid, so the stamps have to
+    // go too — otherwise every workflow this session ran would be dropped by the reset and never
+    // republished, because the files they came from will never change again.
+    w.workflowSeen.clear();
     // The re-read encounters the same oversized lines and the same catch-up, and will count them
     // again. The counters go back to zero — but *not* silently, which was the mistake: the client's
     // reset handler drops the session's events, not the notice it is showing, so zeroing the
@@ -810,6 +825,42 @@ export async function startServer(root: string, port: number, opts: HubOptions =
       if (metaEvs.length > 0) publish(w, [...metaEvs, ...derive(w, metaEvs)]);
       pump(w, file, entry.agentId);
     }
+
+    syncWorkflows(w);
+  }
+
+  /**
+   * Publishes the phase record of any Workflow run this session has finished since the last sweep.
+   *
+   * The record is the only thing that groups a workflow's agents. `Workflow` is not in
+   * `SPAWN_TOOLS`, so its children never emit `agentSpawn` and nothing else in the stream says
+   * they belong together — they arrive as a dozen unrelated agents with a shared `workflowId` on
+   * their sidecar and no structure at all.
+   *
+   * It is deliberately not live, and cannot be. The file is created at the instant the run
+   * terminates and never before: on 78 real runs its creation time equals its last-write time and
+   * equals the end of the run, in one case 26 minutes after the run began. So this event always
+   * describes a finished run, `activePhase` names where a killed one was cut off, and no amount of
+   * polling would turn it into progress. See `docs/notes/workflow-journal-findings.md`.
+   *
+   * Cost is bounded by the stamp: a run file is written once and never edited, so each is parsed
+   * exactly once and every subsequent sweep is one directory listing plus a stat per run.
+   */
+  function syncWorkflows(w: Watch): void {
+    const out: Ev[] = [];
+    for (const { file, stamp } of workflowRunFiles(root, w.slug, w.sessionId)) {
+      if (w.workflowSeen.get(file) === stamp) continue;
+      const run = readWorkflowRun(file);
+      // Stamped whatever happened. A file that is oversized, torn mid-write or not JSON at all
+      // would otherwise be re-read twice a second for the rest of the session, and a torn write is
+      // the normal way a sweep catches a run that is being recorded right now — it will land again
+      // with different bytes, and the changed stamp is what picks it up.
+      w.workflowSeen.set(file, stamp);
+      if (!run) continue;
+      const { endedAt, ...rest } = run;
+      out.push({ kind: 'workflowPhase', sessionId: w.sessionId, ...rest, ts: endedAt, seq: nextSeq() });
+    }
+    if (out.length > 0) publish(w, out);
   }
 
   /**
@@ -1033,6 +1084,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         forcePolling: false,
         agents: new Map(),
         normalizers: new Map(),
+        workflowSeen: new Map(),
         spawnChild: new Map(),
         spawnPending: new Map(),
         spawnIds: new Set(),

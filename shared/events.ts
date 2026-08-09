@@ -141,6 +141,45 @@ export const verdictOf = (text: string): ToolOutcome | undefined =>
  */
 export type UserSource = 'human' | 'command' | 'hook' | 'reminder' | 'caveat' | 'compaction';
 
+// ------------------------------------------------------------------- workflows
+
+/**
+ * How far one agent of a Workflow run got, as the runtime last observed it.
+ *
+ * `done` and `error` are ends; `start` and `progress` are an agent caught mid-flight, which is
+ * what every agent of a killed run looks like.
+ */
+export type WorkflowAgentState = 'start' | 'progress' | 'done' | 'error';
+
+/** One agent's membership of a phase. `agentId` is the same id every other event refs by. */
+export type WorkflowPhaseAgent = {
+  agentId: string;
+  /** The runtime's own name for the step, e.g. a phase-prefixed slug. Absent if it wrote none. */
+  label?: string;
+  state: WorkflowAgentState;
+  /** 1 unless the runtime retried this step. The label is suffixed on a retry; this is the number. */
+  attempt?: number;
+  /** When the runtime queued the agent — what phase order is derived from. */
+  queuedAt?: number;
+};
+
+/**
+ * One phase of a Workflow run, and the agents that belonged to it.
+ *
+ * `index` and `order` are deliberately two fields. `index` is the runtime's own id for the phase
+ * and is a registration number, not a position in time: on a real 89-agent run the first agent
+ * queued carries `phaseIndex: 2` while the 88 that follow carry `phaseIndex: 1`. `order` is the
+ * position this phase actually ran in, derived from when its agents were queued, and it is the
+ * one to draw with.
+ */
+export type WorkflowPhase = {
+  index: number;
+  title: string;
+  /** 0-based position in the order the phases really ran. */
+  order: number;
+  agents: WorkflowPhaseAgent[];
+};
+
 export type Ev =
   | { kind: 'sessionSeen'; sessionId: string; cwd: string; live: boolean; ts: number; seq: number }
   | ({ kind: 'agentSeen'; ref: AgentRef; ts: number; seq: number } & AgentMeta)
@@ -253,6 +292,44 @@ export type Ev =
       model?: string;
       ts: number;
       seq: number;
+    }
+  /**
+   * The phase structure of one Workflow run: its phases in the order they ran, and which agents
+   * belonged to each.
+   *
+   * Session-wide rather than about one agent, so it carries `sessionId` at the top level like
+   * `sessionSeen` — `evSession` reads it, `evAgent` correctly reports none.
+   *
+   * **This is a record of a finished run, not live progress, and a consumer must not draw it as
+   * one.** The only artifact on disk that describes phases is written once, at the instant the run
+   * terminates: measured on 78 real runs, the file's creation time equals its last-write time and
+   * equals the run's end, up to 26 minutes after the run began. Nothing on disk says which phase a
+   * *running* workflow is in, so this event cannot arrive before the run is over. `status` says how
+   * it ended and `activePhase` says where it was standing when it did.
+   *
+   * `workflowId` matches `AgentMeta.workflowId` on every agent of the run, which is the join: the
+   * office already knows those agents, and `Workflow` is not in `SPAWN_TOOLS`, so this is the only
+   * thing that groups them into anything.
+   */
+  | {
+      kind: 'workflowPhase';
+      sessionId: string;
+      /** The run directory's own name, e.g. `wf_` followed by a short id. */
+      workflowId: string;
+      /** The script's declared name for the workflow, when it declared one. */
+      workflowName?: string;
+      /** `completed`, `failed`, `killed` — whatever the runtime last wrote. Always terminal. */
+      status: string;
+      /** Every phase the run actually had, in the order they ran. */
+      phases: WorkflowPhase[];
+      /**
+       * The `order` of the phase still holding unfinished agents when the run stopped, or absent
+       * when every agent reached an end. On a `killed` run this is where it was cut off.
+       */
+      activePhase?: number;
+      /** When the run ended. */
+      ts: number;
+      seq: number;
     };
 
 export type EvKind = Ev['kind'];
@@ -273,6 +350,7 @@ export const EV_KINDS: readonly EvKind[] = [
   'agentSpawn',
   'agentDone',
   'usage',
+  'workflowPhase',
 ];
 
 const KIND_SET: ReadonlySet<string> = new Set<string>(EV_KINDS);
