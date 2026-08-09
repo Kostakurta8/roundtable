@@ -309,11 +309,20 @@ export type Box = { x: number; y: number; w: number; h: number };
 // ------------------------------------------------------------ static dressing
 
 /** Wall fixtures, in canvas pixels. `y` is the bottom row each one occupies on the wall. */
-const WALL_FIXTURES = {
+/**
+ * Everything hung on the back wall. Exported so a test can ask the room where its pictures are
+ * rather than keeping a second copy of the answer — the board is drawn before the art and loses
+ * silently to anything painted over it, and a duplicated coordinate is how that stops being caught.
+ */
+export const WALL_FIXTURES = {
   windows: [72, 149, 278],
   windowBase: FLOOR_Y - 4,
   art: [
-    { x: 240, y: FLOOR_Y - 12, variant: 0 },
+    // Moved off the whiteboard. At x 240 this picture spanned 229..250 and was painted *after* the
+    // board, so it sat on the last eight columns of the board's surface — exactly the end the tally
+    // is written at. It now hangs on the empty stretch between the third window (which ends at 294)
+    // and the shelf at 385, where it is a picture rather than a smudge on somebody's notes.
+    { x: 330, y: FLOOR_Y - 12, variant: 0 },
     { x: 415, y: FLOOR_Y - 14, variant: 1 },
     { x: 455, y: FLOOR_Y - 10, variant: 2 },
   ],
@@ -359,7 +368,12 @@ type Fixture = {
 };
 
 /** The board's anchor on the back wall: centred at 205, its tray three rows clear of the floor. */
-const BOARD_AT = { cx: 205, yBase: FLOOR_Y - 3 } as const;
+/**
+ * 206, not 205: the board is now as wide as its wall allows, and that wall has one usable centre.
+ * The window casing ends at 166 and the clock face begins at 247, so a 74-wide frame whose tray
+ * overhangs two pixels each side sits at 167..245 with a clear column on either side.
+ */
+const BOARD_AT = { cx: 206, yBase: FLOOR_Y - 3 } as const;
 
 /**
  * The table's anchor, derived from the engine's own table places rather than written down —
@@ -375,8 +389,8 @@ const FIXTURES: Readonly<Record<FixtureName, Fixture>> = {
     // past each end of the frame (`environment.ts:724`, `x0 - 2` by 66) and drops a contact shadow
     // on the row below it (`environment.ts:731`, `y0 + 29`). Both are the board to anyone looking
     // at it, and the tray is the part people reach for.
-    w: 66,
-    h: 30,
+    w: ENV.BOARD_FRAME.trayW,
+    h: ENV.BOARD_FRAME.h,
     paint: (ctx, input) => ENV.drawWhiteboard(ctx, BOARD_AT.cx, BOARD_AT.yBase, boardOf(input)),
   },
   roundtable: {

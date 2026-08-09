@@ -11,7 +11,7 @@ import { asCtx, SoftCtx } from '../scripts/pixpreview';
 import type { ActorState } from '../src/office/engine';
 import { MANAGER_DESK_INDEX, podSeat, SCENE, WAYPOINTS } from '../src/office/engine';
 import { actLine, noteLine, subtreeOf } from '../src/office/PixelOffice';
-import { clockTurn } from '../src/office/pixel/scene';
+import { clockTurn, WALL_FIXTURES } from '../src/office/pixel/scene';
 import {
   blitOf,
   CAM_HOME,
@@ -72,6 +72,43 @@ const inkColumns = (ctx: SoftCtx): number[] => {
   }
   return cols;
 };
+
+describe('the wall the whiteboard hangs on', () => {
+  // The board is drawn *before* the wall art and the clock, so anything that overlaps it wins and
+  // the board loses the columns silently — which is exactly what happened: a picture at x 240 spanned
+  // 229..250 and sat on the last eight columns of the board's surface, the end the tally is written
+  // at. Nobody saw it, because a board that is two-thirds full still looks like a board.
+  //
+  // So this asks the only question that matters and asks it in pixels: does any column carry ink
+  // from two of these three fixtures. The board is now as wide as its wall allows, and the next
+  // person to widen it will be told by this test rather than by the render.
+  const columnsOf = (draw: (c: CanvasRenderingContext2D) => void): Set<number> => {
+    const ctx = new SoftCtx(320, 64);
+    draw(asCtx(ctx));
+    return new Set(inkColumns(ctx));
+  };
+
+  it('fits between the window and the clock without touching either', () => {
+    const window = columnsOf((c) => ENV.drawWindow(c, 149, 44, 0, 0));
+    const board = columnsOf((c) => ENV.drawWhiteboard(c, 206, 44, ['ONE', 'TWO', 'THREE']));
+    const clock = columnsOf((c) => ENV.drawClock(c, 253, 40, 0.21));
+
+    const clash = (a: Set<number>, b: Set<number>): number[] => [...a].filter((x) => b.has(x));
+    expect(clash(board, window), 'the board paints over the window').toEqual([]);
+    expect(clash(board, clock), 'the board paints over the clock').toEqual([]);
+  });
+
+  // A guard on the *reason* the board is 76 wide. If someone moves a picture back over it, the
+  // overlap test above cannot see it — the art is not in that comparison — so this one names it.
+  it('has no wall art hanging over it', () => {
+    const board = columnsOf((c) => ENV.drawWhiteboard(c, 206, 44, ['ONE']));
+    for (const art of WALL_FIXTURES.art) {
+      const cols = columnsOf((c) => ENV.drawWallArt(c, art.x, 44, art.variant));
+      const over = [...cols].filter((x) => board.has(x));
+      expect(over, `wall art at x ${art.x} overlaps the whiteboard`).toEqual([]);
+    }
+  });
+});
 
 describe('the three moments', () => {
   /** The whole buffer as a string — the cheapest way to ask "is this frame the same frame". */

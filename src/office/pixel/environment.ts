@@ -710,9 +710,38 @@ export function drawDoor(ctx: CanvasRenderingContext2D, cx: number, yBase: numbe
  */
 const BOARD_LINE_Y = [4, 10, 16] as const;
 
+/**
+ * The board's outer frame width, and the only number any of its geometry is written in terms of.
+ *
+ * It used to be a literal `62` restated eleven times — the frame, three bevels, the surface, the
+ * paper, its lit lip, two ghost smudges, the marker tray and the contact shadow — each with its own
+ * hand-computed inset. Widening the board meant finding all eleven and getting every offset right,
+ * which is why it stayed narrow. Now every one of them is derived, and the board's width is a
+ * single edit.
+ *
+ * 74 is not a preference, it is the measured maximum, and it was measured by a test rather than by
+ * arithmetic. The wall it hangs on is bounded by the window at x 149, whose casing ends at **166**,
+ * and the clock at x 253, whose face begins at 247. The tray overhangs two pixels past each end of
+ * the frame, so the widest frame that fits is 74, centred at 206: the board occupies 169..243 and
+ * the tray 167..245, one clear column from each neighbour.
+ *
+ * 76 was tried first, from a hand count that put the window's casing at 165. It was wrong by one
+ * column, and `tests/pixel.test.ts` said so — "the board paints over the window: expected [ 166 ]".
+ * That is the whole reason the fit is asserted in pixels instead of being written down here.
+ */
+const BOARD_W = 74;
+
 /** Text inset and the widest a line may be before it is elided. */
 const BOARD_TEXT_X = 6;
-const BOARD_TEXT_W = 50;
+const BOARD_TEXT_W = BOARD_W - BOARD_TEXT_X * 2;
+
+/**
+ * The board's footprint, for whoever hangs a hit target over it.
+ *
+ * The frame is `BOARD_W`; what a person *sees* is four pixels wider, because the marker tray
+ * overhangs both ends — and the tray is the part people reach for.
+ */
+export const BOARD_FRAME = { w: BOARD_W, trayW: BOARD_W + 4, h: 30 } as const;
 
 /**
  * The board's writing area, published so that nothing has to guess at it.
@@ -927,27 +956,28 @@ export function drawWhiteboard(
   yBase: number,
   board: readonly string[] | BoardState,
 ): void {
-  const x0 = Math.round(cx) - 31;
+  const x0 = Math.round(cx) - Math.floor(BOARD_W / 2);
   const y0 = Math.round(yBase) - 29;
   const bare = isLines(board);
   const state: BoardState = bare ? { lines: board } : board;
 
   // frame
-  rect(ctx, x0, y0, 62, 26, PAL.out);
-  rect(ctx, x0 + 1, y0 + 1, 60, 24, PAL.met);
-  rect(ctx, x0 + 1, y0 + 1, 60, 1, PAL.me3);
+  rect(ctx, x0, y0, BOARD_W, 26, PAL.out);
+  rect(ctx, x0 + 1, y0 + 1, BOARD_W - 2, 24, PAL.met);
+  rect(ctx, x0 + 1, y0 + 1, BOARD_W - 2, 1, PAL.me3);
   rect(ctx, x0 + 1, y0 + 1, 1, 24, PAL.me3);
-  rect(ctx, x0 + 1, y0 + 23, 60, 2, PAL.me2);
+  rect(ctx, x0 + 1, y0 + 23, BOARD_W - 2, 2, PAL.me2);
 
   // surface, with a recessed lip
-  rect(ctx, x0 + 3, y0 + 3, 56, 20, PAL.ou2);
-  rect(ctx, x0 + 4, y0 + 4, 54, 18, PAL.pap);
-  rect(ctx, x0 + 4, y0 + 21, 54, 1, PAL.wht);
+  rect(ctx, x0 + 3, y0 + 3, BOARD_W - 6, 20, PAL.ou2);
+  rect(ctx, x0 + 4, y0 + 4, BOARD_W - 8, 18, PAL.pap);
+  rect(ctx, x0 + 4, y0 + 21, BOARD_W - 8, 1, PAL.wht);
 
   // half-wiped ghosting, so the surface is not a blank slab. The lower smudge sits exactly where
-  // the tally goes, and a smear behind a row of status marks reads as dirt on the screen.
-  rect(ctx, x0 + 38, y0 + 6, 16, 3, PAL.pa2, 0.4);
-  if (bare) rect(ctx, x0 + 42, y0 + 16, 12, 2, PAL.pa2, 0.3);
+  // the tally goes, and a smear behind a row of status marks reads as dirt on the screen. Both are
+  // anchored to the right edge rather than to the left, because that is the end they belong to.
+  rect(ctx, x0 + BOARD_W - 38, y0 + 6, 16, 3, PAL.pa2, 0.4);
+  if (bare) rect(ctx, x0 + BOARD_W - 34, y0 + 16, 12, 2, PAL.pa2, 0.3);
 
   const lines = state.lines;
   const nLines = Math.min(lines.length, BOARD_LINE_Y.length);
@@ -1008,14 +1038,14 @@ export function drawWhiteboard(
   }
 
   // marker tray, overhanging both ends, with two pens lying in it
-  rect(ctx, x0 - 2, y0 + 26, 66, 3, PAL.me2);
-  rect(ctx, x0 - 2, y0 + 26, 66, 1, PAL.me3);
-  rect(ctx, x0 - 2, y0 + 28, 66, 1, PAL.out);
+  rect(ctx, x0 - 2, y0 + 26, BOARD_FRAME.trayW, 3, PAL.me2);
+  rect(ctx, x0 - 2, y0 + 26, BOARD_FRAME.trayW, 1, PAL.me3);
+  rect(ctx, x0 - 2, y0 + 28, BOARD_FRAME.trayW, 1, PAL.out);
   rect(ctx, x0 + 8, y0 + 24, 9, 2, PAL.po2);
   rect(ctx, x0 + 8, y0 + 24, 9, 1, PAL.pot);
   rect(ctx, x0 + 21, y0 + 24, 9, 2, PAL.bl2);
   rect(ctx, x0 + 21, y0 + 24, 9, 1, PAL.met);
-  rect(ctx, x0, y0 + 29, 62, 1, PAL.shd, 0.4);
+  rect(ctx, x0, y0 + 29, BOARD_W, 1, PAL.shd, 0.4);
 }
 
 // ---------------------------------------------------------------- wall art
