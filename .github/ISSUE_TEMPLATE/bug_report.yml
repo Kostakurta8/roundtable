@@ -1,0 +1,131 @@
+name: Bug report
+description: Something in the observer does not behave the way it says it does.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time.
+
+        **Please do not paste transcript content.** Roundtable reads your private Claude Code
+        sessions, so a copied feed line, screenshot or hub log can carry a prompt, a file path or a
+        project name you did not mean to publish. Redact before you post — a described symptom is
+        worth more than a leaked one.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, in as much detail as you can without quoting private content.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. npm start
+        2. Run a session that spawns three subagents
+        3. Click the second one in the AGENTS panel
+        4. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: >-
+        Asked first because it is the answer that most often explains the bug. The app has only ever
+        been used on Windows, and two things in `server/hub.ts` branch on the platform.
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other / something else
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: e.g. `Windows 11 26200`, `macOS 15.3`, `Ubuntu 24.04`, `WSL2 Ubuntu 24.04`.
+    validations:
+      required: false
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: The output of `node --version`. The project requires 22.12 or newer.
+      placeholder: v24.14.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: demo
+    attributes:
+      label: Does it still happen with `npm run demo`?
+      description: >-
+        `npm run demo` drives the whole app from a synthetic transcript root in your temp directory
+        and never touches your own `~/.claude`. If the bug reproduces there it is ours and we can
+        chase it without ever seeing your data; if it does not, it is something about the shape of
+        your real sessions, which is just as useful to know and a completely different search.
+      options:
+        - Yes — it reproduces with `npm run demo`
+        - No — only with my own sessions
+        - Not applicable (the bug is in `npm run demo` itself)
+        - I have not tried yet
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-started
+    attributes:
+      label: How did you start it?
+      options:
+        - npm start
+        - npm run dev
+        - npm run demo
+        - npm run desktop (the Windows shortcut)
+        - Something else
+    validations:
+      required: false
+
+  - type: textarea
+    id: hub-log
+    attributes:
+      label: Hub output
+      description: >-
+        Anything the `hub` half printed — lines prefixed `[roundtable]`. Redact paths first.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: browser-console
+    attributes:
+      label: Browser console
+      description: Errors or warnings from the page's devtools console. Redact paths first.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >-
+        Screenshots are welcome and often decisive for a rendering bug — crop out the feed and the
+        session picker, which carry prompt text and project names.
+    validations:
+      required: false

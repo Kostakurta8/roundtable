@@ -1,0 +1,59 @@
+name: Feature request
+description: Something the observer should show, or show better.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two constraints worth knowing before you write, because they rule some ideas out on sight
+        rather than on taste:
+
+        - **It is read-only.** The observer never writes to `~/.claude`, never calls an API and
+          never opens an outbound connection. Anything that would steer a session, edit a
+          transcript, or send data anywhere is out of scope by design — see `SECURITY.md`.
+        - **The room is deterministic.** Rewinding the timeline rebuilds the office by replaying the
+          same events into the same simulation. A feature that depends on randomness, on wall-clock
+          time, or on state the event stream does not carry would break replay, so it needs a design
+          for that up front.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can't you see right now?
+      description: >-
+        The situation, not the solution. "I can't tell which of eight subagents is the one burning
+        the tokens" is more useful than "add a sort button", because it leaves room for a better
+        answer than the one you had in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part does this touch?
+      description: A guess is fine.
+      options:
+        - The room (pixel office, sprites, layout)
+        - The chat feed / agents / tools panels
+        - The timeline and replay
+        - Token and cost accounting
+        - Session discovery, the picker, multi-session tabs
+        - The hub / event stream
+        - Documentation
+        - Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried, or what would you settle for?
+    validations:
+      required: false

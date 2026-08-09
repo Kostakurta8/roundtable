@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The e2e job below is opt-in and runs on this event only.
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer worthless before it arrives.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    # The suite finishes in about fifteen seconds on a developer machine. What this bound is really
+    # for is the hub: it is a file watcher, and a watcher that never sees the event it is waiting
+    # for does not fail, it waits. Ten minutes is far more than the work needs and far less than a
+    # hung watcher would otherwise cost.
+    timeout-minutes: 10
+
+    strategy:
+      # The entire point of this matrix is to find out which platforms work — the app has only ever
+      # been run on Windows. Cancelling the other five jobs the moment one fails would answer that
+      # question for exactly one of them.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # `engines.node` is >=22.12, so 22 is the floor and 24 is what the author runs.
+        node: ['22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # Binds nothing. Every hub test starts its own in-process server on an ephemeral port and
+      # points it at a per-test `ROUNDTABLE_HOME`, so nothing here touches a real `~/.claude` or a
+      # fixed port.
+      - name: Unit tests
+        run: npm test
+
+      # There is no `build` script — the client is a plain Vite app and this is the only step that
+      # compiles it the way a user would receive it. A type error `tsc` tolerates but the bundler
+      # does not (or vice versa) shows up here and nowhere else.
+      - name: Build
+        run: npx vite build
+
+  e2e:
+    name: e2e (opt-in, unproven in CI)
+    # Manual only, deliberately. Honest statement of what is known about this job:
+    #
+    #   * The Playwright suite has only ever been run on Windows, against a locally installed
+    #     Chromium, by a human watching it. It has never been run on a CI runner at all, so
+    #     nothing here is evidence that it passes headless on Linux — treat a green result as the
+    #     first data point and a red one as equally likely to be the harness as the app.
+    #   * It binds 5173 (Vite, `strictPort`) and 7411 (an in-process hub started inside the spec),
+    #     which is why it cannot share a runner with anything else and why it is not in the matrix.
+    #   * `playwright.config.ts` sets `reuseExistingServer: !process.env.CI`, so on a runner it
+    #     starts its own Vite rather than adopting a stray one.
+    #   * The spec forces `usePolling: true` on the watcher, so even a green run says nothing about
+    #     the `fs.watch` path that Linux and macOS use by default.
+    #
+    # Run it from the Actions tab when you want that first data point.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # `--with-deps` pulls the system libraries a headless Chromium needs on a bare Ubuntu image.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright
+        run: npm run e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-artifacts
+          path: e2e/artifacts
+          retention-days: 7
+          if-no-files-found: ignore

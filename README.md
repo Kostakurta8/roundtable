@@ -1,11 +1,33 @@
 # Roundtable
 
-Watch your Claude Code sessions as an office. Every agent is a person at a desk: they think, run
-tools, walk over to each other to deliver a result, argue about a verdict, and walk out through the
-door when they finish. The same events are in a group chat beside the room, in words.
+[![CI](https://github.com/Kostakurta8/roundtable/actions/workflows/ci.yml/badge.svg)](https://github.com/Kostakurta8/roundtable/actions/workflows/ci.yml)
 
-It is **read-only**. It watches the transcript files Claude Code already writes under `~/.claude`
-and never writes to them, never talks to the API, and never leaves your machine.
+A read-only observer for Claude Code. It tails the JSONL transcripts the CLI already writes under
+`~/.claude` and draws the session as a live pixel-art office: every agent is a person at a desk who
+thinks, runs tools, walks over to somebody to deliver a result, argues about a verdict, and walks
+out through the door when they finish. The same events are in a group chat beside the room, in
+words.
+
+Three things it does that a session viewer usually does not:
+
+- **Deterministic replay.** Click any second on the timeline and the room rebuilds exactly as it
+  stood — the same events replayed into the same simulation, not an approximation of it.
+- **Per-agent token and cost accounting.** Every agent carries its own token total, cache included,
+  and a cost estimate from published list prices.
+- **Strictly read-only.** It never writes to `~/.claude`, never calls an API, and opens no outbound
+  connection at all. `SECURITY.md` names the file and the mechanism behind each of those — and the
+  residual risks they do not cover.
+
+It is for anyone who runs Claude Code with subagents and wants to see what the fan-out is actually
+doing: who is working, who is waiting, and who is spending the tokens.
+
+```
+npm install
+npm start
+```
+
+Node 22.12 or newer. Written and used on Windows — see [Platforms](#platforms) before you assume
+anything about the other two.
 
 ### See it first
 
@@ -21,13 +43,8 @@ synthetic, so that no private session appears in it. `scripts/promo/` is the har
 
 ![the office, in daylight](media/screenshot-day.png)
 
-```
-npm install
-npm start
-```
-
-That is the whole thing. It opens `http://localhost:5173` and starts showing whatever session ran
-most recently. If you have a session running right now, you are watching it live.
+`npm start` is the whole thing. It opens `http://localhost:5173` and starts showing whatever
+session ran most recently. If you have a session running right now, you are watching it live.
 
 ### If you don't have Claude Code, or nothing is running
 
@@ -46,7 +63,26 @@ same watcher, parser, normalizer, socket and store as a real session, and the hu
 at its shipped defaults. It never reads your own `~/.claude`, so no prompt, path or project name of
 yours can appear in it. `Ctrl+C` deletes the staged root on the way out.
 
-### The desktop icon
+## Platforms
+
+Node **22.12 or newer**. Beyond that, the honest position:
+
+| | |
+|---|---|
+| **Windows** | where it was written and where it has actually been used |
+| **macOS**, **Linux** | CI runs the type check, the unit suite and the production build on both, on Node 22 and 24. Nobody has reported opening the room on either. |
+
+Those are different claims and the difference matters. A green CI badge says the code compiles and
+the suite passes on all three; it is not a report from somebody who watched the office draw itself.
+Two things in `server/hub.ts` branch on the platform — path comparison is case-insensitive on
+Windows, and the file watcher polls there by default, because `fs.watch` is least reliable across
+Windows drive types. Every unit test forces polling on, so the `fs.watch` path that macOS and Linux
+use by default is precisely the thing the matrix does *not* exercise.
+
+If you run it on macOS or Linux, an issue saying what happened is genuinely useful — working or
+not. That is the gap.
+
+### The desktop icon — Windows only
 
 ```
 npm run desktop
@@ -55,6 +91,11 @@ npm run desktop
 Puts a **Claude Agents** shortcut on the Desktop. Clicking it starts the observer if it is not
 already up, opens the room in your browser, brings Claude Code up to date, and hands the window over
 to a Claude session — so one click gets you both halves of what you were going to open anyway.
+
+This one is Windows-only and not portable in principle: it writes a `.lnk` through the
+`WScript.Shell` COM object and points it at `pwsh` through the WindowsApps execution alias. There is
+no macOS or Linux equivalent, and nothing else needs one — `npm start` is the way in on every
+platform.
 
 Clicking it twice is safe: the servers are only started when nothing is listening on their ports, so
 a second click just opens another tab and another session. The servers get their own minimized
@@ -179,8 +220,9 @@ says so rather than quietly showing you less than there is.
 
 ```
 npm run dev          # same as start, without opening a browser
-npm test             # 376 unit tests
+npm test             # the unit suite — ~15s, binds nothing
 npx tsc --noEmit     # types
+npx vite build       # the client, built the way a user would get it
 npm run e2e          # Playwright — needs 7411 and 5173 free, so stop `npm start` first
 npm run room         # render the office to .preview/room-{day,night,spawn}.png
 npm run room:bless   # accept a deliberate visual change as the new baseline
@@ -188,6 +230,16 @@ npm run room:bless   # accept a deliberate visual change as the new baseline
 
 `npm run e2e` starts its own hub on 7411, so it cannot run at the same time as the app. Stop the app
 by **port**, not by killing the `npm` wrapper — the two servers outlive it.
+
+`npm run room:bless` rewrites the visual baseline that `tests/room.test.ts` hashes against. **Look
+at the PNGs before you bless them** — a hash can tell you the room changed, never that it is still
+right, and blessing without looking turns a regression into the baseline. `CONTRIBUTING.md` has the
+rest of the loop, and `docs/pixel-contract.md` is binding for anything under `src/office/pixel/`.
+
+CI (`.github/workflows/ci.yml`) runs the typecheck, the unit tests and the build on Ubuntu, macOS
+and Windows × Node 22 and 24 for every push to `main` and every pull request. The Playwright job is
+manual-only and has never been observed to pass on a runner; the workflow says so where it is
+defined rather than leaving you to find out.
 
 Architecture, in one paragraph: `server/tail.ts` tails each JSONL file by byte offset →
 `server/parse.ts` tolerantly parses a line → `server/normalize.ts` turns it into typed events →
@@ -198,4 +250,14 @@ turns the same events into commands for the deterministic simulation in `src/off
 which `src/office/pixel/scene.ts` paints into a 480×270 buffer. `shared/` holds the wire types and
 is the only thing both halves import.
 
-`docs/pixel-contract.md` is binding for anything under `src/office/pixel/`.
+---
+
+## The rest of it
+
+| | |
+|---|---|
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to run it, the checks, the visual-regression loop, and what will get a PR sent back |
+| [`SECURITY.md`](SECURITY.md) | what "read-only" is enforced by, file and mechanism — and the residual risks, including the one the `Origin` gate deliberately leaves open |
+| [`CHANGELOG.md`](CHANGELOG.md) | everything so far, as one unreleased `0.1.0` |
+| [`docs/pixel-contract.md`](docs/pixel-contract.md) | binding for anything under `src/office/pixel/` |
+| [`LICENSE`](LICENSE) | MIT |
