@@ -1361,80 +1361,14 @@ export function drawLoungeTable(
   rect(ctx, mx - 2, cy - 1, 2, 1, PAL.wdd, 0.7); // what is in it
 }
 
-/** The stool's real footprint. A task chair is 18 x 20; this is deliberately half its height. */
-export const STOOL = { w: 9, h: 11 } as const;
-
-/** One splayed leg: a stepped run from `xTop` to `xBot`, lit on its left, footed on the floor. */
-function stoolLeg(
-  ctx: CanvasRenderingContext2D,
-  xTop: number,
-  xBot: number,
-  yTop: number,
-  yBase: number,
-): void {
-  const n = yBase - yTop;
-  let x = xTop;
-  for (let i = 0; i < n; i++) {
-    x = Math.round(xTop + ((xBot - xTop) * i) / (n - 1));
-    rect(ctx, x, yTop + i, 1, 1, PAL.me3);
-    rect(ctx, x + 1, yTop + i, 1, 1, PAL.out);
-  }
-  rect(ctx, x, yBase, 2, 1, PAL.out);
-}
-
-/**
- * A backless stool.
- *
- * `view` changes the leg spread and nothing else. A round pad has no front and no back — turning
- * one would be a lie the sprite cannot tell at nine pixels — but the *frame* under it does read
- * differently: seen square-on the legs splay wide and you see the footrest ring across them, seen
- * from the side they collapse toward each other and the ring shortens to a stub. That is the whole
- * difference, and it is enough, because a stool's silhouette is its legs.
+/*
+ * There was a `drawStool` here — pad, splayed legs, footrest ring, nine pixels wide — with its own
+ * `STOOL` footprint and a preview cell beside the task chairs. Nothing ever drew it. The break
+ * corner's stools are drawn by `characters.ts`, because a person perched on one is a single sprite
+ * from the hips down: `scene.ts` says so where it lays the corner out, and a stool drawn under a
+ * perched figure put two of them in the same nine pixels. A second, unused stool in a second module
+ * is not a spare — it is the one the next person will fix instead of the one that ships.
  */
-export function drawStool(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  yBase: number,
-  view: 'front' | 'side',
-): void {
-  const y0 = yBase - STOOL.h + 1;
-  const wide = view === 'front';
-  const legTop = y0 + 5;
-
-  contact(ctx, cx, yBase, STOOL.w);
-
-  // The far leg, drawn first and kept dark — it is the pixel that stops four legs reading as two.
-  rect(ctx, cx - 1, legTop, 2, yBase - legTop, PAL.me2);
-  rect(ctx, cx, legTop, 1, yBase - legTop, PAL.out);
-
-  const spread = wide ? 3 : 1;
-  stoolLeg(ctx, cx - 3, cx - 3 - spread, legTop, yBase);
-  stoolLeg(ctx, cx + 2, cx + 2 + spread, legTop, yBase);
-
-  // The footrest ring, two rows above the floor and only as wide as the legs are at that height.
-  const ringY = yBase - 3;
-  const ringHalf = wide ? 4 : 3;
-  rect(ctx, cx - ringHalf, ringY, ringHalf * 2 + 1, 1, PAL.me3);
-  rect(ctx, cx - ringHalf, ringY + 1, ringHalf * 2 + 1, 1, PAL.out);
-
-  // The pad: six rows that widen and then narrow again, so it reads round rather than square.
-  rect(ctx, cx - 2, y0, 5, 1, PAL.out);
-  rect(ctx, cx - 3, y0 + 1, 7, 1, PAL.wdd);
-  rect(ctx, cx - 4, y0 + 2, 9, 1, PAL.wdt);
-  rect(ctx, cx - 4, y0 + 3, 9, 1, PAL.wdl); // lit near edge
-  rect(ctx, cx - 3, y0 + 4, 7, 1, PAL.wdf);
-  rect(ctx, cx - 2, y0 + 5, 5, 1, PAL.out);
-  for (const [ry, rw] of [
-    [y0 + 1, 7],
-    [y0 + 2, 9],
-    [y0 + 3, 9],
-    [y0 + 4, 7],
-  ] as const) {
-    const rx0 = cx - ((rw - 1) >> 1);
-    rect(ctx, rx0, ry, 1, 1, PAL.out);
-    rect(ctx, rx0 + rw - 1, ry, 1, 1, PAL.out);
-  }
-}
 
 /** The couch's real footprint: 34 wide, 18 tall, feet included. */
 export const COUCH = { w: 34, h: 18 } as const;
@@ -1594,10 +1528,6 @@ export const PREVIEW: PreviewItem[] = [
   { name: 'chair-bk', w: 24, h: 22, draw: (c) => drawChair(c, 12, 20, 'back', 0) },
   { name: 'chair-fr', w: 24, h: 22, draw: (c) => drawChair(c, 12, 20, 'front', 0) },
   { name: 'chair-sd', w: 24, h: 22, draw: (c) => drawChair(c, 12, 20, 'side', 0) },
-  // The stools sit between the chairs on purpose: same cell, same floor line. A break-corner stool
-  // that comes up to a task chair's headrest is not a stool, and this is where that shows.
-  { name: 'stool-fr', w: 24, h: 22, draw: (c) => drawStool(c, 12, 20, 'front') },
-  { name: 'stool-sd', w: 24, h: 22, draw: (c) => drawStool(c, 12, 20, 'side') },
   // Pushed in, against the same floor line, so the three-pixel step back is measurable here.
   { name: 'chair-in', w: 24, h: 22, draw: (c) => drawChair(c, 12, 20, 'back', 0, true) },
   {
@@ -1699,18 +1629,6 @@ export const PREVIEW: PreviewItem[] = [
   { name: 'lounge', w: 26, h: 20, draw: (c) => drawLoungeTable(c, 13, 18) },
   { name: 'couch', w: 38, h: 22, draw: (c) => drawCouch(c, 19, 20) },
   { name: 'ash', w: 13, h: 18, draw: (c) => drawAshStand(c, 6, 16) },
-  // The lounge table with a stool at it, so the seat height can be read against the top.
-  {
-    name: 'lounge-set',
-    w: 40,
-    h: 20,
-    draw: (c) => {
-      drawStool(c, 6, 18, 'side');
-      drawLoungeTable(c, 19, 18);
-      drawStool(c, 33, 18, 'front');
-    },
-  },
-
   { name: 'counter48', w: 52, h: 27, draw: (c) => drawCounter(c, 26, 25, 48) },
   { name: 'counter80', w: 84, h: 27, draw: (c) => drawCounter(c, 42, 25, 80) },
   { name: 'fridge', w: 26, h: 45, draw: (c) => drawFridge(c, 13, 43) },

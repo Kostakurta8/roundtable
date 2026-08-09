@@ -40,7 +40,19 @@ import { Engine, type ActorState } from './engine';
 import { mapEvent } from './mapping';
 import { Recorder, Replay } from './replay';
 import { PAL, PIX } from './pixel/art';
-import { fixtureBox, Scene, type Box, type Ghost, type SceneAgent } from './pixel/scene';
+import { CEILING_H, fixtureBox, Scene, type Box, type Ghost, type SceneAgent } from './pixel/scene';
+import {
+  blitOf,
+  CAM_HOME,
+  clampCam,
+  headroomBlits,
+  toBuffer,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  type Blit,
+  type Cam,
+  type Geo,
+} from './pixel/stage';
 import './pixel.css';
 
 /**
@@ -55,10 +67,6 @@ const MAX_FRAME_MS = 100;
  * completes inside one step, so people appear at their desks rather than gliding there.
  */
 const SETTLE_TICK_MS = 500;
-
-/** Zoom limits for the camera. 1 is the whole room; past 3 a pixel is the size of a word. */
-export const ZOOM_MIN = 1;
-export const ZOOM_MAX = 3;
 
 /** One notch of wheel, and the coarser step the keyboard and the buttons take. */
 const WHEEL_STEP = 1.12;
@@ -263,102 +271,14 @@ export function useOffice(): OfficeFeed {
 const sameIds = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((id, i) => id === b[i]);
 
-// ------------------------------------------------------------------- camera
-
-export type Cam = { x: number; y: number; z: number };
-
-export const CAM_HOME: Cam = { x: PIX.w / 2, y: PIX.h / 2, z: 1 };
-
-/**
- * Keeps the view inside the buffer, so the camera can never show the void past the room.
- *
- * The invariant, and the thing worth asserting rather than the arithmetic: the window
- * `[x - halfW, x + halfW]` by `[y - halfH, y + halfH]` lies wholly inside the buffer, at every
- * zoom. At `ZOOM_MIN` the half-extents *are* the buffer's own, so the room's centre is the only
- * legal camera and every pan is a no-op — which is why pointing the camera at a fresh selection
- * appears to do nothing until somebody has zoomed in.
+/*
+ * The camera, the blit, its inverse and the strip above the room all moved to
+ * `./pixel/stage.ts`. Not for tidiness: this file imports a stylesheet, so nothing inside it can be
+ * loaded by the offline renderer that writes the review PNGs — and the arithmetic that decides
+ * where the room lands on a screen is exactly the arithmetic a rendered picture is evidence about.
+ * The strip above the ceiling was wrong for as long as it was, in part, because no sheet could show
+ * it. Everything below still reads those functions; none of it owns them.
  */
-export function clampCam(cam: Cam): Cam {
-  const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, cam.z));
-  const halfW = PIX.w / z / 2;
-  const halfH = PIX.h / z / 2;
-  return {
-    z,
-    x: Math.min(PIX.w - halfW, Math.max(halfW, cam.x)),
-    y: Math.min(PIX.h - halfH, Math.max(halfH, cam.y)),
-  };
-}
-
-/** The stage, as the blit needs to know it: CSS pixels, device ratio, and the rail's bite. */
-export type Geo = { w: number; h: number; dpr: number; insetLeft: number };
-
-/**
- * Where the buffer lands on the canvas, and at what magnification.
- *
- * Everything that has to agree about where a buffer pixel is on screen goes through here: the
- * `drawImage` call, the DOM layer laid over it, the fixtures, the hover card, and the inverse used
- * to zoom about the cursor. `px` is buffer pixels to CSS pixels, and `dx`/`dy` are the room's top
- * left corner in CSS pixels relative to the stage — the two numbers every placement needs.
- */
-export type Blit = {
-  viewW: number;
-  viewH: number;
-  scale: number;
-  destW: number;
-  destH: number;
-  destX: number;
-  destY: number;
-  srcX: number;
-  srcY: number;
-  px: number;
-  dx: number;
-  dy: number;
-};
-
-export function blitOf(cam: Cam, g: Geo): Blit {
-  const usableW = Math.max(g.w * 0.55, g.w - g.insetLeft);
-  const viewW = PIX.w / cam.z;
-  const viewH = PIX.h / cam.z;
-  const scale = Math.min((usableW * g.dpr) / viewW, (g.h * g.dpr) / viewH);
-  const destW = viewW * scale;
-  const destH = viewH * scale;
-  const destX = Math.round((g.w * g.dpr - g.insetLeft * g.dpr - destW) / 2 + g.insetLeft * g.dpr);
-  // Bottom-aligned: the stage is usually wider than 16:9, and leaving the band above the
-  // ceiling reads as a taller room, where leaving it below the floor is a visible seam.
-  const destY = Math.round(g.h * g.dpr - destH);
-  // The source origin is snapped to whole buffer pixels: a fractional source offset resamples
-  // the whole room every frame and the art shimmers as the camera eases.
-  const srcX = Math.round(cam.x - viewW / 2);
-  const srcY = Math.round(cam.y - viewH / 2);
-  return {
-    viewW,
-    viewH,
-    scale,
-    destW,
-    destH,
-    destX,
-    destY,
-    srcX,
-    srcY,
-    px: scale / g.dpr,
-    dx: destX / g.dpr,
-    dy: destY / g.dpr,
-  };
-}
-
-/**
- * A point on the stage, in CSS pixels from its top left, as a point in the buffer.
- *
- * The exact inverse of the placement every mark, fixture and hover card is written by —
- * `b.dx + (v - b.srcX) * b.px` — and the only reason that is safe to say is that
- * `tests/pixel.test.ts` round-trips the two against each other over a spread of cameras, zooms,
- * device ratios and rail insets. Both directions read the *derived* fields (`srcX`, `dx`, `px`)
- * rather than re-deriving them from the camera, which is what makes an inverse possible at all.
- */
-export const toBuffer = (b: Blit, x: number, y: number): { x: number; y: number } => ({
-  x: b.srcX + (x - b.dx) / b.px,
-  y: b.srcY + (y - b.dy) / b.px,
-});
 
 // -------------------------------------------------------- the imperative layer
 
@@ -387,7 +307,7 @@ type Wrote = {
 
 const wrote = new WeakMap<HTMLElement, Wrote>();
 
-function wroteOf(el: HTMLElement): Wrote {
+export function wroteOf(el: HTMLElement): Wrote {
   let w = wrote.get(el);
   if (!w) {
     w = { t: '', w: -1, h: -1, z: -1, label: '' };
@@ -396,8 +316,14 @@ function wroteOf(el: HTMLElement): Wrote {
   return w;
 }
 
-/** Moves a mark over its box in the buffer, writing only what actually changed. */
-function place(el: HTMLElement, box: Box, b: Blit): Wrote {
+/**
+ * Moves a mark over its box in the buffer, writing only what actually changed.
+ *
+ * Exported for `tests/dom.test.ts`, which is the only cheap place the accessibility layer is
+ * asserted: the Playwright test that fires `elementFromPoint` at an actor proves the same thing,
+ * but the e2e job is manual-only in CI, so on an ordinary push this is the coverage.
+ */
+export function place(el: HTMLElement, box: Box, b: Blit): Wrote {
   const w = wroteOf(el);
   const left = Math.round(b.dx + (box.x - b.srcX) * b.px);
   const top = Math.round(b.dy + (box.y - b.srcY) * b.px);
@@ -432,7 +358,7 @@ function place(el: HTMLElement, box: Box, b: Blit): Wrote {
 }
 
 /** Writes a bubble's text without re-rendering: `on` is what the e2e and the reader both read. */
-function setBubble(w: Wrote, cls: 'say' | 'think', text: string | undefined): void {
+export function setBubble(w: Wrote, cls: 'say' | 'think', text: string | undefined): void {
   const el = cls === 'say' ? w.bubbles?.say : w.bubbles?.think;
   if (!el) return;
   const on = text !== undefined;
@@ -554,6 +480,17 @@ export const PixelOffice = memo(function PixelOffice({
   // restarts the loop — a restarted loop drops the frame delta and jolts the room.
   const scene = useRef<Scene | null>(null);
   const buffer = useRef<HTMLCanvasElement | null>(null);
+  /**
+   * The ceiling, on its own small buffer: the room continued past its own first row.
+   *
+   * A second canvas rather than a taller first one, because the room's coordinate space is load
+   * bearing. `toBuffer` inverts a placement written in it, `clampCam` bounds a camera written in
+   * it, and every box the scene publishes is measured in it — growing the buffer upward would move
+   * the origin and quietly invalidate all three. Rows above the room have no coordinates anybody
+   * needs, so they get a buffer of their own and are blitted with the same scale, which is what
+   * keeps their pixel grid on the room's.
+   */
+  const ceiling = useRef<HTMLCanvasElement | null>(null);
   const cam = useRef<Cam>({ ...CAM_HOME });
   const camWant = useRef<Cam>({ ...CAM_HOME });
   /** The stage's own measurements, so the handlers can invert the blit without the loop. */
@@ -650,12 +587,20 @@ export const PixelOffice = memo(function PixelOffice({
       c.height = PIX.h;
       return c;
     })();
+    ceiling.current ??= (() => {
+      const c = document.createElement('canvas');
+      c.width = PIX.w;
+      c.height = CEILING_H;
+      return c;
+    })();
     scene.current ??= new Scene();
 
     const ctx = canvas.getContext('2d');
     const bctx = buffer.current.getContext('2d');
-    if (!ctx || !bctx) return;
+    const cctx = ceiling.current.getContext('2d');
+    if (!ctx || !bctx || !cctx) return;
     bctx.imageSmoothingEnabled = false;
+    cctx.imageSmoothingEnabled = false;
 
     let size = { w: 0, h: 0, dpr: 1 };
     const measure = (): void => {
@@ -845,28 +790,26 @@ export const PixelOffice = memo(function PixelOffice({
       g.insetLeft = cur.insetLeft;
       const b = blitOf(cl, g);
 
-      // The surround is the wall's own darkest tone, not black. The stage is usually taller than
-      // 16:9, so there is always a band above the room; painted black it framed the office like a
-      // photograph pinned to a void, and painted as wall it reads as a room that carries on past
-      // the edge of what you can see.
+      // The surround — the gutters either side of the room when the stage is *shorter* than 16:9 —
+      // is the wall's own darkest tone rather than black. Nothing in this room is black.
       ctx.fillStyle = PAL.wa3;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      // The stage is taller than the room's 16:9, so there is nearly always a band above the wall.
-      // Painting it as a ceiling — three hard bands darkening upward, each snapped to a whole
-      // multiple of the blit scale so the steps land on the same pixel grid as the art — turns
-      // dead space into headroom instead of framing the office against a void.
-      if (b.destY > 0) {
-        const step = Math.max(1, Math.round(b.scale)) * 2;
-        const snap = (v: number): number => Math.round(v / step) * step;
-        // Darkest at the top, and it has to be written in that order: `PAL.shd` (#0d1017) is
-        // darker than `PAL.out` (#141821), so painting `shd` over the top half and `out` over the
-        // top quarter put the darkest band in the *middle* of the ceiling and lightened again
-        // above it. The bands read as a void rather than as headroom for exactly that reason —
-        // nothing in a room gets darker halfway up and brighter again at the top.
-        ctx.fillStyle = PAL.out;
-        ctx.fillRect(0, 0, canvas.width, snap(b.destY / 2));
-        ctx.fillStyle = PAL.shd;
-        ctx.fillRect(0, 0, canvas.width, snap(b.destY / 4));
+
+      // The strip above the room, which bottom-alignment leaves and the rail guarantees. It used to
+      // be filled with `PAL.out` and `PAL.shd` — the near-blacks the art draws outlines with — on
+      // the theory that space above the ceiling reads as a taller room. The theory is right; those
+      // two colours are not a room. It is now the room's own ceiling: real buffer rows wherever the
+      // camera has any above the view, and the ceiling strip above those.
+      const pieces = headroomBlits(b, CEILING_H);
+      if (pieces.length > 0) {
+        // Repainted only when some of the strip is actually ceiling. A stage with no headroom at
+        // all costs nothing, and neither does one zoomed far enough in that the strip is filled
+        // with room — which is the case a viewer looking closely at somebody is in.
+        if (pieces.some((p) => p.from === 'ceiling')) scene.current!.paintCeiling(cctx);
+        for (const p of pieces) {
+          const src = p.from === 'room' ? buffer.current! : ceiling.current!;
+          ctx.drawImage(src, p.sx, p.sy, p.sw, p.sh, p.dx, p.dy, p.dw, p.dh);
+        }
       }
       ctx.drawImage(buffer.current!, b.srcX, b.srcY, b.viewW, b.viewH, b.destX, b.destY, b.destW, b.destH);
 

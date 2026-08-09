@@ -101,6 +101,48 @@ export class SoftCtx {
 /** A `SoftCtx` typed as the real thing, for calling code that wants the DOM signature. */
 export const asCtx = (c: SoftCtx): CanvasRenderingContext2D => c as unknown as CanvasRenderingContext2D;
 
+/**
+ * `drawImage`'s nine-argument form, nearest-neighbour, over two software canvases.
+ *
+ * The renderer scales the room onto the stage with `imageSmoothingEnabled = false`, which is
+ * nearest-neighbour sampling of the source rectangle — so this is not an approximation of what the
+ * browser does, it is the same rule. Source pixels outside the buffer are skipped rather than
+ * clamped: a blit that asks for rows the source does not have should leave a hole a reviewer can
+ * see, not repeat the edge and look plausible.
+ */
+export function blit(
+  dst: SoftCtx,
+  src: SoftCtx,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+): void {
+  if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+  const x0 = Math.max(0, Math.round(dx));
+  const y0 = Math.max(0, Math.round(dy));
+  const x1 = Math.min(dst.width, Math.round(dx + dw));
+  const y1 = Math.min(dst.height, Math.round(dy + dh));
+  for (let py = y0; py < y1; py++) {
+    const v = Math.floor(sy + ((py + 0.5 - dy) / dh) * sh);
+    if (v < 0 || v >= src.height) continue;
+    for (let px = x0; px < x1; px++) {
+      const u = Math.floor(sx + ((px + 0.5 - dx) / dw) * sw);
+      if (u < 0 || u >= src.width) continue;
+      const si = (v * src.width + u) * 4;
+      const di = (py * dst.width + px) * 4;
+      dst.data[di] = src.data[si];
+      dst.data[di + 1] = src.data[si + 1];
+      dst.data[di + 2] = src.data[si + 2];
+      dst.data[di + 3] = src.data[si + 3];
+    }
+  }
+}
+
 // --------------------------------------------------------------- PNG
 
 function crc32(buf: Uint8Array): number {

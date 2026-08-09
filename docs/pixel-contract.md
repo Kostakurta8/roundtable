@@ -126,8 +126,8 @@ constants in canvas pixels:
 |---|---|
 | canvas | 480 × 270 |
 | wall band | y 0 … 38 (`WALL_H`), floor from 38 down |
-| pod seats (4) | (79, 92) (146, 92) (79, 173) (146, 173) |
-| pod row pitch | 27 |
+| pod seats (12) | x 110, 163, 378, 440 × y 100, 156, 212 — derive from `WAYPOINTS.podSeats`, never from this row |
+| ceiling strip | 72 rows above the buffer's first row (`stage.ts`) — drawn, not letterboxed |
 | manager seat | (293, 87) |
 | coffee machine | (31, 68) |
 | roundtable centre | (305, 190) |

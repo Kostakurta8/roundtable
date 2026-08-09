@@ -19,6 +19,16 @@
  * The engine's 1600x900 basis maps to the buffer by a flat x0.3 — `SCENE.w * S === PIX.w` exactly,
  * so a scene coordinate is a canvas coordinate without a special case anywhere.
  */
+/**
+ * The seed an agent's face and blink rhythm come from — **the same hash the store picks its shirt
+ * with**, not a copy of it.
+ *
+ * This file used to carry its own byte-identical FNV-1a. Identical today is not identical after
+ * somebody improves one of them, and the two halves of one agent's appearance are chosen on
+ * opposite sides of the app: the shirt in `src/store.ts`, the face and the blink here. Drift would
+ * hand one agent two appearances that disagree, with no error and nothing to grep for.
+ */
+import { hash } from '../../../shared/hash';
 import {
   LINK_MS,
   MANAGER_DESK_INDEX,
@@ -37,6 +47,20 @@ import * as PR from './props';
 
 /** Scene basis to canvas pixels. Exactly 0.3, and exactly 480x270 out of 1600x900. */
 export const S = PIX.w / SCENE.w;
+
+/**
+ * How many rows of room there are above the buffer's first one, for the strip of stage the room
+ * does not fill. Re-exported so the renderer sizes that buffer from the art rather than from a
+ * number of its own.
+ */
+export const CEILING_H = ENV.CEILING_H;
+
+/**
+ * How hard the room's corners are darkened — and, because the ceiling strip is a separate buffer
+ * that has to meet the room's first row without a seam, how hard the strip's are. One number, used
+ * twice, rather than two that agree until somebody tunes one of them.
+ */
+const VIGNETTE = 0.3;
 
 const sx = (v: number): number => v * S;
 const sy = (v: number): number => v * S;
@@ -223,16 +247,6 @@ type Mem = {
   hairStyle: number;
 };
 
-/** FNV-1a over the id: a stable seed, so an agent keeps its face and its blink rhythm. */
-function hash(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
-
 /** A drawable deferred until the whole floor layer can be sorted by the row it stands on. */
 type Layered = { y: number; draw: () => void };
 
@@ -319,6 +333,16 @@ const FIXTURES: Readonly<Record<FixtureName, Fixture>> = {
     paint: (ctx) => FUR.drawRoundtable(ctx, TABLE_AT.cx, TABLE_AT.yBase),
   },
 };
+
+/**
+ * The columns the pendant lamps hang on.
+ *
+ * Exported because two things outside this file have to talk about them and neither may guess: the
+ * ceiling strip blooms above each one, and the check that the strip meets the room without a seam
+ * has to know which columns are allowed to disagree — a canopy plate is bolted to the ceiling at
+ * the room's own first row, so of course it differs from the ceiling around it.
+ */
+export const LAMP_COLUMNS: readonly number[] = WALL_FIXTURES.lamps;
 
 /** Every fixture there is, so nothing downstream has to enumerate them by hand. */
 export const FIXTURE_NAMES = Object.keys(FIXTURES) as readonly FixtureName[];
@@ -555,9 +579,26 @@ export class Scene {
 
     // --- grade ----------------------------------------------------------------------
     FX.nightGrade(ctx, night);
-    FX.vignette(ctx, 0.3);
+    FX.vignette(ctx, VIGNETTE);
 
     if (input.ghosts.length > 0) this.ghostDeck(ctx, input, t);
+  }
+
+  /**
+   * The ceiling strip, into a buffer of its own: `CEILING_H` rows whose last one abuts the room's
+   * first.
+   *
+   * The renderer bottom-aligns a 16:9 room on a stage that is taller than that, and the strip left
+   * over across the top used to be painted in the two near-blacks the art outlines with — so what
+   * was above the office was a black rectangle, which reads as a broken viewport rather than as a
+   * tall room. This is the room's own answer to what is up there. It hangs off `Scene` rather than
+   * being called directly because the two things it needs are the scene's: the columns the pendants
+   * hang on, and the *eased* night level, which the renderer never sees. Call it after `draw`, so
+   * the strip is lit for the same instant the room is.
+   */
+  paintCeiling(ctx: CanvasRenderingContext2D): void {
+    ENV.drawCeiling(ctx, this.night, WALL_FIXTURES.lamps);
+    FX.vignetteEdge(ctx, PIX.w, ENV.CEILING_H, VIGNETTE);
   }
 
   // ------------------------------------------------------------- per-frame state
@@ -1359,26 +1400,29 @@ function selectionRing(ctx: CanvasRenderingContext2D, cx: number, y: number): vo
  * point: three marks and a rule are legible from across the room in a way "7/12 agents" at five
  * pixels tall never is.
  */
+/**
+ * Drops a leading `TASK:` label from what the shell hands the board.
+ *
+ * `App.tsx` composes the board's line as `TASK: <prompt>`, which is a reasonable thing to write
+ * when you cannot see how little room the board has: six of the roughly thirty characters it can
+ * hold — a fifth of the whole surface — spent on a word that names what the board already, visibly,
+ * is. The board is the task board; nothing else is ever written on it.
+ *
+ * Stripped here rather than in the shell because the shell is not this renderer's to change, and
+ * because the board is where the cost is known. It is deliberately narrow: an exact leading `TASK`
+ * with a colon or a middot after it, and nothing else. A prompt that genuinely begins "task: ..."
+ * loses a label it did not need either.
+ */
+const unlabel = (s: string): string => s.replace(/^\s*task\s*[:·-]\s*/i, '');
+
 function boardOf(input: SceneInput): ENV.BoardState {
-  const task = input.task.trim() || 'waiting for a task';
-  const words = task.split(/\s+/);
-  const lines: string[] = [];
-  let line = '';
-  for (const w of words) {
-    const next = line ? `${line} ${w}` : w;
-    // Narrower than the board is wide: the board draws its own frame and tray inside those pixels,
-    // and wrapping to the outer width clipped the last letter off every line.
-    if (textWidth(next) > 44 && line) {
-      lines.push(line);
-      line = w;
-    } else {
-      line = next;
-    }
-    // Two lines of task and no more. Letting the prompt have the whole board pushes off the only
-    // part of it that ever changes.
-    if (lines.length === 2) break;
-  }
-  if (lines.length < 2 && line) lines.push(line);
+  const task = unlabel(input.task).trim() || 'waiting for a task';
+  // Wrapped by the board, to the board's own width, over the board's own lines, leaving the board's
+  // own reserve for the tally. Every one of those was a number written down here instead: the wrap
+  // ran to a hand-written 44, six pixels narrower than the board draws and elides at, and stopped
+  // after two lines whatever the board could hold. Nothing about the board's geometry is stated in
+  // this file any more, which is why the wrap and the paint cannot disagree about where a line ends.
+  const { lines, more } = ENV.wrapBoard(task, ENV.BOARD_TEXT.lines, ENV.BOARD_TALLY_W);
 
   let live = 0;
   let done = 0;
@@ -1395,7 +1439,7 @@ function boardOf(input: SceneInput): ENV.BoardState {
     if (g.done) done += 1;
     else live += 1;
   }
-  return { lines, live, done, failed, spend: input.spend };
+  return { lines, more, live, done, failed, spend: input.spend };
 }
 
 /** Kept for the preview harness and for anything that needs the label font's metrics. */

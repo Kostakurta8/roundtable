@@ -10,25 +10,29 @@ import { describe, expect, it } from 'vitest';
 import { asCtx, SoftCtx } from '../scripts/pixpreview';
 import type { ActorState } from '../src/office/engine';
 import { MANAGER_DESK_INDEX, podSeat, SCENE, WAYPOINTS } from '../src/office/engine';
+import { actLine, noteLine, subtreeOf } from '../src/office/PixelOffice';
 import {
-  actLine,
   blitOf,
   CAM_HOME,
   clampCam,
-  noteLine,
-  subtreeOf,
+  headroomOf,
   toBuffer,
   ZOOM_MAX,
   ZOOM_MIN,
   type Blit,
   type Cam,
   type Geo,
-} from '../src/office/PixelOffice';
+} from '../src/office/pixel/stage';
 import type { RtAgent } from '../src/store';
 import { drawArt, drawText, PAL, PIX, pool, textWidth, type Art, type Look } from '../src/office/pixel/art';
+import { nightGrade } from '../src/office/pixel/effects';
+import * as ENV from '../src/office/pixel/environment';
+import { BOARD_TALLY_W, BOARD_TEXT, wrapBoard } from '../src/office/pixel/environment';
 import {
+  CEILING_H,
   FIXTURE_NAMES,
   fixtureBox,
+  LAMP_COLUMNS,
   paintFixture,
   S,
   Scene,
@@ -299,6 +303,387 @@ describe('the scene', () => {
   });
 });
 
+// ---------------------------------------------------------------------- the ceiling
+
+/**
+ * The strip that fills the stage above the room.
+ *
+ * Its predecessor was two rectangles of `PAL.out` and `PAL.shd` — the near-blacks the art draws
+ * outlines with — which is why the running app had a black band across the top of the office. None
+ * of what is asserted here can be caught by the room's baseline hash: the strip is not in the room
+ * buffer, so every sheet in `.preview/` was blind to it right up until it had its own shot.
+ */
+describe('the ceiling strip', () => {
+  /** The strip and the room, painted the same way `Scene` paints them, at a given light level. */
+  const both = (night: number): { ceil: SoftCtx; room: SoftCtx } => {
+    const ceil = new SoftCtx(PIX.w, CEILING_H);
+    const roomCtx = new SoftCtx(PIX.w, PIX.h);
+    const scene = new Scene();
+    // Wound far enough forward that the eased night level has actually arrived: the strip is drawn
+    // from the *scene's* night, and comparing a settled room against an unsettled strip would be
+    // comparing two different times of day.
+    for (let i = 0; i < 200; i++) scene.draw(asCtx(roomCtx), input([actor('main', MANAGER_DESK_INDEX)], { night }));
+    scene.paintCeiling(asCtx(ceil));
+    return { ceil, room: roomCtx };
+  };
+
+  const luma = (c: SoftCtx, x: number, y: number): number => {
+    const i = (y * c.width + x) * 4;
+    return 0.299 * c.data[i] + 0.587 * c.data[i + 1] + 0.114 * c.data[i + 2];
+  };
+
+  const rowMean = (c: SoftCtx, y: number): number => {
+    let sum = 0;
+    for (let x = 0; x < c.width; x++) sum += luma(c, x, y);
+    return sum / c.width;
+  };
+
+  for (const [name, night] of [['by day', 0], ['at night', 1]] as const) {
+    it(`meets the room's first row with no visible seam ${name}`, () => {
+      // The join is one row wide and runs the width of the stage, so if the two sides disagree it
+      // disagrees as a line across the picture — the most visible defect a strip like this can
+      // have, and the reason the strip carries the room's own night wash and vignette weight.
+      const { ceil, room: r } = both(night);
+      // The room's first row is mostly wall, with hardware bolted to it — five lamp canopies and
+      // the vent. Those are objects hanging in front of the ceiling rather than disagreements about
+      // what the ceiling is, so the comparison is made against the columns that are still wall:
+      // everything close to the row's own median. Naming the fixtures instead would have to be
+      // rewritten every time somebody hangs something else up there, and would quietly stop
+      // covering the columns it forgot.
+      const row0 = Array.from({ length: PIX.w }, (_, x) => luma(r, x, 0));
+      const median = [...row0].sort((a, b) => a - b)[PIX.w >> 1];
+      // Grown by two columns either side, because a fixture's own outline is the fixture: the
+      // vent's dark edge is within a couple of levels of the wall it is screwed to, and a filter
+      // that only asks about the middle of an object lets its border through as a false seam.
+      const off = Array.from({ length: PIX.w }, (_, x) => Math.abs(row0[x] - median) > 5);
+      const wall = off.map((_, x) => !off.slice(Math.max(0, x - 2), x + 3).some(Boolean));
+      let worst = 0;
+      let worstX = -1;
+      let compared = 0;
+      for (let x = 0; x < PIX.w; x++) {
+        if (!wall[x]) continue;
+        compared += 1;
+        const d = Math.abs(luma(ceil, x, CEILING_H - 1) - row0[x]);
+        if (d > worst) {
+          worst = d;
+          worstX = x;
+        }
+      }
+      // ...and most of the row still has to be wall, or the filter above has quietly excused the
+      // strip from the comparison entirely.
+      expect(compared, 'too little of the room’s first row is wall to compare against')
+        .toBeGreaterThan(PIX.w * 0.8);
+      // Six levels out of 255, at luminances around 30 — under what an eye resolves across a hard
+      // edge, and two orders below the failure it guards: the strip this replaces was black, which
+      // met the wall fifty levels down. What is left is the vignette's corner squares weighting the
+      // room's outermost columns, and the vent's grille, which is dark enough to pass for wall.
+      expect(worst, `seam of ${worst.toFixed(1)} levels at x ${worstX}`).toBeLessThan(6);
+    });
+  }
+
+  it('is never as dark as the outline colours it used to be painted with', () => {
+    // The regression, stated as the thing a viewer complained about: the top of the stage was
+    // black. `PAL.out` is the darkest thing the room draws with, and the ceiling is a surface in
+    // the room rather than an edge around one — so no pixel of it may be that dark.
+    const { ceil } = both(0);
+    const floor = 0.299 * 0x14 + 0.587 * 0x18 + 0.114 * 0x21; // PAL.out, #141821
+    let worst = Infinity;
+    for (let y = 0; y < CEILING_H; y++) {
+      for (let x = 0; x < PIX.w; x++) worst = Math.min(worst, luma(ceil, x, y));
+    }
+    expect(worst, `darkest ceiling pixel is ${worst.toFixed(1)}, outline is ${floor.toFixed(1)}`)
+      .toBeGreaterThan(floor);
+  });
+
+  it('darkens as it comes toward the viewer, and never the other way', () => {
+    // The specific shape of the old bug: `shd` over the top quarter and `out` over the top half put
+    // the darkest band in the *middle* of the strip, so the ceiling got darker halfway up and
+    // lighter again above that. Nothing in a room does that. Thirds rather than rows, because the
+    // joists are deliberately lighter than the field they cross.
+    const { ceil } = both(0);
+    const third = Math.floor(CEILING_H / 3);
+    // The **median** row of each third, not the mean of it. The joists are deliberately lighter
+    // than the plane they cross and they are deliberately not evenly spaced — that unevenness is
+    // the perspective — so a mean measures how many beams landed in the slice as much as it
+    // measures the tone. A median lands on the field between them wherever they fall.
+    const band = (y0: number, y1: number): number => {
+      const rows = [];
+      for (let y = y0; y < y1; y++) rows.push(rowMean(ceil, y));
+      return rows.sort((a, b) => a - b)[rows.length >> 1];
+    };
+    const near = band(0, third);
+    const mid = band(third, third * 2);
+    const far = band(third * 2, CEILING_H);
+    expect(far, 'the ceiling is darker at the wall than in the middle').toBeGreaterThan(mid);
+    expect(mid, 'the ceiling is darker in the middle than at the near edge').toBeGreaterThan(near);
+  });
+
+  it('is a surface rather than a flat slab', () => {
+    // The same check the room's own bands get: a fill with nothing drawn on it is indistinguishable
+    // from a fill that was drawn and then painted over, except in the count of colours in it.
+    const { ceil } = both(0);
+    const seen = new Set<string>();
+    for (let y = 0; y < CEILING_H; y++) {
+      for (let x = 0; x < PIX.w; x++) {
+        const i = (y * PIX.w + x) * 4;
+        seen.add(`${ceil.data[i]},${ceil.data[i + 1]},${ceil.data[i + 2]}`);
+      }
+    }
+    expect(seen.size, 'the ceiling is a flat fill — nothing is being drawn on it').toBeGreaterThan(6);
+  });
+
+  it('lights up under the lamps at night, and barely at all by day', () => {
+    // The one thing that makes the strip read as the room's own ceiling rather than as a lid on it:
+    // the pendants throw light up onto it. A lamp glowing at noon reads as a bug, so the day
+    // version has to be nearly nothing.
+    const warmth = (c: SoftCtx, x: number, y: number): number => {
+      const i = (y * c.width + x) * 4;
+      return c.data[i] - c.data[i + 2];
+    };
+    const day = both(0).ceil;
+    const night = both(1).ceil;
+    // The warmest the strip gets in a column, so the assertion does not have to know how high above
+    // the join the bloom is centred — which is a number that was tuned by looking at the render.
+    const column = (c: SoftCtx, x: number): number => {
+      let best = -Infinity;
+      for (let y = 0; y < CEILING_H; y++) best = Math.max(best, warmth(c, x, y));
+      return best;
+    };
+    // A lamp column against the midpoint between two of them.
+    const under = LAMP_COLUMNS[1];
+    const between = Math.round((LAMP_COLUMNS[1] + LAMP_COLUMNS[2]) / 2);
+    const lift = (c: SoftCtx): number => column(c, under) - column(c, between);
+    expect(lift(night), 'the lamps do not light the ceiling at night').toBeGreaterThan(40);
+    expect(lift(day) * 4, 'the lamps glow at noon').toBeLessThan(lift(night));
+  });
+});
+
+// ---------------------------------------------------------------------- the whiteboard
+
+/**
+ * What the board can say about the session it is standing in.
+ *
+ * The board is 54 x 18 pixels of writing area and a session's prompt is two hundred characters, so
+ * everything here is about the difference between a *fragment* and a *truncation*: the board showed
+ * "TASK: I WANT YOU TO" and stopped, which is a sentence somebody cut in half.
+ */
+describe('the board’s wrap', () => {
+  const TASK =
+    'work out which of the tailer passes is dropping the last megabyte and prove the fix with a test';
+
+  it('breaks on words, never inside one', () => {
+    const { lines } = wrapBoard(TASK, BOARD_TEXT.lines, 0);
+    // Every line has to be a run of whole words from the task, in order — which is exactly what
+    // "reads as English" means at this size, and what the old two-line-then-elide did not do.
+    expect(lines.join(' ')).toBe(TASK.split(' ').slice(0, lines.join(' ').split(' ').length).join(' '));
+    for (const line of lines) expect(line.trim()).toBe(line);
+  });
+
+  it('uses every line the board has', () => {
+    const { lines } = wrapBoard(TASK, BOARD_TEXT.lines, 0);
+    expect(lines).toHaveLength(BOARD_TEXT.lines);
+  });
+
+  it('fills each line to the board’s own width, not to a guess at it', () => {
+    // The wrap ran to 44 against a board that draws and elides at 50. This is the assertion that
+    // the two are one number: every line fits, and every line is full enough that the next word
+    // genuinely did not.
+    const words = TASK.split(' ');
+    const { lines } = wrapBoard(TASK, BOARD_TEXT.lines, 0);
+    let taken = 0;
+    for (const line of lines) {
+      expect(textWidth(line), `"${line}" overruns the board`).toBeLessThanOrEqual(BOARD_TEXT.w);
+      taken += line.split(' ').length;
+      const nextWord = words[taken];
+      if (nextWord === undefined) break;
+      expect(textWidth(`${line} ${nextWord}`), `"${line}" had room for "${nextWord}"`)
+        .toBeGreaterThan(BOARD_TEXT.w);
+    }
+  });
+
+  it('leaves the tally its reserve on the last line and nowhere else', () => {
+    const { lines } = wrapBoard(TASK, BOARD_TEXT.lines, BOARD_TALLY_W);
+    const last = lines[lines.length - 1];
+    expect(textWidth(last), 'the last line runs under the tally').toBeLessThanOrEqual(
+      BOARD_TEXT.w - BOARD_TALLY_W,
+    );
+    // ...and the earlier lines are still wrapped at the *full* width — the word that ended each of
+    // them did not fit in fifty, not merely in thirty. Reserving on every line would cost three
+    // lines' worth of characters to buy one line's worth of marks.
+    const words = TASK.split(' ');
+    let taken = 0;
+    for (const line of lines.slice(0, -1)) {
+      taken += line.split(' ').length;
+      expect(textWidth(`${line} ${words[taken]}`), `"${line}" was cut short of the board's width`)
+        .toBeGreaterThan(BOARD_TEXT.w);
+    }
+  });
+
+  it('breaks a word that is longer than a line rather than losing the rest of the task', () => {
+    // The literal "stops mid-word": a single token wider than the board went on to a line of its
+    // own and was then elided by `fitLine`, so everything after it vanished with no sign.
+    const long = 'src/office/pixel/environment.ts needs a ceiling';
+    const { lines } = wrapBoard(long, BOARD_TEXT.lines, 0);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.join('')).toContain('SRC/OFFICE/PIXEL'.toLowerCase());
+    // Nothing is dropped between one line and the next: the pieces of the broken word abut.
+    expect(lines[0] + lines[1]).toBe(long.slice(0, lines[0].length + lines[1].length));
+  });
+
+  it('says when there is more, and does not when there is not', () => {
+    expect(wrapBoard(TASK, BOARD_TEXT.lines, BOARD_TALLY_W).more).toBe(true);
+    expect(wrapBoard('ship it', BOARD_TEXT.lines, BOARD_TALLY_W).more).toBe(false);
+    expect(wrapBoard('', BOARD_TEXT.lines, 0)).toEqual({ lines: [], more: false });
+  });
+
+  it('carries more of the task than the two-line wrap it replaces', () => {
+    // The whole point, as a number. The old rule was: wrap at 44, keep two lines.
+    const old: string[] = [];
+    let line = '';
+    for (const w of TASK.split(' ')) {
+      const next = line ? `${line} ${w}` : w;
+      if (textWidth(next) > 44 && line) {
+        old.push(line);
+        line = w;
+      } else line = next;
+      if (old.length === 2) break;
+    }
+    const before = old.join(' ').length;
+    const after = wrapBoard(TASK, BOARD_TEXT.lines, BOARD_TALLY_W).lines.join(' ').length;
+    expect(after, `${after} characters vs ${before}`).toBeGreaterThan(before * 1.3);
+  });
+});
+
+describe('the board’s hit target', () => {
+  /**
+   * `BOARD_BOX` and `TABLE_BOX` in `PixelOffice.tsx` are `fixtureBox` calls, and `fixtureBox` is
+   * held against the paint by "its box covers the pixels it paints" above. That test would still
+   * pass if the board's *writing area* moved off the board — every pixel would still be inside the
+   * box, because the box would have grown with the ink. What it would not catch is the failure that
+   * actually happened: the box hanging fourteen rows low, over the skirting, with the task on the
+   * board not clickable at all. So this one asks specifically about the text.
+   */
+  const boardInk = (state: ENV.BoardState): { x0: number; y0: number; x1: number; y1: number } => {
+    const withText = new SoftCtx(PIX.w, PIX.h);
+    const without = new SoftCtx(PIX.w, PIX.h);
+    ENV.drawWhiteboard(asCtx(withText), 205, 35, state);
+    ENV.drawWhiteboard(asCtx(without), 205, 35, { ...state, lines: [] });
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let y = 0; y < PIX.h; y++) {
+      for (let x = 0; x < PIX.w; x++) {
+        const i = (y * PIX.w + x) * 4;
+        const same =
+          withText.data[i] === without.data[i] &&
+          withText.data[i + 1] === without.data[i + 1] &&
+          withText.data[i + 2] === without.data[i + 2];
+        if (same) continue;
+        x0 = Math.min(x0, x);
+        y0 = Math.min(y0, y);
+        x1 = Math.max(x1, x);
+        y1 = Math.max(y1, y);
+      }
+    }
+    return { x0, y0, x1, y1 };
+  };
+
+  it('covers the task written on the board, every line of it', () => {
+    const { lines, more } = wrapBoard(
+      'work out which of the tailer passes is dropping the last megabyte',
+      BOARD_TEXT.lines,
+      BOARD_TALLY_W,
+    );
+    expect(lines).toHaveLength(BOARD_TEXT.lines);
+    const ink = boardInk({ lines, more, done: 4, live: 3, spend: 0.5 });
+    const box = fixtureBox('whiteboard');
+    expect(ink.x0).toBeGreaterThanOrEqual(box.x);
+    expect(ink.y0).toBeGreaterThanOrEqual(box.y);
+    expect(ink.x1).toBeLessThanOrEqual(box.x + box.w - 1);
+    expect(ink.y1).toBeLessThanOrEqual(box.y + box.h - 1);
+    // And it is the box's own upper half that carries the writing — the bug it replaces put the
+    // box below the board, which containment alone would not have noticed if the box were big.
+    expect(ink.y0).toBeLessThan(box.y + box.h / 2);
+  });
+
+  it('keeps the roundtable’s box on the table rather than on the rug in front of it', () => {
+    // The other half of the same historical bug, in the other direction: the table's box sat seven
+    // rows high, over the rug, missing the pedestal. `yBase` is the bottom row an object occupies,
+    // so the box's last row is the anchor row and not its middle.
+    const box = fixtureBox('roundtable');
+    const ctx = new SoftCtx(PIX.w, PIX.h);
+    paintFixture(asCtx(ctx), 'roundtable', input([actor('main', MANAGER_DESK_INDEX)]));
+    let lowest = -1;
+    for (let y = 0; y < PIX.h; y++) {
+      for (let x = 0; x < PIX.w; x++) if (ctx.data[(y * PIX.w + x) * 4 + 3] === 255) lowest = y;
+    }
+    expect(lowest, 'the table paints below its own box').toBeLessThanOrEqual(box.y + box.h - 1);
+    expect(box.y + box.h - 1 - lowest, 'the box hangs below the table').toBeLessThanOrEqual(2);
+  });
+});
+
+// ------------------------------------------------------------------ where the light is
+
+/**
+ * The night grade's warm spots, against the floor plan they are supposed to be lit by.
+ *
+ * `effects.ts` used to hold a hand-written table of lamp positions copied from a floor plan that
+ * was later rebuilt. It warmed x 79 and x 146 — which became the break corner and the bare floor
+ * between the left bank's two columns — and had no entry at all over the right-hand bank, so every
+ * night frame lit three patches of empty boards and left half the room's desks dark. It is now
+ * derived from the engine's own seating, and this is the assertion that says so: nothing here is a
+ * coordinate the renderer also holds, so a floor plan that moves takes its lamps with it or fails.
+ *
+ * Warmth, not brightness. The grade darkens the whole canvas and then lifts the lamps back out of
+ * it in `PAL.lmp`, so what marks a lamp is the *warm-cool* balance — red over blue — and not how
+ * bright the pixel ended up.
+ */
+describe('the night grade', () => {
+  /** The warmest this column gets anywhere down the room, over a neutral field. */
+  const columnWarmth = (ctx: SoftCtx, x: number): number => {
+    let best = -Infinity;
+    for (let y = 0; y < PIX.h; y++) {
+      const i = (y * PIX.w + x) * 4;
+      best = Math.max(best, ctx.data[i] - ctx.data[i + 2]);
+    }
+    return best;
+  };
+
+  /** A flat mid-grey room with nothing in it, so the only structure left is the grade's own. */
+  const graded = (): SoftCtx => {
+    const ctx = new SoftCtx(PIX.w, PIX.h);
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, PIX.w, PIX.h);
+    nightGrade(asCtx(ctx), 1);
+    return ctx;
+  };
+
+  /** Every chair the floor plan seats somebody at, as a buffer column. */
+  const seatColumns = [
+    ...WAYPOINTS.podSeats.map((s) => Math.round(s.x * S)),
+    Math.round(WAYPOINTS.managerSeat.x * S),
+  ];
+
+  it('warms every desk the floor plan draws, both banks of it', () => {
+    const ctx = graded();
+    // Distinct columns, so a failure names the bank rather than the seat index.
+    for (const x of [...new Set(seatColumns)]) {
+      expect(columnWarmth(ctx, x), `no lamp over the desk column at x ${x}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('no longer warms the two columns of the floor plan it replaced', () => {
+    // The exact failure: 79 is the break corner now, 146 the gap between the left bank's columns.
+    // Neither is a desk, and neither may be the warmest thing in its own column.
+    const ctx = graded();
+    const dimmest = Math.min(...seatColumns.map((x) => columnWarmth(ctx, x)));
+    for (const stale of [79, 146]) {
+      expect(columnWarmth(ctx, stale), `x ${stale} is still lit like a desk`).toBeLessThan(dimmest);
+    }
+  });
+});
+
 // -------------------------------------------------------------- clickable fixtures
 
 /**
@@ -558,6 +943,76 @@ describe('the blit and its inverse', () => {
       expect(b.destY, `room starts above the stage — ${where}`).toBeGreaterThanOrEqual(0);
       expect(Math.abs(b.destY + b.destH - g.h * g.dpr), `not bottom-aligned — ${where}`)
         .toBeLessThanOrEqual(0.5);
+    });
+  });
+
+  /**
+   * The strip above the room, which bottom-alignment guarantees will usually exist.
+   *
+   * It was painted black, and a black strip over a room is not a taller room — it is a viewport
+   * somebody broke. `headroomOf` says what fills it, and it is held to three things: it never asks
+   * the room buffer for a row the room does not have, it hands back a stack of pieces that meet
+   * exactly with no seam between them, and every piece lands on the *same* buffer-to-screen map the
+   * DOM layer places its marks with. That last one is what lets an actor who is above the view at a
+   * high zoom appear in the strip with their nameplate over their head, rather than in it.
+   */
+  describe('the headroom above the room', () => {
+    /** The ceiling strip's own height, in buffer rows — the cap on what can be invented. */
+    const CAP = 72;
+
+    it('fills the strip from the room itself wherever the room has rows above the view', () => {
+      each((b, _g, _c, where) => {
+        const hr = headroomOf(b, CAP);
+        expect(hr.roomRows, `sampled above the buffer — ${where}`).toBeLessThanOrEqual(b.srcY);
+        expect(hr.roomRows, `negative room rows — ${where}`).toBeGreaterThanOrEqual(0);
+        expect(hr.ceilRows, `more ceiling than there is — ${where}`).toBeLessThanOrEqual(CAP);
+        expect(hr.ceilRows, `negative ceiling rows — ${where}`).toBeGreaterThanOrEqual(0);
+        expect(hr.ceilSrcY, `ceiling sampled off its own top — ${where}`).toBe(CAP - hr.ceilRows);
+      });
+    });
+
+    it('stacks its pieces so they meet the room exactly, with no seam', () => {
+      each((b, _g, _c, where) => {
+        const hr = headroomOf(b, CAP);
+        expect(hr.roomY + hr.roomRows * b.scale, `room strip does not meet the room — ${where}`)
+          .toBeCloseTo(b.destY, 9);
+        expect(hr.ceilY + hr.ceilRows * b.scale, `ceiling does not meet the room strip — ${where}`)
+          .toBeCloseTo(hr.roomY, 9);
+      });
+    });
+
+    it('reaches the top of the stage unless the ceiling strip runs out of rows', () => {
+      each((b, _g, _c, where) => {
+        const hr = headroomOf(b, CAP);
+        if (hr.ceilRows < CAP) {
+          expect(hr.ceilY, `bare stage above the ceiling — ${where}`).toBeLessThanOrEqual(0);
+        } else {
+          // Deeper than the art: whatever is left is a flat fill of the ceiling's own top tone,
+          // which is a room colour. What must never happen is the fill being *skipped*.
+          expect(hr.ceilY, `capped, so there is a flat fill to draw — ${where}`).toBeGreaterThan(0);
+        }
+      });
+    });
+
+    it('places the strip on the same map the DOM layer places marks with', () => {
+      // `place` writes `dy + (y - srcY) * px`. Buffer row `srcY - roomRows` therefore has exactly
+      // one correct home on the stage, and the strip has to use it or an actor drawn in the
+      // headroom would stand a few pixels away from their own hit target.
+      each((b, _g, _c, where) => {
+        const hr = headroomOf(b, CAP);
+        const dpr = b.scale / b.px;
+        expect(hr.roomY / dpr, `strip is off the placement map — ${where}`)
+          .toBeCloseTo(b.dy - hr.roomRows * b.px, 9);
+      });
+    });
+
+    it('has nothing to fill when the room already reaches the top of the stage', () => {
+      // A stage exactly 16:9 with no rail: `destY` is zero and every piece has to be zero with it,
+      // or the ceiling would be painted over the room's own first row.
+      const b = blitOf(CAM_HOME, { w: 480, h: 270, dpr: 1, insetLeft: 0 });
+      expect(b.destY).toBe(0);
+      const hr = headroomOf(b, CAP);
+      expect(hr).toEqual({ h: 0, roomRows: 0, roomY: 0, ceilRows: 0, ceilY: 0, ceilSrcY: CAP });
     });
   });
 });

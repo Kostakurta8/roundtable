@@ -216,16 +216,13 @@ export const PACE_SPREAD = 0.17;
 export const ARRIVE_STAGGER_MS = 2600;
 
 /**
- * The vertical pitch between desk rows.
+ * The lowest a desk may sit — below this an actor would walk off the bottom of the scene.
  *
- * It was 90, which is what the mockup used, and at the renderer's scale that is 27 pixels for a
- * workstation that is 55 tall — every row was drawn through the row above it, and the left of the
- * room became an unreadable stack of monitors and nameplates while the right half stayed empty.
- * 187 is the smallest pitch that clears a whole workstation: desk, screen, occupant and chair.
+ * There was a `POD_ROW_PITCH_Y` here, the vertical pitch rows were laid out on. Nothing has read it
+ * since `podSeats` became twelve written-out anchors: the pitch is now whatever the difference
+ * between two of those percentages is, and a constant that no longer decides anything is a constant
+ * the next reader will believe still does.
  */
-export const POD_ROW_PITCH_Y = 187;
-
-/** The lowest a desk may sit — below this an actor would walk off the bottom of the scene. */
 export const POD_ROW_MAX_Y = 780;
 
 /**

@@ -523,6 +523,24 @@ export function vignette(ctx: CanvasRenderingContext2D, strength: number): void 
   vignetteIn(ctx, PIX.w, PIX.h, strength);
 }
 
+/**
+ * Just the outermost ring's weight, flat over a `w` x `h` surface.
+ *
+ * For the ceiling strip, which is painted on a buffer of its own and blitted directly above the
+ * room. The vignette darkens the room's own first row by exactly this much, and a strip that
+ * skipped it would meet the room a few percent brighter than the room — the one row in the picture
+ * where a seam would be visible, and the whole point of the strip is that it is not findable. It
+ * takes the ring alpha from the same table `vignetteIn` does, so tuning the vignette tunes both.
+ */
+export function vignetteEdge(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  strength: number,
+): void {
+  rect(ctx, 0, 0, w, h, PAL.shd, VIGNETTE_RINGS[0] * Math.max(0, strength));
+}
+
 // --------------------------------------------------------------------------- preview
 
 /**

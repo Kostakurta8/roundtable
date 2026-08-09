@@ -12,9 +12,18 @@
  */
 import type { ActorState } from '../src/office/engine';
 import { MANAGER_DESK_INDEX, podSeat, WAYPOINTS } from '../src/office/engine';
-import { Scene, type Ghost, type SceneAgent } from '../src/office/pixel/scene';
+import { PAL } from '../src/office/pixel/art';
+import { CEILING_H, Scene, type Ghost, type SceneAgent } from '../src/office/pixel/scene';
+import {
+  blitOf,
+  CAM_HOME,
+  clampCam,
+  headroomBlits,
+  type Cam,
+  type Geo,
+} from '../src/office/pixel/stage';
 import { agentLook } from '../src/store';
-import { asCtx, SoftCtx } from './pixpreview';
+import { asCtx, blit, SoftCtx } from './pixpreview';
 
 const seat = (i: number): { x: number; y: number } =>
   i === MANAGER_DESK_INDEX ? WAYPOINTS.managerSeat : podSeat(i);
@@ -121,12 +130,15 @@ export const ghosts: Ghost[] = Array.from({ length: 23 }, (_, i) => ({
 }));
 
 /**
- * Paints the review room and hands back the buffer it painted into.
+ * Paints the review room and hands back the buffer, and the scene that painted it.
  *
  * Wound forward in real-sized steps rather than one jump: every animation phase in the room is an
  * accumulation, and a single enormous delta would land them all somewhere they never are.
+ *
+ * The scene comes back because the ceiling strip is drawn from it — it holds the *eased* night
+ * level, and a strip lit for a different instant than the room it sits on has a seam across it.
  */
-export function paintRoom(night: number, seconds: number): SoftCtx {
+function run(night: number, seconds: number): { ctx: SoftCtx; scene: Scene } {
   const ctx = new SoftCtx(480, 270);
   const scene = new Scene();
   const step = 16;
@@ -144,5 +156,40 @@ export function paintRoom(night: number, seconds: number): SoftCtx {
       dt: step,
     });
   }
-  return ctx;
+  return { ctx, scene };
+}
+
+export function paintRoom(night: number, seconds: number): SoftCtx {
+  return run(night, seconds).ctx;
+}
+
+/**
+ * The room as it actually reaches a viewer: blitted onto a stage of a given shape, with whatever
+ * the renderer puts in the strip above it.
+ *
+ * The room sheets show the 480x270 buffer, which is the one thing a viewer never sees on its own.
+ * Everything about the strip above the ceiling — whether it is a room or a rectangle of void,
+ * whether its pixel grid lines up with the art's, whether the seam where they meet is findable — is
+ * invisible in those sheets and was invisible for exactly as long as they were the only picture
+ * anybody rendered.
+ *
+ * The blits come from `headroomBlits`, which is the same list the component's frame loop walks; the
+ * only thing this file supplies is a software `drawImage`. A picture drawn by a second copy of the
+ * arithmetic would be evidence about the second copy.
+ */
+export function paintStage(night: number, seconds: number, geo: Geo, cam: Cam = CAM_HOME): SoftCtx {
+  const { ctx: buffer, scene } = run(night, seconds);
+  const ceiling = new SoftCtx(480, CEILING_H);
+  scene.paintCeiling(asCtx(ceiling));
+
+  const out = new SoftCtx(Math.round(geo.w * geo.dpr), Math.round(geo.h * geo.dpr));
+  out.fillStyle = PAL.wa3;
+  out.fillRect(0, 0, out.width, out.height);
+
+  const b = blitOf(clampCam(cam), geo);
+  for (const p of headroomBlits(b, CEILING_H)) {
+    blit(out, p.from === 'room' ? buffer : ceiling, p.sx, p.sy, p.sw, p.sh, p.dx, p.dy, p.dw, p.dh);
+  }
+  blit(out, buffer, b.srcX, b.srcY, b.viewW, b.viewH, b.destX, b.destY, b.destW, b.destH);
+  return out;
 }

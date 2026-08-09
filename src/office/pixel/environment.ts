@@ -19,7 +19,7 @@
  * Nothing here is random. Plank tones, joint positions and star placement all come from `hash()`,
  * an integer mix, so the same room is the same room every reload and a preview PNG is evidence.
  */
-import { PAL, PIX, drawText, pool, rect, textWidth } from './art';
+import { FONT_HEIGHT, PAL, PIX, drawText, pool, rect, textWidth } from './art';
 import type { PreviewItem } from './preview';
 
 // ---------------------------------------------------------------- geometry
@@ -190,6 +190,167 @@ export function drawWall(ctx: CanvasRenderingContext2D, night: number, t: number
     const shimmer = 0.5 + 0.5 * Math.sin(t / 1700);
     rect(ctx, 0, 0, PIX.w, WALL_H, PAL.shd, 0.32 * n);
     rect(ctx, 0, 0, PIX.w, WALL_H, PAL.lm2, (0.055 + 0.02 * shimmer) * n);
+  }
+}
+
+// ---------------------------------------------------------------- ceiling
+
+/**
+ * How many rows of ceiling there are above the room's own first row.
+ *
+ * The room is 480 x 270 and the stage it is blitted onto is nearly always taller than 16:9 — the
+ * rail takes a bite out of the width, so the fit is decided by width and there is a strip left over
+ * across the top. Around 54 rows' worth at 1600x900 with the rail out, 64 at the narrower breakpoint.
+ * 72 covers both with room to spare, and past it the renderer repeats this strip's topmost row
+ * rather than inventing more, so a freakishly tall window degrades to a flat ceiling instead of to
+ * a void.
+ */
+export const CEILING_H = 72;
+
+/**
+ * Joists, as rows above the room's first row, near to far — **widening** as they come forward.
+ *
+ * The strip is a plane seen almost edge-on: it meets the wall at the bottom of the strip and
+ * recedes toward the viewer going up. Even spacing would read as scanlines; spacing that opens up
+ * as it approaches is the whole perspective cue, and six lines is enough to carry it without the
+ * ceiling competing with the room for attention.
+ */
+const JOISTS = [6, 13, 22, 34, 50, 70] as const;
+
+/**
+ * The cornice: how many of the strip's last rows are flat `wa3`, which is what the wall's own first
+ * rows are.
+ *
+ * The wall closes its top with three, and the strip has to *end* on that tone or the join is
+ * findable. It does not have to spend three rows getting there, and it cannot afford to: every row
+ * of cornice is a row the lamps' light on the ceiling may not reach, and six unbroken dark rows
+ * across the join left each pendant with a glow floating clear of it.
+ */
+const CEILING_JOIN = 2;
+
+/**
+ * How far above the join each lamp's bloom is centred, and how wide it spreads. Its vertical radius
+ * follows from the first, so the bloom always stops clear of the cornice.
+ *
+ * Both were tuned by rendering the stage and looking at it, twice. Centred fifteen rows up the five
+ * lamps had five glowing discs hovering twenty pixels above them, light that had plainly come from
+ * nowhere; pulled down to six with a radius of three they became bright horizontal bars and the
+ * pendants read as fluorescent tubes. Nine and twenty is a soft oval that sits on the ceiling
+ * around each fitting, which is what a pendant with an opaque shade actually does to a ceiling.
+ */
+const BLOOM_UP = 9;
+const BLOOM_RX = 20;
+
+/**
+ * How dark the plane gets as it comes forward, as `[row above the room, `shd` alpha]`.
+ *
+ * Four hard steps rather than a ramp, for the same reason every other falloff here is stepped. It
+ * goes *down* in brightness the whole way, which is the one thing the strip this replaces got
+ * wrong: it painted `PAL.out` over the top half and `PAL.shd` over the top quarter, so the darkest
+ * band landed in the *middle* and the ceiling brightened again above it. Nothing in a room does
+ * that. It also never leaves the teal family — `out` and `shd` are the near-blacks the art outlines
+ * with, and a rectangle of outline colour over the office is not a ceiling, it is a hole.
+ *
+ * Each entry is painted as its **own band**, not as a wash from the top down to it. Stacked, four
+ * alphas compose to more than any of them and the plane arrives at the outline colour anyway —
+ * which is the same bug in a different costume. The steps are spread over the first fifty rows
+ * because that is the part of the strip a real stage actually shows: a step at row 60 is a step
+ * nobody has ever seen.
+ */
+const CEILING_STEPS: readonly (readonly [number, number])[] = [
+  [8, 0.06],
+  [18, 0.12],
+  [30, 0.18],
+  [46, 0.24],
+];
+
+/**
+ * The ceiling, drawn as its own strip: `y 0 … CEILING_H`, whose **last row abuts the room's first**.
+ *
+ * It exists because bottom-aligning the room leaves a strip of stage above it, and a strip of stage
+ * has to belong to something. The room already claims a ceiling at its own row 0 — every pendant
+ * lamp draws a canopy plate there and hangs its rod from it — so what is above that row is the
+ * ceiling plane itself, seen from underneath at a grazing angle. That is what this draws: `wa3` at
+ * the join so the seam is invisible, stepping back to the darkest teal in the palette as the plane
+ * comes toward the viewer, with joists across it and the lamps' own light blooming on it.
+ *
+ * `lamps` is the columns the pendants hang on, passed in rather than restated: a lamp that moves
+ * has to take its bloom with it, and this file does not own the floor plan.
+ */
+export function drawCeiling(
+  ctx: CanvasRenderingContext2D,
+  night: number,
+  lamps: readonly number[],
+  w: number = PIX.w,
+  h: number = CEILING_H,
+): void {
+  const n = clamp01(night);
+
+  rect(ctx, 0, 0, w, h, PAL.wtr);
+
+  for (let i = 0; i < CEILING_STEPS.length; i++) {
+    const bottom = h - CEILING_STEPS[i][0];
+    const top = i + 1 < CEILING_STEPS.length ? h - CEILING_STEPS[i + 1][0] : 0;
+    if (bottom > top) rect(ctx, 0, Math.max(0, top), w, bottom - Math.max(0, top), PAL.shd, CEILING_STEPS[i][1]);
+  }
+
+  for (const up of JOISTS) {
+    const y = h - up;
+    if (y < 0 || y >= h) continue;
+    // Three rows, because two is a line and a line is a scratch: the face that looks back toward
+    // the room and catches its light, the beam's own body, and the shadow it drops on the far side.
+    rect(ctx, 0, y, w, 1, PAL.wa2, 0.6);
+    rect(ctx, 0, y + 1, w, 1, PAL.wtr, 0.55);
+    rect(ctx, 0, y + 2, w, 1, PAL.shd, 0.26);
+  }
+
+  // Daylight, off the same window columns the wall lifts toward, and only near the wall: light
+  // through a window at the top of a wall lands on the ceiling immediately above it and nowhere
+  // else. Two hard steps, and it fades out entirely as night comes on. Without it the plane is one
+  // flat field 480 pixels wide, which is the same thing that made the *wall* read as card.
+  const dayFactor = 1 - n;
+  if (dayFactor > 0.01) {
+    for (const wx of WINDOW_X) {
+      rect(ctx, wx - 30, h - 18, 60, 15, PAL.wlt, 0.09 * dayFactor);
+      rect(ctx, wx - 19, h - 9, 38, 6, PAL.wlt, 0.08 * dayFactor);
+    }
+  }
+
+  // The cornice: the last `CEILING_JOIN` rows, flat `wa3`.
+  //
+  // `drawWall` closes its own top the same way and lays it *after* its daylight lift, so the wall's
+  // first rows are flat `wa3` whatever window they are under. The strip's last rows have to be flat
+  // `wa3` by the same means, or the join stops being unfindable exactly where the room is most
+  // interesting — under the windows — which is where a viewer is already looking. Laid before the
+  // night wash, because the wall's is too.
+  rect(ctx, 0, h - CEILING_JOIN, w, CEILING_JOIN, PAL.wa3);
+  rect(ctx, 0, h - CEILING_JOIN - 1, w, 1, PAL.wa3, 0.5);
+
+  // Night, in the same passes the room applies to itself — the wall's own warm wash and the flat
+  // half of `nightGrade` — so the strip and the buffer's first rows arrive at the same colour. The
+  // grade's shimmer term is dropped: it needs the clock, and a ceiling that breathes on its own
+  // above a room that does not is worse than one that holds still. The difference is 0.01 of alpha.
+  if (n > 0) {
+    rect(ctx, 0, 0, w, h, PAL.shd, 0.32 * n);
+    rect(ctx, 0, 0, w, h, PAL.lm2, 0.065 * n);
+    rect(ctx, 0, 0, w, h, PAL.shd, 0.28 * n);
+    rect(ctx, 0, 0, w, h, PAL.wa3, 0.42 * n);
+    // `nightGrade` darkens the top sixth of the room again on the grounds that the ceiling end
+    // loses its daylight first. All of this is that end.
+    rect(ctx, 0, 0, w, h, PAL.shd, 0.12 * n);
+  }
+
+  // ...and the lamps light it back up, after the wash rather than before it, exactly as the grade
+  // lifts its own pools out of the night.
+  //
+  // `BLOOM_UP` is what keeps the bloom clear of the cornice — its lowest row is `CEILING_JOIN + 2`
+  // above the join. Not a margin for taste: the cornice is the one row of the strip that has to
+  // equal the room's first row exactly, and a warm pool that reached it would put a bright halo on
+  // the strip's side of the join and nothing on the room's, which is a seam wherever it is
+  // brightest. The gap reads as the shadow a pendant's own canopy casts on the ceiling it hangs
+  // from, which is where the light would not reach anyway.
+  for (const x of lamps) {
+    pool(ctx, x, h - BLOOM_UP, BLOOM_RX, BLOOM_UP - CEILING_JOIN - 1, PAL.lmp, 0.05 + 0.32 * n, 4);
   }
 }
 
@@ -538,12 +699,101 @@ export function drawDoor(ctx: CanvasRenderingContext2D, cx: number, yBase: numbe
 
 // ---------------------------------------------------------------- whiteboard
 
-/** How many of `lines` fit, and where they sit inside the board. */
-const BOARD_LINE_Y = [5, 11, 17] as const;
+/**
+ * How many of `lines` fit, and where they sit inside the board.
+ *
+ * Three, at a six-row pitch: five for the glyphs and one of leading. The surface is eighteen rows,
+ * of which the last is its lit lip, so three lines starting at row 4 use all seventeen that are
+ * left and there is no fourth to be had at this font. They used to start at 5, which cost the third
+ * line its last row — fine while only the bare-lines board drew three, and not fine now that the
+ * task does.
+ */
+const BOARD_LINE_Y = [4, 10, 16] as const;
 
 /** Text inset and the widest a line may be before it is elided. */
 const BOARD_TEXT_X = 6;
 const BOARD_TEXT_W = 50;
+
+/**
+ * The board's writing area, published so that nothing has to guess at it.
+ *
+ * `scene.ts` wrapped the task to 44 pixels against a board that draws 50 and elides at 50 — a
+ * guess, made in another file, that threw away a glyph a line for no reason. Wrap width and draw
+ * width are the same number now, and it is this one.
+ */
+export const BOARD_TEXT = { w: BOARD_TEXT_W, lines: BOARD_LINE_Y.length } as const;
+
+/**
+ * What the tally reserves at the end of the **last** line, when the task fills the board.
+ *
+ * The status marks and the task are competing for the same seventeen rows and there is no
+ * arrangement in which both get everything. This is the trade: a task short enough to leave a line
+ * spare gives the tally that whole line and all fifty pixels of it, and a task long enough to want
+ * every line pushes the tally up beside the last one, where it keeps its colours and its shape and
+ * loses resolution — past its capacity the tally is a proportion rather than a count, which it
+ * already was, and which is worth more than the twelve characters the alternative costs.
+ *
+ * Fixed, not measured from the marks actually drawn. A reserve that grew with the head count would
+ * re-wrap the task every time an agent arrived, and text that reflows while you are reading it is
+ * worse than text that stops early.
+ */
+export const BOARD_TALLY_W = 20;
+
+/** The continuation mark: three dots at the end of the last line when the task did not fit. */
+const MORE_DOTS = 3;
+const MORE_W = MORE_DOTS * 2 - 1;
+
+/**
+ * The task, wrapped to the board's own writing area, breaking on words.
+ *
+ * Lives here rather than in the scene because every number it needs is here: how wide a line is,
+ * how many there are, and what the last one has to leave for the tally. It returns `more` as well
+ * as the lines, because a fragment that says it is a fragment is a fragment, and one that does not
+ * is a sentence that stopped.
+ *
+ * A word too long for a line is **broken** rather than left to the elision in `fitLine`. The two
+ * look identical for one frame and are not the same thing: elision drops the rest of the word on
+ * the floor, so a task beginning with a long path or a URL used to lose the whole rest of itself to
+ * the first token.
+ */
+export function wrapBoard(
+  text: string,
+  maxLines: number = BOARD_LINE_Y.length,
+  reserve = 0,
+): { lines: string[]; more: boolean } {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  let i = 0;
+
+  while (i < words.length && lines.length < maxLines) {
+    const last = lines.length === maxLines - 1;
+    const limit = BOARD_TEXT_W - (last ? reserve : 0);
+    const next = line === '' ? words[i] : `${line} ${words[i]}`;
+    if (textWidth(next) <= limit) {
+      line = next;
+      i += 1;
+      continue;
+    }
+    if (line !== '') {
+      if (last) break; // no line left to move it to
+      lines.push(line);
+      line = '';
+      continue;
+    }
+    // One word, wider than an empty line. Take what fits and leave the rest for the next line.
+    let cut = words[i].length;
+    while (cut > 1 && textWidth(words[i].slice(0, cut)) > limit) cut -= 1;
+    line = words[i].slice(0, cut);
+    words[i] = words[i].slice(cut);
+    if (last) break;
+    lines.push(line);
+    line = '';
+  }
+  if (line !== '' && lines.length < maxLines) lines.push(line);
+
+  return { lines, more: i < words.length };
+}
 
 /**
  * A tally mark: 2px wide with a 1px gap, and 2px of air between the three groups.
@@ -569,8 +819,16 @@ type Tally = { n: number; color: string; h: number };
  * shape for a board that also knows how the session is going.
  */
 export type BoardState = {
-  /** Up to two wrapped lines of what the session was asked to do. */
+  /** The wrapped task, up to `BOARD_TEXT.lines` of it. `wrapBoard` is what produces these. */
   lines: readonly string[];
+  /**
+   * The task ran on past the last line.
+   *
+   * Drawn as three dots after the last word. Two hundred characters of prompt will never fit on a
+   * board fifty pixels wide, so what the board can honestly be is a *fragment* — and the difference
+   * between a fragment and a sentence somebody cut in half is whether it admits to being one.
+   */
+  more?: boolean;
   /** Agents on the floor now, and how many have finished and gone. */
   live?: number;
   done?: number;
@@ -651,11 +909,17 @@ function drawTally(
  * far the budget has gone. It is the one object here that can answer "what is this session, and
  * how is it going", and a board that answers neither is 62 × 30 pixels of wall.
  *
- * The surface is 54 × 17 usable pixels, which buys exactly two lines of text at 5px with a row of
- * leading, a three-row tally, and nothing else. The spend bar therefore lives *below* the writing
- * area, on the board's own bottom lip, where it can run the full 56 pixels and cannot steal a row
- * from the task. Two lines of text and a status block was the most that fitted; a third text line
- * was dropped for the `BoardState` path, which is the one thing the widening costs.
+ * The surface is 54 × 17 usable pixels: three lines of text at 5px with a row of leading, and
+ * nothing else. The spend bar therefore lives *below* the writing area, on the board's own bottom
+ * lip, where it runs the full 56 pixels and cannot steal a row from the task.
+ *
+ * The tally is what has to give, and it gives *conditionally*. A task that leaves a line spare gets
+ * the tally on that line, full width, as before. A task that wants all three lines pushes it up
+ * beside the last one with `BOARD_TALLY_W` reserved for it. That reserve is the only reason the
+ * third line exists at all: the state board used to draw two lines and drop the third, which was a
+ * reasonable trade when the wrap was throwing away a glyph a line anyway, and is not one now — two
+ * lines of a two-hundred-character prompt is twenty-four characters, and twenty-four characters of
+ * a prompt is not a description of anything.
  */
 export function drawWhiteboard(
   ctx: CanvasRenderingContext2D,
@@ -686,24 +950,47 @@ export function drawWhiteboard(
   if (bare) rect(ctx, x0 + 42, y0 + 16, 12, 2, PAL.pa2, 0.3);
 
   const lines = state.lines;
-  const nLines = Math.min(lines.length, bare ? BOARD_LINE_Y.length : 2);
+  const nLines = Math.min(lines.length, BOARD_LINE_Y.length);
+  // The last line shares its row band with the tally only when the task has taken every line.
+  const crowded = !bare && nLines >= BOARD_LINE_Y.length;
+  /** Where the continuation mark ended, so the tally can start after it rather than under it. */
+  let dotEnd = -1;
   for (let i = 0; i < nLines; i++) {
-    const s = fitLine(lines[i] ?? '', BOARD_TEXT_W);
+    const room = BOARD_TEXT_W - (crowded && i === nLines - 1 ? BOARD_TALLY_W : 0);
+    const s = fitLine(lines[i] ?? '', room);
     if (s.length === 0) continue;
-    drawText(ctx, s, x0 + BOARD_TEXT_X, y0 + BOARD_LINE_Y[i], i === 0 ? PAL.out : PAL.ou2);
+    const y = y0 + BOARD_LINE_Y[i];
+    drawText(ctx, s, x0 + BOARD_TEXT_X, y, i === 0 ? PAL.out : PAL.ou2);
+    // Three dots after the last word, meaning the task carries on past the board. Drawn as pixels
+    // rather than as an ellipsis glyph because the label font has none — `drawText` would render
+    // one as its unknown-character block, which reads as a redaction, not as a continuation.
+    if (state.more === true && i === nLines - 1) {
+      // Straight after the last word, or at the edge of the tally's reserve if the line is full —
+      // and in that case the *tally* gives up the five pixels, not the task. Reserving for the
+      // marker in the wrap instead cost a whole word off the end of a full line, which is a bad
+      // trade: the mark exists to say the fragment is a fragment, and paying a word for it makes
+      // the fragment shorter to say so.
+      const dotX = x0 + BOARD_TEXT_X + Math.min(textWidth(s) + 2, room);
+      for (let d = 0; d < MORE_DOTS; d++) rect(ctx, dotX + d * 2, y + 4, 1, 1, PAL.ou2);
+      dotEnd = dotX + MORE_W;
+    }
     // The heading rule is a bare-lines flourish only: in the state layout it lands on top of the
     // second line, which is a collision the three-line board could afford and this one cannot.
     if (i === 0 && bare) {
       const w = Math.min(BOARD_TEXT_W, textWidth(s));
-      rect(ctx, x0 + BOARD_TEXT_X, y0 + BOARD_LINE_Y[i] + 6, w, 1, PAL.sc2);
+      rect(ctx, x0 + BOARD_TEXT_X, y + 6, w, 1, PAL.sc2);
     }
   }
 
   if (!bare) {
-    // With one line of task the whole status block rides up into the empty second line, which is
-    // the difference between a board with air in it and a board with a gap at the bottom.
-    const markBase = y0 + (lines.length >= 2 ? 19 : 13);
-    drawTally(ctx, x0 + BOARD_TEXT_X, markBase, BOARD_TEXT_W, [
+    // Beside the last line when the task has filled the board, and on the next line down when it
+    // has not — which is also what keeps a one-line task from leaving a hole under itself.
+    const slot = Math.min(nLines, BOARD_LINE_Y.length - 1);
+    const markBase = y0 + BOARD_LINE_Y[slot] + (crowded ? FONT_HEIGHT - 1 : 2);
+    const wanted = x0 + BOARD_TEXT_X + (crowded ? BOARD_TEXT_W - BOARD_TALLY_W : 0);
+    const markX = Math.max(wanted, dotEnd + 2);
+    const right = x0 + BOARD_TEXT_X + BOARD_TEXT_W;
+    drawTally(ctx, markX, markBase, right - markX, [
       { n: Math.max(0, Math.round(state.done ?? 0)), color: PAL.ok, h: 3 },
       { n: Math.max(0, Math.round(state.live ?? 0)), color: PAL.acc, h: 2 },
       { n: Math.max(0, Math.round(state.failed ?? 0)), color: PAL.err, h: 3 },
@@ -1004,21 +1291,76 @@ function room(ctx: CanvasRenderingContext2D, night: number, t: number): void {
 
 const BOARD_LINES = ['SPRINT 4', 'PIXEL OFFICE', 'DONE = SEEN'] as const;
 
-/** The states the board actually has to survive, not the one that flatters it. */
-const BOARD_TASK: BoardState = { lines: ['SHIP THE PIXEL', 'OFFICE'] };
-const BOARD_OK: BoardState = { lines: ['SHIP THE PIXEL', 'OFFICE'], done: 5, live: 3, spend: 0.42 };
-const BOARD_BAD: BoardState = {
-  lines: ['REWRITE THE', 'FLOOR'],
-  done: 4,
-  live: 2,
-  failed: 2,
-  spend: 0.66,
-};
-const BOARD_FULL: BoardState = { lines: ['ONE LINE ONLY'], done: 11, live: 1, spend: 0.93 };
+/**
+ * The states the board actually has to survive, not the one that flatters it.
+ *
+ * Wrapped through `wrapBoard` rather than written out as lines, so a cell cannot show a layout the
+ * board will never actually be asked to draw — which is what the hand-written two-line cells were
+ * doing while the room was busy chopping three-line tasks in half.
+ */
+const wrapped = (task: string, rest: Omit<BoardState, 'lines' | 'more'>): BoardState => ({
+  ...wrapBoard(task, BOARD_LINE_Y.length, BOARD_TALLY_W),
+  ...rest,
+});
+
+const BOARD_TASK: BoardState = wrapBoard('ship the pixel office', BOARD_LINE_Y.length, 0);
+const BOARD_OK: BoardState = wrapped('ship the pixel office', { done: 5, live: 3, spend: 0.42 });
+const BOARD_BAD: BoardState = wrapped('rewrite the floor', { done: 4, live: 2, failed: 2, spend: 0.66 });
+const BOARD_FULL: BoardState = wrapped('one line only', { done: 11, live: 1, spend: 0.93 });
+/** The case the board exists for: a prompt far longer than it, and a busy room. */
+const BOARD_LONG: BoardState = wrapped(
+  'work out which of the tailer passes is dropping the last megabyte and prove it',
+  { done: 6, live: 4, failed: 1, spend: 0.78 },
+);
+/** A single token wider than a line, which used to take the rest of the task down with it. */
+const BOARD_BREAK: BoardState = wrapped('fix src/office/pixel/environment.ts and its sheet', {
+  done: 2,
+  live: 1,
+  spend: 0.2,
+});
+
+/**
+ * The ceiling strip with the top of the room under it — the only way to judge the join.
+ *
+ * The strip's whole job is to be indistinguishable from the room at the row they meet, so a cell
+ * showing the strip alone would show nothing worth looking at. `WALL_TOP` rows of real wall and two
+ * real pendants go underneath.
+ */
+/**
+ * Preview-only lamp columns, evenly spaced across the cell.
+ *
+ * Deliberately *not* the room's own five, which live in `scene.ts` and which this file may not
+ * import. Transcribing them would put a second copy of the floor plan in the module that is least
+ * able to notice the first one moving — and a contact sheet is asking "does a bloom sit correctly
+ * over a pendant", which any spacing answers.
+ */
+const CEIL_LAMPS = [46, 138, 230, 322, 414] as const;
+const WALL_TOP = 24;
+
+function ceilingJoin(ctx: CanvasRenderingContext2D, night: number, t: number): void {
+  drawCeiling(ctx, night, CEIL_LAMPS, 460, CEILING_H);
+  // The wall's own first rows, drawn where they really sit relative to the strip.
+  const shifted = new Proxy(ctx, {
+    get(target, key) {
+      if (key === 'fillRect') {
+        return (x: number, y: number, w: number, h: number) =>
+          target.fillRect(x, y + CEILING_H, w, h);
+      }
+      const v = Reflect.get(target, key);
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  drawWall(shifted, night, t);
+  for (const x of CEIL_LAMPS) drawCeilingLamp(shifted, x, 9, night);
+}
 
 export const PREVIEW: PreviewItem[] = [
   { name: 'room-day', w: 460, h: 122, draw: (c, t) => room(c, 0, t) },
   { name: 'room-nite', w: 460, h: 122, draw: (c, t) => room(c, 1, t) },
+  // The strip that fills the stage above the room. Reviewed against the rows it has to match, not
+  // on its own: "is this a ceiling" and "is this the same ceiling" are different questions.
+  { name: 'ceil-day', w: 460, h: CEILING_H + WALL_TOP, draw: (c, t) => ceilingJoin(c, 0, t) },
+  { name: 'ceil-nite', w: 460, h: CEILING_H + WALL_TOP, draw: (c, t) => ceilingJoin(c, 1, t) },
   // The floor's failure mode is a *large-area* one — a shimmer you only see once several courses
   // and several board lengths are on screen at once — so it gets a cell nearly the canvas's own
   // width. Judged at anything smaller the old regular pitch looked fine, which is why it shipped.
@@ -1056,6 +1398,8 @@ export const PREVIEW: PreviewItem[] = [
   { name: 'bd-ok', w: 70, h: 34, bg: PAL.wal, draw: (c) => drawWhiteboard(c, 35, 31, BOARD_OK) },
   { name: 'bd-fail', w: 70, h: 34, bg: PAL.wal, draw: (c) => drawWhiteboard(c, 35, 31, BOARD_BAD) },
   { name: 'bd-full', w: 70, h: 34, bg: PAL.wal, draw: (c) => drawWhiteboard(c, 35, 31, BOARD_FULL) },
+  { name: 'bd-long', w: 70, h: 34, bg: PAL.wal, draw: (c) => drawWhiteboard(c, 35, 31, BOARD_LONG) },
+  { name: 'bd-break', w: 70, h: 34, bg: PAL.wal, draw: (c) => drawWhiteboard(c, 35, 31, BOARD_BREAK) },
   {
     name: 'clock',
     w: 18,
