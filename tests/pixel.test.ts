@@ -11,6 +11,7 @@ import { asCtx, SoftCtx } from '../scripts/pixpreview';
 import type { ActorState } from '../src/office/engine';
 import { MANAGER_DESK_INDEX, podSeat, SCENE, WAYPOINTS } from '../src/office/engine';
 import { actLine, noteLine, subtreeOf } from '../src/office/PixelOffice';
+import { clockTurn } from '../src/office/pixel/scene';
 import {
   blitOf,
   CAM_HOME,
@@ -1226,5 +1227,49 @@ describe('what the hover card says an agent has done', () => {
     expect(note.endsWith('…')).toBe(true);
     // 26 characters of path, plus the `1 edit · ` that precedes it.
     expect(note.length).toBeLessThanOrEqual('1 edit · '.length + 26);
+  });
+});
+
+/**
+ * The wall clock.
+ *
+ * `drawClock` takes `turn` as 0..1 over a full twelve hours, and the room was passing it
+ * `(t / 60000) % 1` — the animation clock — so the hands swept twelve hours every sixty seconds.
+ * Not frozen, which is what it looks like in a still: spinning, and agreeing with nothing. A clock
+ * on the wall of an observer is read as the time, and the one thing it must not do is invent one.
+ */
+describe('clockTurn', () => {
+  const at = (h: number, m = 0): number => new Date(2026, 0, 1, h, m, 0, 0).getTime();
+
+  it('puts noon and midnight at the top of the dial', () => {
+    expect(clockTurn(at(12))).toBeCloseTo(0, 6);
+    expect(clockTurn(at(0))).toBeCloseTo(0, 6);
+  });
+
+  it('reads a twelve-hour dial, so morning and afternoon share a face', () => {
+    expect(clockTurn(at(3))).toBeCloseTo(0.25, 6);
+    expect(clockTurn(at(15))).toBeCloseTo(0.25, 6);
+    expect(clockTurn(at(6))).toBeCloseTo(0.5, 6);
+  });
+
+  it('advances with the minutes, not just the hours', () => {
+    // 6:30 is 390 of the 720 minutes in a half-day. An hour hand that jumps on the hour is a clock
+    // that is wrong for fifty-nine minutes out of sixty.
+    expect(clockTurn(at(6, 30))).toBeCloseTo(390 / 720, 6);
+  });
+
+  it('is a pure function of the instant, which is what lets a replay agree with it', () => {
+    // The room can be wound back to a past second. If the clock were driven by the animation
+    // clock — as it was — the rewound room would show the wrong time on the wall while claiming
+    // to be a faithful rebuild of that moment.
+    expect(clockTurn(at(9, 17))).toBe(clockTurn(at(9, 17)));
+  });
+
+  it('stays inside the dial for any instant', () => {
+    for (const h of [0, 1, 5, 11, 12, 13, 18, 23]) {
+      const turn = clockTurn(at(h, 45));
+      expect(turn).toBeGreaterThanOrEqual(0);
+      expect(turn).toBeLessThan(1);
+    }
   });
 });

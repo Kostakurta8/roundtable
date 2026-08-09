@@ -752,6 +752,10 @@ export const PixelOffice = memo(function PixelOffice({
         // simulation keeps its slowed tick either way: where somebody is standing is information.
         still,
         dt,
+        // The moment the room is showing, for the clock on the wall: the second being rebuilt
+        // while the timeline holds a seek, otherwise now. Reading the system clock inside the
+        // renderer would have put the present time on the wall of a room rebuilt from the past.
+        clockMs: cur.replayAt ?? Date.now(),
       });
 
       // --- camera ---------------------------------------------------------------

@@ -177,6 +177,19 @@ export type SceneInput = {
   /** Milliseconds since the last draw — the same delta the simulation was advanced by. */
   dt: number;
   /**
+   * The instant the room is showing, as epoch milliseconds — for the clock on the wall.
+   *
+   * Live, that is now. During a replay it is the second being rebuilt, which is the whole reason
+   * it is passed in rather than read from the system clock down here: the timeline claims to show
+   * the room *as it stood*, and a wall clock reading the present in a room rebuilt from the past
+   * contradicts that claim in the one place a viewer can check it against their own memory.
+   *
+   * Optional, and absent means "no opinion" — the preview harness and the visual-regression cast
+   * pass nothing, and get a fixed dial rather than whatever time the test happened to run at. A
+   * baseline that changes every hour is not a baseline.
+   */
+  clockMs?: number;
+  /**
    * The viewer has asked for reduced motion.
    *
    * Half-honoured before this: the simulation was slowed to a 500ms tick, but every effect was
@@ -246,6 +259,32 @@ type Mem = {
   seed: number;
   hairStyle: number;
 };
+
+/** Minutes on a twelve-hour dial — the period `drawClock`'s `turn` covers. */
+const DIAL_MINUTES = 12 * 60;
+
+/**
+ * Where the hands sit for a given instant, as `drawClock`'s 0..1 over twelve hours.
+ *
+ * The room used to pass `(t / 60000) % 1`, the animation clock, so the hands swept a full twelve
+ * hours every sixty seconds. In a still that reads as a clock; in motion it reads as a stopwatch
+ * somebody has mistaken for one, and it agrees with nothing — not the session, not the wall, not
+ * the moment a replay claims to be showing.
+ *
+ * Local time, not UTC: this is a clock on a wall in an office, and the person looking at it is in
+ * the room. `undefined` means the caller has no opinion and gets a fixed, pleasant dial — the
+ * visual-regression cast renders through here, and a baseline that changes every hour is not a
+ * baseline.
+ */
+export function clockTurn(epochMs?: number): number {
+  if (epochMs === undefined || !Number.isFinite(epochMs)) return STILL_DIAL;
+  const d = new Date(epochMs);
+  const minutes = (d.getHours() % 12) * 60 + d.getMinutes();
+  return minutes / DIAL_MINUTES;
+}
+
+/** Ten past ten — what every clock in every advertisement shows, because it looks like a clock. */
+const STILL_DIAL = (10 * 60 + 10) / DIAL_MINUTES;
 
 /** A drawable deferred until the whole floor layer can be sorted by the row it stands on. */
 type Layered = { y: number; draw: () => void };
@@ -532,7 +571,7 @@ export class Scene {
     ENV.drawVent(ctx, WALL_FIXTURES.vent.x, WALL_FIXTURES.vent.y);
     paintFixture(ctx, 'whiteboard', input);
     for (const a of WALL_FIXTURES.art) ENV.drawWallArt(ctx, a.x, a.y, a.variant);
-    ENV.drawClock(ctx, WALL_FIXTURES.clock.x, WALL_FIXTURES.clock.y, (t / 60000) % 1);
+    ENV.drawClock(ctx, WALL_FIXTURES.clock.x, WALL_FIXTURES.clock.y, clockTurn(input.clockMs));
     FUR.drawShelf(ctx, WALL_FIXTURES.shelf.x, WALL_FIXTURES.shelf.y);
     for (const x of WALL_FIXTURES.lamps) ENV.drawCeilingLamp(ctx, x, 9, night);
     ENV.drawDoor(ctx, sx(WAYPOINTS.door.x), FLOOR_Y + 1, this.doorOpen);

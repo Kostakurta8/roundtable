@@ -838,3 +838,72 @@ describe('Normalizer edge cases', () => {
     ).not.toThrow();
   });
 });
+
+/**
+ * A response that resumes after another one interrupted it.
+ *
+ * `normalize.ts` carried a measured claim — "in 250 sampled transcripts, across 35 101
+ * usage-bearing lines, an id never resumed after another id appeared; responses are written
+ * contiguously". That claim is false. A real transcript on this machine has 405 distinct message
+ * ids across 407 runs: two of them resume after an interruption, and the corpus test caught the
+ * consequence — the whole of a resumed response is published a second time, so the session's
+ * tokens and its cost read high.
+ *
+ * The accumulator publishes differences, so the only thing needed to make a resumption harmless is
+ * to remember what a response has already reported.
+ */
+describe('a response interrupted and resumed', () => {
+  const usageLine = (id: string, out: number) => ({
+    type: 'assistant',
+    timestamp: '2026-08-09T20:00:00.000Z',
+    message: {
+      id,
+      role: 'assistant',
+      model: 'claude-opus-5',
+      content: [{ type: 'text', text: 'x' }],
+      usage: { input_tokens: 0, output_tokens: out, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    },
+  });
+
+  const totalOut = (evs: ReturnType<Normalizer['feed']>[]): number =>
+    evs.flat().reduce((n, e) => (e.kind === 'usage' ? n + e.outTok : n), 0);
+
+  it('bills a resumed response once, not twice', () => {
+    const n = new Normalizer('s', 'main');
+    const out = [
+      n.feed(usageLine('a', 10)),
+      n.feed(usageLine('b', 5)), // interrupts a, and flushes it
+      n.feed(usageLine('a', 14)), // a resumes, having now billed 14 in total
+      n.flush(),
+    ];
+    // Ground truth is last-wins per id: a billed 14, b billed 5.
+    expect(totalOut(out)).toBe(19);
+  });
+
+  it('still publishes nothing for a resumption that added nothing', () => {
+    const n = new Normalizer('s', 'main');
+    const out = [n.feed(usageLine('a', 10)), n.feed(usageLine('b', 5)), n.feed(usageLine('a', 10)), n.flush()];
+    expect(totalOut(out)).toBe(15);
+  });
+
+  it('still bills once when the resumption comes hundreds of responses later', () => {
+    // The distance is the whole point, and the reason this test exists as well as the one above.
+    // A first fix remembered only the last 64 responses, which is plenty for the adjacent case and
+    // useless for the real one: in the transcript that exposed this, the two resumed responses came
+    // back 270 and 389 distinct responses later, so both had been evicted and the over-count was
+    // unchanged. An adjacent-only test passes with a memory of one.
+    const n = new Normalizer('s', 'main');
+    const out = [n.feed(usageLine('a', 722))];
+    for (let i = 0; i < 300; i++) out.push(n.feed(usageLine(`filler${i}`, 1)));
+    out.push(n.feed(usageLine('a', 722)));
+    out.push(n.flush());
+    // `a` billed 722 once, plus 300 fillers of 1.
+    expect(totalOut(out)).toBe(722 + 300);
+  });
+
+  it('leaves the ordinary contiguous case exactly as it was', () => {
+    const n = new Normalizer('s', 'main');
+    const out = [n.feed(usageLine('a', 1)), n.feed(usageLine('a', 317)), n.flush()];
+    expect(totalOut(out)).toBe(317);
+  });
+});

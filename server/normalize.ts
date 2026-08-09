@@ -398,6 +398,24 @@ function editSize(input: Readonly<Record<string, unknown>>): { added?: number; r
   return out;
 }
 
+/**
+ * How many responses a Normalizer remembers having accounted for.
+ *
+ * Bounded, because a long session has thousands of message ids and this would otherwise grow with
+ * the transcript. Large, because the cost of forgetting is silent: an id evicted before it resumes
+ * republishes its whole total, which is the double count this map exists to prevent.
+ *
+ * The number is measured, not guessed. In the transcript that exposed the bug the two resumptions
+ * came back **270 and 389 distinct responses later** — a first attempt at 64 changed the file's
+ * over-count by exactly zero, because both had already been evicted. Their totals were 722 and
+ * 3 214 output tokens and the file over-reported by 3 936, which is their sum to the token.
+ *
+ * So the window has to be wide enough for a response that resumes most of a session later. At
+ * roughly a hundred bytes an entry this is well under half a megabyte at full stretch, and it only
+ * reaches full stretch on a transcript that has actually written that many responses.
+ */
+const RESUMABLE_IDS = 4096;
+
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
 
 const int = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -434,6 +452,18 @@ export class Normalizer {
   private usageSent: TokenUse = ZERO_USE;
   private usageModel?: string;
   private usageTs = 0;
+  /**
+   * How much each recent response has already been accounted for, so one that resumes after an
+   * interruption reports only what it has billed since.
+   *
+   * This exists because a measured claim in this file turned out to be false. It said an id never
+   * resumed after another id appeared — responses are written contiguously — over 250 sampled
+   * transcripts and 35 101 usage-bearing lines. A real transcript on this machine has 405 distinct
+   * ids across 407 runs: two of them resume. Without this the interrupted response's whole total is
+   * published a second time, and the session's tokens and its cost read high — which is the one
+   * number this application exists to get right.
+   */
+  private sentById = new Map<string, TokenUse>();
 
   constructor(
     private readonly sessionId: string,
@@ -627,9 +657,11 @@ export class Normalizer {
         const continuing = this.usageId === usageId;
         if (this.usageId !== undefined && !continuing) {
           out.push(...this.flush());
-          // `flush` leaves `usageSent` holding the *previous* response's total. The accumulator is
-          // about to point at a different response, which has reported nothing yet.
-          this.usageSent = ZERO_USE;
+          // `flush` leaves `usageSent` holding the *previous* response's total. What the response
+          // we are switching to has already reported is whatever it reported the last time it was
+          // current — nothing at all for the overwhelming majority, which have never been seen
+          // before, and a real figure for one that is resuming after an interruption.
+          this.usageSent = this.sentById.get(usageId) ?? ZERO_USE;
         }
         this.usageId = usageId;
         // Field-wise max, not a straight overwrite. A response's usage almost always only grows,
@@ -639,7 +671,10 @@ export class Normalizer {
         // and its cost visibly fell mid-run before recovering. Taking the maximum keeps the total
         // identical to last-wins for every response that behaves, and monotonic for the one that
         // does not.
-        this.usageSeen = continuing ? maxUse(this.usageSeen, reported) : reported;
+        // On a resumption `usageSent` is already non-zero, and a line that reports *less* than has
+        // been published would otherwise make the next delta negative — the same failure the max
+        // above guards against within a response, arriving by a different route.
+        this.usageSeen = continuing ? maxUse(this.usageSeen, reported) : maxUse(reported, this.usageSent);
         this.usageModel = hasModel ? model : this.usageModel;
         this.usageTs = ts;
       }
@@ -659,10 +694,26 @@ export class Normalizer {
    */
   flush(): Ev[] {
     if (this.usageId === undefined) return [];
+    // Recorded whether or not anything is emitted: this is the memory a resumption reads, and a
+    // response that flushed with nothing left to say has still accounted for everything it billed.
+    this.remember(this.usageId, this.usageSeen);
     const delta = subUse(this.usageSeen, this.usageSent);
     if (isZeroUse(delta)) return [];
     this.usageSent = this.usageSeen;
     return [this.usageEvent(delta, this.usageModel, this.usageTs)];
+  }
+
+  /** Notes how much of a response has been accounted for, evicting the oldest once the cap is hit. */
+  private remember(id: string, seen: TokenUse): void {
+    // Re-inserting moves the key to the end of a Map's iteration order, so the eviction below is
+    // least-recently-touched rather than least-recently-created.
+    this.sentById.delete(id);
+    this.sentById.set(id, seen);
+    while (this.sentById.size > RESUMABLE_IDS) {
+      const oldest = this.sentById.keys().next();
+      if (oldest.done === true) break;
+      this.sentById.delete(oldest.value);
+    }
   }
 
   private usageEvent(use: TokenUse, model: string | undefined, ts: number): Ev {
