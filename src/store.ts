@@ -775,6 +775,35 @@ export function reduce(state: RtState, ev: Ev): RtState {
       return retotal(s);
     }
 
+    case 'workflowPhase': {
+      // One settled line in the feed, in the past tense, and deliberately nothing else.
+      //
+      // The temptation is a phase bar, and it would be a lie: the only artifact on disk describing
+      // phases is written once, when the run *terminates*, so this event cannot arrive while there
+      // is anything left to show progress about. Drawn as a live tracker it would sit at 0% for the
+      // twenty-six minutes a real run takes and then jump straight to finished — an indicator that
+      // is wrong for the entire period anybody would look at it.
+      //
+      // So it is a record, and it reads as one. `order` rather than `index` decides the sequence:
+      // `index` is a registration number and the first agent queued on a real run carries a higher
+      // one than the eighty-eight after it.
+      const phases = [...ev.phases].sort((a, b) => a.order - b.order);
+      const named = ev.workflowName ? `workflow ${ev.workflowName}` : 'workflow';
+      const agents = phases.reduce((n, p) => n + p.agents.length, 0);
+      // Where it was standing when it stopped, which is only interesting when it stopped early.
+      const cut = phases.find((p) => p.order === ev.activePhase);
+      const route = phases.map((p) => p.title).join(' → ');
+      return addMsg(s0, {
+        agentId: SYSTEM,
+        text:
+          `${named} ${ev.status} · ${phases.length} phase${phases.length === 1 ? '' : 's'}, ` +
+          `${agents} agent${agents === 1 ? '' : 's'}` +
+          (cut ? ` · stopped in ${cut.title}` : '') +
+          (route ? ` · ${route}` : ''),
+        ts: ev.ts,
+      });
+    }
+
     case 'sessionSeen':
       // The hub sends this the moment it starts streaming a session, ahead of anything read off
       // disk. It is the only event that arrives for a session that is running and has written

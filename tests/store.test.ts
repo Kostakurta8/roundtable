@@ -888,6 +888,52 @@ describe('reduce — a finished agent stops waiting on its tools', () => {
   });
 });
 
+describe('a finished workflow lands as a record, not as progress', () => {
+  /** A `workflowPhase` frame with phases given in registration order, as the hub emits them. */
+  const wf = (over: Partial<Extract<Ev, { kind: 'workflowPhase' }>> = {}): Ev => ({
+    kind: 'workflowPhase',
+    sessionId: 's',
+    workflowId: 'wf_abc123',
+    workflowName: 'review-changes',
+    status: 'completed',
+    phases: [
+      { index: 2, title: 'Review', order: 0, agents: [{ agentId: 'a', state: 'done' }] },
+      { index: 1, title: 'Verify', order: 1, agents: [{ agentId: 'b', state: 'done' }, { agentId: 'c', state: 'done' }] },
+    ],
+    ts: 5000,
+    seq: next(),
+    ...over,
+  });
+
+  it('writes one line naming the workflow, its phases and its agents', () => {
+    const st = fold([wf()]);
+    expect(st.msgs).toHaveLength(1);
+    expect(st.msgs[0].text).toContain('workflow review-changes completed');
+    expect(st.msgs[0].text).toContain('2 phases, 3 agents');
+  });
+
+  it('orders the phases by when they ran, not by the id they registered under', () => {
+    // The trap this event exists around: `index` is a registration number, and on a real run the
+    // first phase queued carries a *higher* one than everything after it. Sorting by `index` would
+    // print this run backwards, and nothing else in the app would contradict it.
+    expect(fold([wf()]).msgs[0].text).toContain('Review → Verify');
+  });
+
+  it('says where a run was cut off, and stays quiet when it was not', () => {
+    expect(fold([wf({ status: 'killed', activePhase: 1 })]).msgs[0].text).toContain('stopped in Verify');
+    expect(fold([wf()]).msgs[0].text).not.toContain('stopped in');
+  });
+
+  it('changes nothing about any agent', () => {
+    // It is session-wide and terminal. If it ever starts touching agent state it has become a
+    // progress indicator for a run that was already over, which is the one thing it must not be.
+    const before = fold([text('a', 'working')]);
+    const after = reduce(before, wf());
+    expect(after.agents).toEqual(before.agents);
+    expect(after.tools).toEqual(before.tools);
+  });
+});
+
 describe('agentLook', () => {
   it('is stable per id and keeps main on its own tint', () => {
     expect(agentLook('abc123')).toEqual(agentLook('abc123'));

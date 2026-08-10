@@ -149,6 +149,17 @@ function colorOf(ch: string, art: Art, look: Look | undefined): string | undefin
   return key ? PAL[key] : undefined;
 }
 
+/**
+ * A sprite's extent, in art pixels.
+ *
+ * Width is a maximum rather than the first row's length because art rows are written ragged — a
+ * trailing run of transparent pixels is simply not typed — so the widest row is the sprite.
+ *
+ * Height existed as a contract export that nothing called, while `drawArt` bounded its own loop
+ * with `art.rows.length` a few lines below: the module published a name for the measurement and
+ * then took the measurement by hand. Exporting only one of the two was the real defect, since
+ * anything outside this file holding an `Art` could ask how wide it was and not how tall.
+ */
 export const artWidth = (art: Art): number => art.rows.reduce((w, r) => Math.max(w, r.length), 0);
 export const artHeight = (art: Art): number => art.rows.length;
 
@@ -169,11 +180,12 @@ export function drawArt(
   const { flip = false, look, alpha = 1, tint } = opts;
   if (alpha <= 0) return;
   const w = artWidth(art);
+  const h = artHeight(art);
 
   const prevAlpha = ctx.globalAlpha;
   if (alpha !== 1) ctx.globalAlpha = prevAlpha * alpha;
 
-  for (let row = 0; row < art.rows.length; row++) {
+  for (let row = 0; row < h; row++) {
     const line = art.rows[row];
     let col = 0;
     while (col < line.length) {

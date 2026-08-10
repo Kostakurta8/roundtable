@@ -236,26 +236,42 @@ const roundedX = async (page: Page, selector: string): Promise<number> => {
 };
 
 /**
+ * How many consecutive samples have to agree before the camera counts as arrived.
+ *
+ * Two is not enough, and the reason is worth writing down because the failure looks like flake and
+ * is not. The camera eases a fifth of the remaining distance per frame, so a 200ms sample closes
+ * about 93% of what is left: two agreeing *rounded* samples only prove the last sample moved less
+ * than half a pixel, which happens on the slow tail long before the ease has converged. That tail
+ * is not harmless here, because this measures a sprite and a sprite's position carries the *zoom*
+ * as well as the pan — and a zoom still 0.5% short of its target puts a fixture near the edge of
+ * the room about four pixels out. `858 → 1074 → 862` was exactly that, and it failed a 2px
+ * assertion that was doing its job.
+ *
+ * Three samples take the remaining error to a thousandth of the original, which is comfortably
+ * sub-pixel. Widening the assertion instead would have deleted the only thing it checks.
+ */
+const SETTLE_SAMPLES = 3;
+
+/**
  * Where something is once the camera has stopped moving.
  *
- * The camera eases toward what it was asked for — a fifth of the remaining distance per frame —
- * so a single measurement taken right after a key press is a number from halfway through an
- * animation and comparing two of them proves nothing. Two agreeing samples is the cheapest honest
- * definition of "it has arrived".
+ * The camera eases toward what it was asked for, so a single measurement taken right after a key
+ * press is a number from halfway through an animation and comparing two of them proves nothing.
  */
 async function settledX(page: Page, selector: string): Promise<number> {
   let last = Number.NaN;
+  let agreed = 0;
   await expect
     .poll(
       async () => {
         const now = await roundedX(page, selector);
-        const same = Number.isFinite(now) && now === last;
+        agreed = Number.isFinite(now) && now === last ? agreed + 1 : 0;
         last = now;
-        return same;
+        return agreed;
       },
-      { intervals: [200], timeout: 10_000 },
+      { intervals: [200], timeout: 15_000 },
     )
-    .toBe(true);
+    .toBeGreaterThanOrEqual(SETTLE_SAMPLES - 1);
   return last;
 }
 

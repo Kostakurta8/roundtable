@@ -385,7 +385,15 @@ describe('hub', () => {
       const seen = await client.wait(evOf('sessionSeen', (e) => e.sessionId === 'late-sess'), 8000);
       expect(seen.live).toBe(true);
       appendFileSync(lateFile, assistantLine(SUB_TEXT));
-      const ev = await client.wait(evOf('agentText', (e) => e.text === SUB_TEXT));
+      // The same 8s this file gives the sweep above, and for the same reason. `sessionSeen` says
+      // the roster has *noticed* the session, not that a tail is attached to it and reading — the
+      // append below is the first thing that has to travel the whole way from disk to the wire on a
+      // session that was cold a moment ago. The default 3s is a unit-test budget and this is not a
+      // unit test: it spans a 300ms roster sweep, a watcher pickup and a read, on whichever of the
+      // six matrix legs happens to be busiest. This one timed out on macos/node 24 alone, which is
+      // what a budget that is merely tight looks like. Nothing here asserts a duration — the
+      // assertion is which session the line came from.
+      const ev = await client.wait(evOf('agentText', (e) => e.text === SUB_TEXT), 8000);
       expect(evSession(ev)).toBe('late-sess');
     },
     25_000,
