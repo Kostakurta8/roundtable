@@ -107,6 +107,25 @@ const DESK_INDICES: readonly number[] = [
 ];
 
 /**
+ * The desks to draw for a session that has never had more than `highWater` agents on the floor.
+ *
+ * The floor plan seats twelve, and it drew all twelve whatever the session was: a one-agent run
+ * rendered one person among eleven vacant workstations, and the room read as an office after a
+ * layoff rather than as a small job. The manager's desk is never in the count — the orchestrator is
+ * always there, and a room with no desk at all would have nowhere to put it.
+ *
+ * A high-water mark rather than the live occupancy, and that distinction is the whole design. It is
+ * monotone: a desk appears when the room first needs it and then stays for the rest of the session,
+ * so the *vacated* desk this file already argues for — tidied, screen dark, its owner's paper still
+ * stacked on it — is untouched. Nothing ever vanishes from under a viewer; the room only ever grows
+ * into the plan it always had. At twelve it is the plan, unchanged, which is the point: a busy room
+ * cannot be made worse by a rule whose fixed point is the room it already draws.
+ */
+export function desksFor(highWater: number): readonly number[] {
+  return DESK_INDICES.filter((i) => i === MANAGER_DESK_INDEX || i < highWater);
+}
+
+/**
  * The round rug, in canvas pixels — derived from the engine's own `RUG` extent (54.5%…72.5% by
  * 57%…86% of the scene) rather than written down, so it cannot drift away from the roundtable
  * routing that avoids it.
@@ -547,6 +566,17 @@ export class Scene {
   private readonly deskPapers = new Map<number, number>();
 
   /**
+   * The most pod desks this session has ever needed at once — really the highest seat index ever
+   * handed out, plus one, which is the same thing while seats are filled in order.
+   *
+   * Kept here rather than derived per frame from `input.actors`, because the live cast shrinks: an
+   * agent that finishes walks out and stops being reported, and a room that recomputed this every
+   * frame would dismantle itself desk by desk as the work completed. Only ever raised, and only
+   * cleared by `reset`, which is a different session and a different room.
+   */
+  private highWater = 0;
+
+  /**
    * Where each off-site avatar ended up in the strip along the bottom.
    *
    * Published for the same reason the actor boxes are: forty small heads with no names is a
@@ -583,6 +613,7 @@ export class Scene {
     this.deskBoxes.clear();
     this.deskPapers.clear();
     this.ghostBoxes.clear();
+    this.highWater = 0;
     this.t = 0;
     this.doorOpen = 0;
     // Not `night`: the theme belongs to the viewer, not to the session being shown. Everything
@@ -955,7 +986,14 @@ export class Scene {
     const byDesk = new Map<number, ActorState>();
     for (const a of input.actors) byDesk.set(a.deskIndex, a);
 
-    for (const deskIndex of DESK_INDICES) {
+    // How far into the plan this session has ever reached. A desk that somebody left paper on was
+    // occupied even though nobody is reported at it now, so the remembered piles raise the mark
+    // too — without that, the one desk in the room that still says what a departed agent cost
+    // would be the first one to stop being drawn.
+    for (const i of byDesk.keys()) if (i + 1 > this.highWater) this.highWater = i + 1;
+    for (const i of this.deskPapers.keys()) if (i + 1 > this.highWater) this.highWater = i + 1;
+
+    for (const deskIndex of desksFor(this.highWater)) {
       const a = byDesk.get(deskIndex);
       const manager = deskIndex === MANAGER_DESK_INDEX;
       const seat = manager ? WAYPOINTS.managerSeat : podSeat(deskIndex);

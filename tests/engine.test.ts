@@ -113,12 +113,20 @@ describe('Engine — desk assignment', () => {
     // implementation reads would assert nothing. The plan is two banks of six — the left at
     // 23% and 34% of 1600, the right at 78.75% and 91.7%, over rows at 37%, 57.8% and 78.5% of
     // 900. The left bank moved right from 13.75%/26.7% when the break corner took that strip.
-    expect(podSeat(0).x).toBeCloseTo(368, 6);
+    //
+    // Slot 0 is 34%, not 23%: each bank is filled from its *inner* column outwards, so that the
+    // first two agents flank the middle of the room instead of taking the two far walls. That
+    // matters now that unoccupied desks are not drawn — the gap between the first two desks is
+    // the entire composition of a small session.
+    expect(podSeat(0).x).toBeCloseTo(544, 6);
     expect(podSeat(0).y).toBeCloseTo(333, 6);
     // Slot 1 crosses to the other side of the room rather than continuing down the left.
     expect(podSeat(1).x).toBeCloseTo(1260, 6);
     expect(podSeat(1).y).toBeCloseTo(333, 6);
-    expect(podSeat(4).x).toBeCloseTo(368, 6);
+    // The outer columns come after both inner ones, so slot 2 is the left bank's far wall.
+    expect(podSeat(2).x).toBeCloseTo(368, 6);
+    expect(podSeat(2).y).toBeCloseTo(333, 6);
+    expect(podSeat(4).x).toBeCloseTo(544, 6);
     expect(podSeat(4).y).toBeCloseTo(520.2, 6);
     // Past the plan: the lane along the bottom of the room, which the seat cap makes unreachable
     // but which still has to be a real position.

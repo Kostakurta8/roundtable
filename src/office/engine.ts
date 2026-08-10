@@ -284,6 +284,14 @@ export const WAYPOINTS = {
    * out balanced across the room rather than piling everyone into one corner while the other half
    * stays bare. Six agents land as three and three along the top two rows.
    *
+   * Within a row the *inner* column of each bank is taken before the outer one. Alternating banks
+   * is what keeps the room balanced, but it also means the first two agents sit as far apart as the
+   * floor plan physically allows, and once the unused desks stopped being drawn that gap was the
+   * whole composition: two people at opposite walls with bare boards between them. Inner-first
+   * closes it as far as two banks can be closed — the pair flanks the manager desk and the
+   * roundtable, which is where the eye already is — and costs the balance nothing, because it is
+   * still one desk per side.
+   *
    * The left bank sits at 23% and 34% rather than the original 13.75% and 26.7%. That whole
    * left-hand strip is now the **break corner** — the coffee machine, the water cooler, a café
    * table and a couch — because agents that finish no longer walk out of the building, they go and
@@ -291,9 +299,9 @@ export const WAYPOINTS = {
    * less the longer you watch it.
    */
   podSeats: [
-    pct(23, 37), pct(78.75, 37), pct(34, 37), pct(91.7, 37),
-    pct(23, 57.8), pct(78.75, 57.8), pct(34, 57.8), pct(91.7, 57.8),
-    pct(23, 78.5), pct(78.75, 78.5), pct(34, 78.5), pct(91.7, 78.5),
+    pct(34, 37), pct(78.75, 37), pct(23, 37), pct(91.7, 37),
+    pct(34, 57.8), pct(78.75, 57.8), pct(23, 57.8), pct(91.7, 57.8),
+    pct(34, 78.5), pct(78.75, 78.5), pct(23, 78.5), pct(91.7, 78.5),
   ] as readonly Pt[],
 
   /**
