@@ -30,6 +30,16 @@ export type SessionSummary = {
   /** Where `name` came from — `user` means somebody typed it, and it then outranks everything. */
   nameSource?: string;
   /**
+   * What the user's own terminal tab is called, when the hub has been able to prove which session
+   * that tab is showing.
+   *
+   * A hand-renamed terminal tab is not written to disk by anything, so this is earned rather than
+   * read: the text on the active pane is matched against the transcripts, and a name is recorded
+   * only when exactly one session contains it. Absent for a tab nobody has looked at, and absent
+   * everywhere but Windows Terminal.
+   */
+  tabTitle?: string;
+  /**
    * The CLI's own topic title for the session, the one it also puts on the terminal tab.
    *
    * Written to the transcript as `ai-title` and rewritten as the conversation moves, so it says

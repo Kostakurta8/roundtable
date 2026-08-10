@@ -89,16 +89,21 @@ export function pathLeaf(p: string | undefined): string | undefined {
 /**
  * What to call a session, in the order of who actually chose it.
  *
- * 1. A name somebody typed with `/rename` (`nameSource: 'user'`). Nothing outranks a person.
- * 2. The CLI's own topic title. This is the text it also writes to the terminal tab, so the app's
- *    tabs end up reading like the terminal tabs beside them, and it costs the user nothing.
- * 3. The CLI's derived name — `dev-60`, the cwd's leaf plus two hex characters. True, but it
+ * 1. What the user's own terminal tab is called, once the hub has *proved* which session that tab
+ *    is showing. This is a name they typed themselves, about this session, and it is the whole
+ *    point: the tab in here reads the same as the tab out there.
+ * 2. A name somebody typed with `/rename` (`nameSource: 'user'`). Also chosen by a person, but the
+ *    terminal wins when the two disagree, because the terminal is the one they are looking at.
+ * 3. The CLI's own topic title, which it also writes to a terminal tab nobody has renamed.
+ * 4. The CLI's derived name — `dev-60`, the cwd's leaf plus two hex characters. True, but it
  *    tells six sessions started in one directory apart by two characters and nothing else, which
  *    is why it sits below a title rather than above it.
- * 4. The session id, when the registry knows nothing at all — a session that has already exited
+ * 5. The session id, when the registry knows nothing at all — a session that has already exited
  *    has no registry file left.
  */
 export function sessionName(s: SessionSummary): string {
+  const tab = s.tabTitle?.trim();
+  if (tab) return tab;
   if (s.nameSource === 'user' && s.name) return s.name;
   const title = s.title?.trim();
   if (title) return title;
@@ -114,7 +119,7 @@ export function sessionName(s: SessionSummary): string {
  * is tight, that line is worth showing only when the name is one of the useless ones.
  */
 export const hasChosenName = (s: SessionSummary): boolean =>
-  (s.nameSource === 'user' && !!s.name?.trim()) || !!s.title?.trim();
+  !!s.tabTitle?.trim() || (s.nameSource === 'user' && !!s.name?.trim()) || !!s.title?.trim();
 
 /**
  * The names that more than one of these sessions would show.

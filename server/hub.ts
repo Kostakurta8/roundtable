@@ -27,6 +27,7 @@ import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { AgentMeta, Ev } from '../shared/events';
 import { pageOrigins } from '../shared/net';
+import { matchSession, readActiveTab } from './termtabs';
 import type {
   BacklogTruncatedMsg,
   HelloMsg,
@@ -45,6 +46,7 @@ import {
   readWorkflowRun,
   registeredSessions,
   sessionLabel,
+  sessionTailText,
   sessionTitle,
   subagentFiles,
   workflowRunFiles,
@@ -442,6 +444,52 @@ export async function startServer(root: string, port: number, opts: HubOptions =
     return entry;
   }
 
+  /**
+   * What the user's own terminal calls each session, once it has been possible to prove it.
+   *
+   * Only ever added to by a *verified* match — the text on a terminal pane found in exactly one
+   * transcript — so an entry here is a fact rather than an inference. Kept for the life of the hub
+   * because a tab does not stop being called what it is called when the user looks at another one.
+   */
+  const tabTitles = new Map<string, string>();
+
+  /** True while a probe is in flight, so a slow terminal cannot pile up spawns behind itself. */
+  let probing = false;
+
+  /**
+   * Ask the terminal what it is showing, and give that name to whichever session it is showing.
+   *
+   * Deliberately silent about every failure. This is a courtesy feature reading another
+   * application's window: not Windows, no Windows Terminal, UI Automation refused, the window
+   * closed mid-read — every one of them means the sessions keep the names they already had.
+   */
+  async function learnTabTitle(): Promise<void> {
+    if (probing) return;
+    probing = true;
+    try {
+      const active = await readActiveTab();
+      if (!active) return;
+      const registry = registeredSessions(root);
+      const candidates = listSessions(root)
+        // Interactive sessions only. A background job has no terminal tab of its own — it was
+        // spawned by a session that does — and because it inherits its parent's task its transcript
+        // repeats the parent's text almost word for word. Left in the running it wins matches that
+        // belong to the tab above it, which is how a name lands on the wrong session. Measured
+        // here: the `youtube anime` tab resolved to a `kind: 'bg'` job on the first attempt.
+        .filter(({ sessionId }) => registry.get(sessionId)?.kind === 'interactive')
+        .map(({ sessionId, file }) => ({ sessionId, text: sessionTailText(file) }));
+      const owner = matchSession(active.text, candidates);
+      if (!owner) return; // no match, or more than one — either way, say nothing
+      if (tabTitles.get(owner) === active.title) return;
+      tabTitles.set(owner, active.title);
+      broadcastRoster();
+    } catch {
+      // reading somebody else's window may fail in ways this process has no business surviving on
+    } finally {
+      probing = false;
+    }
+  }
+
   function roster(): SessionSummary[] {
     const registry = registeredSessions(root);
     const now = Date.now();
@@ -474,6 +522,9 @@ export async function startServer(root: string, port: number, opts: HubOptions =
           ...(reg?.cwd ? { cwd: reg.cwd } : {}),
           ...(reg?.name ? { name: reg.name } : {}),
           ...(reg?.nameSource ? { nameSource: reg.nameSource } : {}),
+          // What the user's own terminal calls this session, when that has been proved rather
+          // than guessed. Outranks the CLI's title: it is the name they typed themselves.
+          ...(tabTitles.has(sessionId) ? { tabTitle: tabTitles.get(sessionId) } : {}),
           // The CLI's own topic title — the same text it puts on the terminal tab, so the app's
           // tabs read like the user's own terminal tabs without anybody naming anything.
           ...(title ? { title } : {}),
@@ -1423,6 +1474,9 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         // only thing that notices one: nothing on disk announces a new session to a process that
         // is not already watching its directory.
         syncLive();
+        // And what the terminal calls the tab the user is looking at right now. Fire-and-forget:
+        // it is a courtesy, it talks to another application, and the sweep must not wait on it.
+        void learnTabTitle();
       } catch (err) {
         report(err, 'roster');
       }

@@ -586,6 +586,14 @@ describe('session identity', () => {
     expect(sessionName(s)).toBe('Refine intro for impact');
   });
 
+  it('lets the terminal tab outrank everything', () => {
+    // The point of the whole exercise: the tab in the app reads the same as the tab in the
+    // terminal. When the user has named that tab themselves, that name is the answer — it is what
+    // they are looking at on the other monitor.
+    const s = summary({ tabTitle: 'youtube anime', name: 'release prep', nameSource: 'user', title: 'Refine the intro' });
+    expect(sessionName(s)).toBe('youtube anime');
+  });
+
   it('lets a name somebody typed outrank the title', () => {
     // `/rename` sets `nameSource: 'user'`, and it also renames the terminal tab — so honouring it
     // here is what keeps the two in agreement. Nothing outranks a person.

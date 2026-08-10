@@ -277,6 +277,104 @@ function aiTitleOf(raw: string): string | undefined {
   return title.length > 0 ? title : undefined;
 }
 
+/**
+ * The words of the last stretch of a transcript, for recognising it on a terminal's screen.
+ *
+ * Not a label and never shown to anybody: this exists to be *compared*. The pane of a terminal
+ * holds the tail of a conversation, and the only honest way to say which session that pane belongs
+ * to is to find the same words in exactly one transcript.
+ *
+ * Same tail window and the same skip-the-first-fragment rule as the title scan, for the same
+ * reasons. Text blocks only — a tool result or a file's contents are not what the user is reading.
+ */
+/**
+ * How far back "what is on screen right now" reaches.
+ *
+ * Much shorter than the title scan, and for a reason that is not performance: the further back
+ * this reads, the more of a session's *history* it offers up for matching, and an observer's own
+ * transcript quotes every session it has looked at. Keeping the window to the newest few exchanges
+ * is what makes "this session is showing that pane" a stronger claim than "this session once
+ * mentioned those words".
+ */
+const RECENT_TAIL_BYTES = 24 * 1024;
+
+/** A ceiling on how many strings one tail contributes, so a pathological record cannot run away. */
+const MAX_TAIL_STRINGS = 4000;
+
+/** The shortest string worth keeping — below this it is a key, a flag or an id, never a screenful. */
+const MIN_TAIL_STRING = 8;
+
+/** Every string of substance inside a parsed record, depth-first. */
+function collectStrings(value: unknown, out: string[], depth = 0): void {
+  if (out.length > MAX_TAIL_STRINGS || depth > 12) return;
+  if (typeof value === 'string') {
+    if (value.length >= MIN_TAIL_STRING) out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectStrings(v, out, depth + 1);
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const v of Object.values(value)) collectStrings(v, out, depth + 1);
+  }
+}
+
+export function sessionTailText(file: string, bytes = RECENT_TAIL_BYTES): string {
+  let fd: number;
+  try {
+    fd = openSync(file, 'r');
+  } catch {
+    return '';
+  }
+  try {
+    const size = statSync(file).size;
+    const want = Math.min(bytes, size);
+    if (want <= 0) return '';
+    const from = size - want;
+    const buf = Buffer.allocUnsafe(want);
+
+    let got = 0;
+    while (got < want) {
+      const n = readSync(fd, buf, got, want - got, from + got);
+      if (n <= 0) break;
+      got += n;
+    }
+    if (got === 0) return '';
+
+    let start = from === 0 ? 0 : buf.indexOf(NEWLINE, 0) + 1;
+    if (start <= 0 && from !== 0) return '';
+
+    const out: string[] = [];
+    for (;;) {
+      const nl = buf.indexOf(NEWLINE, start);
+      if (nl === -1 || nl >= got) break;
+      const raw = buf.toString('utf8', start, nl);
+      start = nl + 1;
+      if (raw.trim().length === 0) continue;
+      // Every string in the record, not only the assistant's prose.
+      //
+      // A terminal pane shows whatever the CLI last rendered, and that is very often *not*
+      // conversation: a diff, a file's contents, the output of a command. Those live in the
+      // transcript as a tool's input or its result, so a haystack built from message text alone
+      // misses exactly the screens most likely to be on display. Parsing first and collecting
+      // afterwards is what makes this safe — `\n` in the file is a real newline by the time it is
+      // compared, rather than the two characters a raw scan would have found.
+      try {
+        collectStrings(JSON.parse(raw), out);
+      } catch {
+        // a torn line: it has no strings worth having
+      }
+      if (out.length > MAX_TAIL_STRINGS) break;
+    }
+    return out.join(' ');
+  } catch {
+    return '';
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // ------------------------------------------------------------------ liveness
 
 /**
