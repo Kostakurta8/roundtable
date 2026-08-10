@@ -10,6 +10,8 @@ import {
   readAgentMeta,
   readWorkflowRun,
   sessionLabel,
+  sessionTitle,
+  TITLE_SCAN_BYTES,
   subagentFiles,
   workflowRunFiles,
 } from '../server/sessions';
@@ -207,6 +209,76 @@ describe('sessionLabel', () => {
  * machine carry `parentAgentId`, every one of them at `spawnDepth: 2`, and it needs nothing else
  * to be resolvable.
  */
+describe('sessionTitle', () => {
+  const line = (body: Record<string, unknown>): string => `${JSON.stringify(body)}
+`;
+
+  const title = (t: string): string => line({ type: 'ai-title', aiTitle: t, sessionId: 'sess' });
+
+  /** One assistant line of roughly `bytes` bytes, for pushing a title out of the tail window. */
+  const filler = (bytes: number): string =>
+    line({
+      type: 'assistant',
+      timestamp: '2026-08-03T09:00:00.000Z',
+      message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'z'.repeat(bytes) }] },
+    });
+
+  const transcript = (body: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'rt-title-'));
+    const file = join(dir, 'sess.jsonl');
+    writeFileSync(file, body);
+    return file;
+  };
+
+  it('takes the newest title, not the first', () => {
+    // The whole point of reading the tail: the CLI re-titles a session as the topic moves, and on
+    // this machine one transcript carries 57 of them. The oldest describes a conversation that
+    // stopped being what this session is about hours ago.
+    const file = transcript(title('Set up the project') + filler(200) + title('Debug the tail suite'));
+    expect(sessionTitle(file)).toBe('Debug the tail suite');
+  });
+
+  it('has no title for a session the CLI never titled', () => {
+    expect(sessionTitle(transcript(filler(200)))).toBeUndefined();
+  });
+
+  it('is undefined rather than a throw for a file that is not there', () => {
+    expect(sessionTitle(join(mkdtempSync(join(tmpdir(), 'rt-title-')), 'gone.jsonl'))).toBeUndefined();
+  });
+
+  it('reads a file smaller than the scan window', () => {
+    // The window is clamped to the file, so a short transcript is not read from a negative offset.
+    expect(sessionTitle(transcript(title('Tiny')))).toBe('Tiny');
+  });
+
+  it('steps over a torn last line rather than guessing at it', () => {
+    // The CLI is appending to this file; the final line is half-written.
+    const file = transcript(title('Settled') + '{"type":"ai-title","aiTi');
+    expect(sessionTitle(file)).toBe('Settled');
+  });
+
+  it('steps over the fragment the window itself starts in the middle of', () => {
+    // The tail window opens mid-line by construction. That first fragment is not a record, and
+    // decoding it as one would hand `JSON.parse` half an object on every large transcript.
+    const file = transcript(title('Old') + filler(TITLE_SCAN_BYTES) + title('Current'));
+    expect(sessionTitle(file)).toBe('Current');
+  });
+
+  it('ignores a title that is present but empty', () => {
+    expect(sessionTitle(transcript(title('Real') + title('   ')))).toBe('Real');
+  });
+
+  it('ignores a line that merely mentions the type', () => {
+    // The scan rejects on a substring before parsing, so a message *about* ai-title must not be
+    // mistaken for one.
+    const said = line({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'the "ai-title" line is written per turn' }] },
+    });
+    expect(sessionTitle(transcript(title('Real') + said))).toBe('Real');
+  });
+});
+
 describe('readAgentMeta', () => {
   const withSidecar = (body: Record<string, unknown>): ReturnType<typeof readAgentMeta> => {
     const dir = mkdtempSync(join(tmpdir(), 'rt-meta-'));

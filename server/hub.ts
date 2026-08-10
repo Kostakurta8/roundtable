@@ -45,6 +45,7 @@ import {
   readWorkflowRun,
   registeredSessions,
   sessionLabel,
+  sessionTitle,
   subagentFiles,
   workflowRunFiles,
   type AgentFile,
@@ -424,14 +425,21 @@ export async function startServer(root: string, port: number, opts: HubOptions =
    * *next* thing typed) is re-read as it grows. One small entry per session id; the roster is
    * already a list of all of them, so this adds no order of magnitude to what the hub holds.
    */
-  const labels = new Map<string, { mtime: number; label?: string }>();
+  const labels = new Map<string, { mtime: number; label?: string; title?: string }>();
 
-  function labelFor(sessionId: string, file: string, mtime: number): string | undefined {
+  /**
+   * The opening turn and the current topic title, both keyed by the transcript's mtime.
+   *
+   * Read together and cached together on purpose: they are two bounded reads of the same file —
+   * one at each end — and pairing them means a sweep over an unchanged session does no I/O at all,
+   * while a changed one pays for both at once rather than being scanned twice on different beats.
+   */
+  function textOf(sessionId: string, file: string, mtime: number): { label?: string; title?: string } {
     const cached = labels.get(sessionId);
-    if (cached && cached.mtime === mtime) return cached.label;
-    const label = sessionLabel(file);
-    labels.set(sessionId, { mtime, label });
-    return label;
+    if (cached && cached.mtime === mtime) return cached;
+    const entry = { mtime, label: sessionLabel(file), title: sessionTitle(file) };
+    labels.set(sessionId, entry);
+    return entry;
   }
 
   function roster(): SessionSummary[] {
@@ -457,7 +465,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         const live =
           reg !== undefined &&
           (reg.pid !== undefined ? alive(reg.pid) : now - touched < LIVE_WINDOW_MS);
-        const label = labelFor(sessionId, file, mtime);
+        const { label, title } = textOf(sessionId, file, mtime);
         return {
           sessionId,
           slug,
@@ -465,6 +473,10 @@ export async function startServer(root: string, port: number, opts: HubOptions =
           live,
           ...(reg?.cwd ? { cwd: reg.cwd } : {}),
           ...(reg?.name ? { name: reg.name } : {}),
+          ...(reg?.nameSource ? { nameSource: reg.nameSource } : {}),
+          // The CLI's own topic title — the same text it puts on the terminal tab, so the app's
+          // tabs read like the user's own terminal tabs without anybody naming anything.
+          ...(title ? { title } : {}),
           ...(reg?.status ? { status: reg.status } : {}),
           // What the session was actually asked to do — the only thing that tells apart six tabs
           // the CLI named after the same directory. Absent until somebody has asked it something.

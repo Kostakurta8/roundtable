@@ -17,7 +17,7 @@ import {
   WORKING_WINDOW_MS,
   type RtState,
 } from '../src/store';
-import { sessionAbout, sessionName } from '../src/ui/format';
+import { clashingNames, hasChosenName, sessionAbout, sessionName } from '../src/ui/format';
 
 /** Same helper the Normalizer tests use: a whole fixture file → the events it produces. */
 const feedAll = (file: string, agentId: 'main' | string): Ev[] => {
@@ -576,6 +576,72 @@ describe('session identity', () => {
 
   it('keeps the CLI\'s own name as the identity', () => {
     expect(sessionName(summary())).toBe('dev-c8');
+  });
+
+  it('prefers the CLI\'s topic title over a name it derived from the directory', () => {
+    // `dev-c8` is the cwd's leaf plus two hex characters, which is what every session started in
+    // that directory is called. The title is the same text the CLI puts on the terminal tab, so
+    // this is what makes the app's tabs read like the terminal tabs next to them.
+    const s = summary({ name: 'dev-c8', nameSource: 'derived', title: 'Refine intro for impact' });
+    expect(sessionName(s)).toBe('Refine intro for impact');
+  });
+
+  it('lets a name somebody typed outrank the title', () => {
+    // `/rename` sets `nameSource: 'user'`, and it also renames the terminal tab — so honouring it
+    // here is what keeps the two in agreement. Nothing outranks a person.
+    const s = summary({ name: 'release prep', nameSource: 'user', title: 'Refine intro for impact' });
+    expect(sessionName(s)).toBe('release prep');
+  });
+
+  it('ignores a blank title rather than showing an empty tab', () => {
+    expect(sessionName(summary({ title: '   ' }))).toBe('dev-c8');
+    expect(sessionName(summary({ name: undefined, title: '' }))).toBe('c8f0e1d2');
+  });
+
+  it('knows a derived name is not one anybody chose', () => {
+    // What decides whether a tab still needs its second line: `dev-60` says nothing, a title or
+    // a typed name says what the session is.
+    expect(hasChosenName(summary({ nameSource: 'derived' }))).toBe(false);
+    expect(hasChosenName(summary({ nameSource: 'derived', title: 'Refine the intro' }))).toBe(true);
+    expect(hasChosenName(summary({ name: 'release prep', nameSource: 'user' }))).toBe(true);
+    expect(hasChosenName(summary({ name: '  ', nameSource: 'user' }))).toBe(false);
+  });
+
+  it('spots two tabs that would show the same name', () => {
+    // A background job is spawned with its parent's task, so the CLI gives both the same title —
+    // and both transcripts open with the same turn, so the second line does not separate them
+    // either. Seen in the wild: two live tabs rendering the same words, telling nobody anything.
+    const shared = 'Track down the flaky scheduler test';
+    const clash = clashingNames([
+      summary({ sessionId: 'a1b2c3d4-x', name: 'dev-0e', nameSource: 'derived', title: shared }),
+      summary({ sessionId: 'b2c3d4e5-x', name: shared, title: shared }),
+      summary({ sessionId: 'c3d4e5f6-x', name: 'dev-60', nameSource: 'derived', title: 'Refine the intro' }),
+    ]);
+    expect([...clash]).toEqual([shared]);
+  });
+
+  it('reports no clash when every tab already reads differently', () => {
+    const clash = clashingNames([
+      summary({ sessionId: 'a1b2c3d4-x', title: 'Refine the intro' }),
+      summary({ sessionId: 'e5f6a7b8-x', title: 'Debug the tail suite' }),
+    ]);
+    expect(clash.size).toBe(0);
+  });
+
+  it('counts a clash between two sessions the CLI never titled', () => {
+    // The fallback is the short id, which is unique — so two untitled, unnamed sessions do not
+    // collide, and the rule must not claim they do.
+    const clash = clashingNames([
+      summary({ sessionId: 'a1b2c3d4-x', name: undefined }),
+      summary({ sessionId: 'e5f6a7b8-x', name: undefined }),
+    ]);
+    expect(clash.size).toBe(0);
+  });
+
+  it('still falls back to the title when the registry is gone', () => {
+    // An exited session has no registry file, so no name and no source — but its transcript, and
+    // therefore its title, are still on disk.
+    expect(sessionName(summary({ name: undefined, title: 'Debug the tail suite' }))).toBe('Debug the tail suite');
   });
 
   it('falls back to the short id when the CLI has no name for it', () => {

@@ -27,6 +27,17 @@ export type SessionSummary = {
   cwd?: string;
   /** The CLI's own name for the session, e.g. `dev-67`. */
   name?: string;
+  /** Where `name` came from — `user` means somebody typed it, and it then outranks everything. */
+  nameSource?: string;
+  /**
+   * The CLI's own topic title for the session, the one it also puts on the terminal tab.
+   *
+   * Written to the transcript as `ai-title` and rewritten as the conversation moves, so it says
+   * what the session is about *now* rather than what it opened with. This is what makes a tab
+   * readable without anybody naming anything: `dev-60` and `dev-cb` become "Refine the landing
+   * page intro" and "Track down the flaky scheduler test".
+   */
+  title?: string;
   /**
    * One line that tells this session apart from its neighbours, when its name cannot.
    *

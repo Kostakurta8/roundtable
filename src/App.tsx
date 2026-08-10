@@ -16,7 +16,7 @@ import { PixelOffice, useOffice } from './office/PixelOffice';
 import { initialState, roster as rosterOf, turnCount, workingAgents } from './store';
 import { useTheme } from './theme';
 import { AgentsTab } from './ui/AgentsTab';
-import { clip, clockSec, sessionAbout, sessionName, shortId } from './ui/format';
+import { clashingNames, clip, clockSec, hasChosenName, sessionAbout, sessionName, shortId } from './ui/format';
 import { Help } from './ui/Help';
 import { Inspector } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
@@ -247,6 +247,9 @@ export default function App() {
     return current ? [current, ...working] : working;
   }, [working, sessions, sessionId]);
 
+  /** The names more than one visible tab would show; those tabs need something that cannot clash. */
+  const clashing = useMemo(() => clashingNames(tabs), [tabs]);
+
   // Follow the remembered pin if that session still exists, else the most recently touched one:
   // the observer exists to show what is happening now, but a reload that silently switched the
   // room to a *different* session — because a sibling happened to write last — read as the app
@@ -449,7 +452,19 @@ export default function App() {
                * remainder rather than a sentence invented here.
                */
               const about = sessionAbout(s);
-              const says = addsSomething(name, about) ? clip(about, TAB_ABOUT_MAX) : undefined;
+              // …and when the name *can*, this line is redundant and costs a tab twice its width.
+              // A titled session already says what it is about in the name, so the strip stays a
+              // strip rather than five 320px tabs the user has to scroll through.
+              // A clashing name gets the id, not the opening prompt. The prompt is what the two
+              // colliding tabs have *in common* — a background job is spawned with its parent's
+              // task, so it inherits both the title and the first turn — and a disambiguator that
+              // is itself identical on both tabs is worse than none, because it looks like one.
+              // The id is the only thing here that cannot collide.
+              const says = clashing.has(name)
+                ? shortId(s.sessionId)
+                : !hasChosenName(s) && addsSomething(name, about)
+                  ? clip(about, TAB_ABOUT_MAX)
+                  : undefined;
               const where = says === undefined ? (s.cwd ?? s.slug) : undefined;
               return (
                 <button

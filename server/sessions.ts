@@ -188,6 +188,95 @@ export function sessionLabel(file: string): string | undefined {
   }
 }
 
+/**
+ * How much of the end of a transcript is read looking for the session's current title.
+ *
+ * A tail rather than a prefix, because unlike the opening human turn this is the *latest* answer:
+ * the CLI re-titles a session as its topic moves, and on this machine one 4 MB transcript carries
+ * 57 of them. 128 KiB is generous for what it has to find — an `ai-title` line is under 200 bytes
+ * and one lands roughly every turn — and it is the same order as the label scan above, so a sweep
+ * over a live session costs one bounded read at each end of the file rather than a walk through it.
+ */
+export const TITLE_SCAN_BYTES = 128 * 1024;
+
+/** `{"type":"ai-title","aiTitle":"…"}` — the CLI's own topic title for the session. */
+type AiTitleLine = { type?: unknown; aiTitle?: unknown };
+
+/**
+ * The CLI's current topic title for a session, or `undefined` if it has not written one.
+ *
+ * This is the line the CLI derives the terminal tab's own title from, which is the whole reason to
+ * read it: it is the name the user is already looking at on their tab, produced without them
+ * having to name anything. A session's derived `name` — `dev-60`, the cwd's leaf plus two hex
+ * characters — cannot tell six tabs apart, and this can.
+ *
+ * Scanned backwards from the end and the *last* complete line wins, because the title is rewritten
+ * as the conversation moves and only the newest one describes what the session is now about. A
+ * partial line at either edge of the window is skipped rather than guessed at: the head of the
+ * buffer is mid-line by construction, and the tail can be a line another process is still writing.
+ */
+export function sessionTitle(file: string): string | undefined {
+  let fd: number;
+  try {
+    fd = openSync(file, 'r');
+  } catch {
+    return undefined; // gone, or racing a delete — absent, exactly like everything else here
+  }
+  try {
+    const size = statSync(file).size;
+    const want = Math.min(TITLE_SCAN_BYTES, size);
+    if (want <= 0) return undefined;
+    const from = size - want;
+    const buf = Buffer.allocUnsafe(want);
+
+    let got = 0;
+    while (got < want) {
+      const n = readSync(fd, buf, got, want - got, from + got);
+      if (n <= 0) break;
+      got += n;
+    }
+    if (got === 0) return undefined;
+
+    // Unless the window starts at byte zero its first line is a fragment — it began before the
+    // window did — so skip to the first newline and start from real data.
+    let start = from === 0 ? 0 : buf.indexOf(NEWLINE, 0) + 1;
+    if (start <= 0 && from !== 0) return undefined; // no complete line in the window at all
+
+    let found: string | undefined;
+    for (;;) {
+      const nl = buf.indexOf(NEWLINE, start);
+      if (nl === -1 || nl >= got) break; // the rest is a torn line, or `allocUnsafe` leftovers
+      const raw = buf.toString('utf8', start, nl);
+      start = nl + 1;
+      // Cheap reject before parsing: nearly every line in the window is an assistant turn, and
+      // running `JSON.parse` over a 128 KiB window of them on every sweep is the one cost worth
+      // avoiding here.
+      if (raw.includes('"ai-title"')) {
+        const title = aiTitleOf(raw);
+        if (title) found = title; // keep going: the last one is the current one
+      }
+    }
+    return found;
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** The title on one raw line, when it is an `ai-title` line carrying a non-empty one. */
+function aiTitleOf(raw: string): string | undefined {
+  let parsed: AiTitleLine;
+  try {
+    parsed = JSON.parse(raw) as AiTitleLine;
+  } catch {
+    return undefined; // a half-written line is not a title
+  }
+  if (parsed.type !== 'ai-title' || typeof parsed.aiTitle !== 'string') return undefined;
+  const title = oneLine(parsed.aiTitle, LABEL_MAX_LEN);
+  return title.length > 0 ? title : undefined;
+}
+
 // ------------------------------------------------------------------ liveness
 
 /**
@@ -202,6 +291,14 @@ export type LiveSession = {
   cwd?: string;
   /** The CLI's own derived name, e.g. `dev-67`. */
   name?: string;
+  /**
+   * Where `name` came from: `derived` (the cwd's leaf plus a counter), `auto`, or `user`.
+   *
+   * The distinction decides whether the name is worth showing. `derived` is what the CLI falls
+   * back to when nobody has said anything — six sessions in one directory all get one — while
+   * `user` is a name somebody typed with `/rename` and is therefore the best label that exists.
+   */
+  nameSource?: string;
   /** `idle`, `running`, … — whatever the CLI last wrote. */
   status?: string;
   version?: string;
@@ -235,6 +332,7 @@ export function registeredSessions(root: string): Map<string, LiveSession> {
       pid: num(raw.pid),
       cwd: str(raw.cwd),
       name: str(raw.name),
+      nameSource: str(raw.nameSource),
       status: str(raw.status),
       version: str(raw.version),
       kind: str(raw.kind),

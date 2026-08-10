@@ -87,12 +87,53 @@ export function pathLeaf(p: string | undefined): string | undefined {
 }
 
 /**
- * What a session is called: the CLI's own name for it, else the head of its id.
+ * What to call a session, in the order of who actually chose it.
  *
- * This is the identity and it never changes shape — a person who has learnt that the tab reading
- * `dev-c8` is theirs must find the same word there a minute later.
+ * 1. A name somebody typed with `/rename` (`nameSource: 'user'`). Nothing outranks a person.
+ * 2. The CLI's own topic title. This is the text it also writes to the terminal tab, so the app's
+ *    tabs end up reading like the terminal tabs beside them, and it costs the user nothing.
+ * 3. The CLI's derived name — `dev-60`, the cwd's leaf plus two hex characters. True, but it
+ *    tells six sessions started in one directory apart by two characters and nothing else, which
+ *    is why it sits below a title rather than above it.
+ * 4. The session id, when the registry knows nothing at all — a session that has already exited
+ *    has no registry file left.
  */
-export const sessionName = (s: SessionSummary): string => s.name ?? shortId(s.sessionId);
+export function sessionName(s: SessionSummary): string {
+  if (s.nameSource === 'user' && s.name) return s.name;
+  const title = s.title?.trim();
+  if (title) return title;
+  return s.name ?? shortId(s.sessionId);
+}
+
+/**
+ * Whether this session's name was chosen rather than derived.
+ *
+ * A name somebody typed, or the CLI's topic title, both describe the session. The derived
+ * `dev-60` does not — it is the directory's leaf and a counter, shared by every session started
+ * in that directory — and it is the reason the second line beside a tab exists at all. Where space
+ * is tight, that line is worth showing only when the name is one of the useless ones.
+ */
+export const hasChosenName = (s: SessionSummary): boolean =>
+  (s.nameSource === 'user' && !!s.name?.trim()) || !!s.title?.trim();
+
+/**
+ * The names that more than one of these sessions would show.
+ *
+ * Titles are not unique and nothing promises they will be: a background job is spawned with its
+ * parent's task, so the CLI titles them identically *and* both transcripts open with the same
+ * turn. Two tabs then read the same words with nothing between them, which is the `dev-c8`/`dev-52`
+ * problem again in better English. Callers use this to fall back to something that cannot collide.
+ */
+export function clashingNames(sessions: readonly SessionSummary[]): ReadonlySet<string> {
+  const seen = new Set<string>();
+  const twice = new Set<string>();
+  for (const s of sessions) {
+    const name = sessionName(s);
+    if (seen.has(name)) twice.add(name);
+    seen.add(name);
+  }
+  return twice;
+}
 
 /**
  * The one line that tells a session apart from its neighbours.
