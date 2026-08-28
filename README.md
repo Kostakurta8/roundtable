@@ -22,17 +22,22 @@ It is for anyone who runs Claude Code with subagents and wants to see what the f
 doing: who is working, who is waiting, and who is spending the tokens.
 
 ```
-npx claude-roundtable
+npx github:Kostakurta8/roundtable
 ```
 
 That is the whole install. It serves the app on <http://localhost:7411>, opens your browser, and
-watches `~/.claude` — no clone, no build step, nothing written anywhere.
+watches `~/.claude` — no clone to keep, no build step to run, nothing written anywhere. The first
+run builds the client, so give it a minute; after that it is cached.
 
 ```
-npx claude-roundtable --port 9000     # somewhere else
-npx claude-roundtable --root /path    # a different Claude directory
-npx claude-roundtable --no-open       # print the address, do not open a browser
+npx github:Kostakurta8/roundtable --port 9000   # somewhere else
+npx github:Kostakurta8/roundtable --root /path  # a different Claude directory
+npx github:Kostakurta8/roundtable --no-open     # print the address, do not open a browser
 ```
+
+The registry name `claude-roundtable` is reserved for the same thing published to npm, which will
+shorten that to `npx claude-roundtable`. It is not published yet — this line is, so this is the
+line the README carries.
 
 Node 22.12 or newer. Written and used on Windows — see [Platforms](#platforms) before you assume
 anything about the other two.
@@ -55,9 +60,9 @@ synthetic, so that no private session appears in it. `scripts/promo/` is the har
 
 ![the office, in daylight](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-day.png)
 
-One command is the whole thing. `npx claude-roundtable` opens `http://localhost:7411` — from a
-clone, `npm start` opens `http://localhost:5173` instead — and either way it starts showing whatever
-session ran most recently. If you have a session running right now, you are watching it live.
+One command is the whole thing. `npx github:Kostakurta8/roundtable` opens `http://localhost:7411`
+— from a clone, `npm start` opens `http://localhost:5173` instead — and either way it starts showing
+whatever session ran most recently. If you have a session running right now, you are watching it live.
 
 ### If you don't have Claude Code, or nothing is running
 
