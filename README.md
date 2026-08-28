@@ -43,9 +43,9 @@ something to watch on a machine that has never run Claude Code.
 
 ### See it first
 
-![agents arriving, reporting to each other, and one verdict going each way](media/roundtable-demo.gif)
+![agents arriving, reporting to each other, and one verdict going each way](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
 
-That is fourteen seconds of it. **[▶ the whole thing, 52 seconds](media/roundtable-trailer.mp4)** —
+That is fourteen seconds of it. **[▶ the whole thing, 52 seconds](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)** —
 no narration, and it carries the parts a loop cannot: the timeline rewinding the room to an earlier
 second, two sessions in tabs, and the per-agent token and cost breakdown. Captions are burned in,
 and `media/roundtable-trailer.srt` has them as text.
@@ -53,7 +53,7 @@ and `media/roundtable-trailer.srt` has them as text.
 Every frame is the real application driven by real events — only the *content* of the transcripts is
 synthetic, so that no private session appears in it. `scripts/promo/` is the harness that filmed it.
 
-![the office, in daylight](media/screenshot-day.png)
+![the office, in daylight](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-day.png)
 
 `npm start` is the whole thing. It opens `http://localhost:5173` and starts showing whatever
 session ran most recently. If you have a session running right now, you are watching it live.
@@ -271,5 +271,5 @@ is the only thing both halves import.
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to run it, the checks, the visual-regression loop, and what will get a PR sent back |
 | [`SECURITY.md`](SECURITY.md) | what "read-only" is enforced by, file and mechanism — and the residual risks, including the one the `Origin` gate deliberately leaves open |
 | [`CHANGELOG.md`](CHANGELOG.md) | everything so far, as one unreleased `0.1.0` |
-| [`docs/pixel-contract.md`](docs/pixel-contract.md) | binding for anything under `src/office/pixel/` |
+| [`docs/pixel-contract.md`](https://github.com/Kostakurta8/roundtable/blob/main/docs/pixel-contract.md) | binding for anything under `src/office/pixel/` |
 | [`LICENSE`](LICENSE) | MIT |

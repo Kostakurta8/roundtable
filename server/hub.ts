@@ -266,6 +266,12 @@ function serveClient(
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
+  // Read the request body and throw it away. Nothing here wants it, but a response that finishes
+  // while bytes are still arriving makes Node destroy the socket, and the client sees ECONNRESET
+  // instead of the answer it was given — which is how the 405 below arrived as a *network error*
+  // on Node 22 while Node 24 tolerated it. The refusal has to be legible to be a refusal.
+  req.resume();
+
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { 'content-type': 'text/plain', allow: 'GET, HEAD' });
     res.end('roundtable observer: read-only\n');
