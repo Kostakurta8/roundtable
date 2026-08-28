@@ -55,10 +55,13 @@ synthetic, so that no private session appears in it. `scripts/promo/` is the har
 
 ![the office, in daylight](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-day.png)
 
-`npm start` is the whole thing. It opens `http://localhost:5173` and starts showing whatever
+One command is the whole thing. `npx claude-roundtable` opens `http://localhost:7411` — from a
+clone, `npm start` opens `http://localhost:5173` instead — and either way it starts showing whatever
 session ran most recently. If you have a session running right now, you are watching it live.
 
 ### If you don't have Claude Code, or nothing is running
+
+From a clone:
 
 ```
 npm run demo
