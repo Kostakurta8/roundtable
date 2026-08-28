@@ -54,7 +54,8 @@
     "sheet": "tsx scripts/sheet.ts",
     "room:bless": "tsx scripts/bless.ts",
     "desktop": "node scripts/desktopIcon.mjs && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installShortcut.ps1",
-    "prepack": "node scripts/build.mjs"
+    "prepack": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs"
   },
   "dependencies": {
     "chokidar": "^5.0.0",
