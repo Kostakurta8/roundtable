@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1313,12 +1314,50 @@ function mkdirRuns(sessionDir: string): string {
  * so the escape attempts below are the point of this block, not an afterthought.
  */
 describe('serving the built client', () => {
+  /**
+   * One request, on its own connection.
+   *
+   * Deliberately not `fetch`. Every test here starts a fresh hub on the *same* port, and undici's
+   * global dispatcher keeps connections alive across tests — so a request can be handed a pooled
+   * socket belonging to a server that was stopped in `afterEach`. On Linux the dead socket is
+   * noticed and replaced; on Windows the reuse comes back as ECONNRESET and the test fails for a
+   * reason that has nothing to do with what it is testing. `agent: false` opts out of pooling.
+   */
+  function httpReq(
+    port: number,
+    path: string,
+    opts: { method?: string; body?: string } = {},
+  ): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }> {
+    return new Promise((resolvePromise, rejectPromise) => {
+      const req = httpRequest(
+        { host: '127.0.0.1', port, path, method: opts.method ?? 'GET', agent: false },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () =>
+            resolvePromise({
+              status: res.statusCode ?? 0,
+              headers: res.headers,
+              body: Buffer.concat(chunks).toString('utf8'),
+            }),
+          );
+        },
+      );
+      req.on('error', rejectPromise);
+      if (opts.body !== undefined) req.write(opts.body);
+      req.end();
+    });
+  }
+
   /** A stand-in for `dist/client`: a shell, a fingerprinted asset, and a file to try to escape to. */
   function makeClientDir(): { dir: string; secret: string } {
     const base = mkdtempSync(join(tmpdir(), 'rt-client-'));
     const dir = join(base, 'client');
     mkdirSync(join(dir, 'assets'), { recursive: true });
-    writeFileSync(join(dir, 'index.html'), '<!doctype html><html><head><title>Roundtable</title></head><body><div id="root"></div></body></html>');
+    writeFileSync(
+      join(dir, 'index.html'),
+      '<!doctype html><html><head><title>Roundtable</title></head><body><div id="root"></div></body></html>',
+    );
     writeFileSync(join(dir, 'assets', 'index-abc123.js'), 'export const x = 1;\n');
     const secret = join(base, 'secret.txt');
     writeFileSync(secret, 'a transcript the page must never reach');
@@ -1330,9 +1369,9 @@ describe('serving the built client', () => {
     // reachable through this port, which is what every other test in this file assumes.
     const { root } = makeRoot({ subagents: false });
     const port = await start(root);
-    const res = await fetch(`http://127.0.0.1:${port}/index.html`);
+    const res = await httpReq(port, '/index.html');
     expect(res.status).toBe(404);
-    expect(await res.text()).toContain('websocket only');
+    expect(res.body).toContain('websocket only');
   });
 
   it('serves the shell, and tells it which port to dial', async () => {
@@ -1343,14 +1382,13 @@ describe('serving the built client', () => {
     const { dir } = makeClientDir();
     const port = await start(root, { clientDir: dir });
 
-    const res = await fetch(`http://127.0.0.1:${port}/`);
+    const res = await httpReq(port, '/');
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/html');
-    const html = await res.text();
-    expect(html).toContain(`window.__ROUNDTABLE_WS__="ws://127.0.0.1:${port}/ws"`);
-    expect(html).toContain('<div id="root">');
+    expect(String(res.headers['content-type'])).toContain('text/html');
+    expect(res.body).toContain(`window.__ROUNDTABLE_WS__="ws://127.0.0.1:${port}/ws"`);
+    expect(res.body).toContain('<div id="root">');
     // The shell must never be cached, or an upgrade goes on running the old JavaScript.
-    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers['cache-control']).toBe('no-store');
   });
 
   it('serves a fingerprinted asset as JavaScript, and lets it be cached', async () => {
@@ -1358,11 +1396,11 @@ describe('serving the built client', () => {
     const { dir } = makeClientDir();
     const port = await start(root, { clientDir: dir });
 
-    const res = await fetch(`http://127.0.0.1:${port}/assets/index-abc123.js`);
+    const res = await httpReq(port, '/assets/index-abc123.js');
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/javascript');
-    expect(res.headers.get('cache-control')).toContain('immutable');
-    expect(await res.text()).toContain('export const x');
+    expect(String(res.headers['content-type'])).toContain('text/javascript');
+    expect(String(res.headers['cache-control'])).toContain('immutable');
+    expect(res.body).toContain('export const x');
   });
 
   it('refuses to walk out of the client directory, however the escape is spelt', async () => {
@@ -1372,16 +1410,10 @@ describe('serving the built client', () => {
     const { dir } = makeClientDir();
     const port = await start(root, { clientDir: dir });
 
-    for (const path of [
-      '/../secret.txt',
-      '/assets/../../secret.txt',
-      '/%2e%2e/secret.txt',
-      '/..%2fsecret.txt',
-    ]) {
-      const res = await fetch(`http://127.0.0.1:${port}${path}`);
-      const body = await res.text();
+    for (const path of ['/../secret.txt', '/assets/../../secret.txt', '/%2e%2e/secret.txt', '/..%2fsecret.txt']) {
+      const res = await httpReq(port, path);
       expect(res.status, path).not.toBe(200);
-      expect(body, path).not.toContain('must never reach');
+      expect(res.body, path).not.toContain('must never reach');
     }
   });
 
@@ -1391,12 +1423,12 @@ describe('serving the built client', () => {
     const port = await start(root, { clientDir: dir });
 
     // A route the client owns: it gets the shell, so the app boots and routes it itself.
-    const route = await fetch(`http://127.0.0.1:${port}/session/abc`);
+    const route = await httpReq(port, '/session/abc');
     expect(route.status).toBe(200);
-    expect(await route.text()).toContain('<div id="root">');
+    expect(route.body).toContain('<div id="root">');
 
     // A missing *file* must not arrive as HTML, or the failure surfaces somewhere far away.
-    const missing = await fetch(`http://127.0.0.1:${port}/assets/gone.js`);
+    const missing = await httpReq(port, '/assets/gone.js');
     expect(missing.status).toBe(404);
   });
 
@@ -1410,9 +1442,9 @@ describe('serving the built client', () => {
     // so the refusal reaches the client as ECONNRESET rather than as a 405. A one-byte body fits
     // in the first packet and hides that entirely; this is what failed on Node 22 and passed on
     // Node 24.
-    const res = await fetch(`http://127.0.0.1:${port}/`, { method: 'POST', body: 'x'.repeat(64 * 1024) });
+    const res = await httpReq(port, '/', { method: 'POST', body: 'x'.repeat(64 * 1024) });
     expect(res.status).toBe(405);
-    expect(await res.text()).toContain('read-only');
+    expect(res.body).toContain('read-only');
   });
 
   it('opens the socket for the page it just served', async () => {
