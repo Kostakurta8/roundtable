@@ -1,7 +1,43 @@
 {
-  "name": "roundtable",
-  "private": true,
-  "version": "0.1.0",
+  "name": "claude-roundtable",
+  "version": "0.2.0",
+  "description": "A read-only observer for Claude Code: replays the session transcripts it already writes as a live pixel-art office, with per-agent token and cost accounting.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "observability",
+    "agents",
+    "subagents",
+    "replay",
+    "tokens",
+    "cost",
+    "tui",
+    "visualization"
+  ],
+  "homepage": "https://github.com/Kostakurta8/roundtable#readme",
+  "bugs": {
+    "url": "https://github.com/Kostakurta8/roundtable/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kostakurta8/roundtable.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "claude-roundtable": "bin/roundtable.mjs",
+    "roundtable": "bin/roundtable.mjs"
+  },
+  "files": [
+    "bin/",
+    "dist/client/",
+    "dist/server/",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
   "engines": {
     "node": ">=22.12"
   },
@@ -9,17 +45,19 @@
     "start": "concurrently -k -n hub,web -c cyan,magenta \"tsx server/index.ts\" \"vite --open\"",
     "dev": "concurrently -k -n hub,web -c cyan,magenta \"tsx server/index.ts\" \"vite\"",
     "demo": "concurrently -k -n demo,web -c cyan,magenta \"tsx scripts/demo.ts\" \"vite --open\"",
+    "build": "node scripts/build.mjs",
+    "serve": "node bin/roundtable.mjs",
+    "smoke": "node scripts/smoke-npx.mjs",
     "test": "vitest run",
     "e2e": "playwright test",
     "room": "tsx scripts/room.ts",
     "sheet": "tsx scripts/sheet.ts",
     "room:bless": "tsx scripts/bless.ts",
-    "desktop": "node scripts/desktopIcon.mjs && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installShortcut.ps1"
+    "desktop": "node scripts/desktopIcon.mjs && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installShortcut.ps1",
+    "prepack": "node scripts/build.mjs"
   },
   "dependencies": {
     "chokidar": "^5.0.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "ws": "^8.21.1"
   },
   "devDependencies": {
@@ -31,8 +69,11 @@
     "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.5.4",
     "concurrently": "^10.0.4",
+    "esbuild": "^0.28.2",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.25",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",

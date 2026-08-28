@@ -22,12 +22,24 @@ It is for anyone who runs Claude Code with subagents and wants to see what the f
 doing: who is working, who is waiting, and who is spending the tokens.
 
 ```
-npm install
-npm start
+npx claude-roundtable
+```
+
+That is the whole install. It serves the app on <http://localhost:7411>, opens your browser, and
+watches `~/.claude` — no clone, no build step, nothing written anywhere.
+
+```
+npx claude-roundtable --port 9000     # somewhere else
+npx claude-roundtable --root /path    # a different Claude directory
+npx claude-roundtable --no-open       # print the address, do not open a browser
 ```
 
 Node 22.12 or newer. Written and used on Windows — see [Platforms](#platforms) before you assume
 anything about the other two.
+
+From a clone, for hacking on it, `npm install && npm start` runs the hub and Vite together on
+<http://localhost:5173>; `npm run demo` does the same against a staged session so there is
+something to watch on a machine that has never run Claude Code.
 
 ### See it first
 

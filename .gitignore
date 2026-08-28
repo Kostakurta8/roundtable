@@ -6,3 +6,6 @@ playwright-report
 
 # Sprite contact sheets from scripts/sheet.ts — build output, never source.
 .preview/
+
+# Local working files: promo scripts, measurements, smoke output. Never part of the package.
+scratchpad/

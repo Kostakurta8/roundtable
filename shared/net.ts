@@ -63,3 +63,29 @@ export const pageOrigins = (
   `http://localhost:${preview}`,
   `http://127.0.0.1:${preview}`,
 ];
+
+/**
+ * The origins of the packaged app, where the hub serves the built client from its own port.
+ *
+ * Installed from npm there is no Vite: the page and the socket come from the same server, so the
+ * browser sends `http://localhost:7411` as the Origin of a handshake to `ws://127.0.0.1:7411/ws`.
+ * That origin is not any of `pageOrigins()`, and a gate that does not name it rejects the app's
+ * own page — the OFFLINE-forever failure, reached by the one road the dev setup never travels.
+ */
+export const appOrigins = (hub: number = DEFAULT_HUB_PORT): string[] => [
+  `http://localhost:${hub}`,
+  `http://127.0.0.1:${hub}`,
+];
+
+/**
+ * Every origin the hub trusts: the dev server's, and its own when it is serving the page.
+ *
+ * Takes the hub's *actual* port rather than the default, because the gate has to move with the
+ * server it guards. `ROUNDTABLE_PORT=9000` moves the page too, and an allowlist still naming 7411
+ * would refuse the only page there is.
+ */
+export const allowedOrigins = (
+  hub: number = DEFAULT_HUB_PORT,
+  web: number = DEFAULT_WEB_PORT,
+  preview: number = DEFAULT_PREVIEW_PORT,
+): string[] => [...pageOrigins(web, preview), ...appOrigins(hub)];

@@ -41,21 +41,39 @@ This is why `vite.config.ts` sets `strictPort: true` on both the dev and preview
 default is to move quietly to 5174 when 5173 is busy; that origin is not on the list, so the app
 would come up looking entirely normal and never connect. Failing to start is the honest outcome.
 
-**Nothing is served over HTTP.** The hub's HTTP handler answers every request that is not the
-WebSocket upgrade with a 404 and a fixed line of text. There is no static file handler, no path
-routing, and so no route that can be walked out of.
+**Over HTTP the hub serves the app, and nothing else.** Run from a clone, the HTTP handler answers
+every request that is not the WebSocket upgrade with a 404 and a fixed line of text — Vite serves
+the page in that setup, and the hub serves nothing at all. Installed from npm there is no Vite, so
+the hub serves the built client, and that is the only case in which it reads a file for a request:
+
+- It is opt-in. `startServer` serves files only when it is passed a `clientDir`, which only
+  `bin/roundtable.mjs` does, pointing at the package's own `dist/client`. Every other caller —
+  `npm start`, `npm run demo`, the whole test suite — leaves it unset and keeps the 404.
+- The path is resolved and then checked to be *inside* that directory, and the check is on the
+  resolved result rather than the request text, which can spell an escape a dozen ways. Four of
+  those spellings, `..` and percent-encoded, are asserted against in `tests/hub.test.ts`.
+- `GET` and `HEAD` only; anything else is a 405. The content type comes from a fixed table of
+  fourteen extensions, and anything else is `application/octet-stream` with `nosniff`.
 
 **Nothing outbound exists.** There is no `fetch`, no HTTP client, no analytics, no crash reporter
 and no update check anywhere in `server/`, `src/` or `shared/`. `node:http` is imported once, in
 `server/hub.ts`, for `createServer` — the hub's own listener, not a client. The only socket the
-client opens is `WS_URL` in `src/ws.ts`, which is the literal `ws://127.0.0.1:7411/ws`.
+client opens is `WS_URL` in `src/ws.ts`: `ws://127.0.0.1:<port>/ws`, where the port is this
+build's default or, when the hub served the page, the port the hub told it in the HTML. That value
+is accepted only if it matches `ws://localhost-or-127.0.0.1:<digits>/ws`, so the page cannot be
+talked into dialling anywhere else.
 
 The page itself loads nothing from the network either: `index.html` has no font link, no CDN
-script and no external image, and its favicon is an inline `data:` URI. The four runtime
-dependencies are `chokidar`, `ws`, `react` and `react-dom`.
+script and no external image, and its favicon is an inline `data:` URI. The two runtime
+dependencies are `chokidar` and `ws`; `react` and `react-dom` are build-time only, compiled into
+the bundle.
 
-**No processes are spawned.** There is no `child_process` import, and no `exec`, `execSync`,
-`spawn` or `spawnSync` call, in `server/`, `src/` or `shared/`.
+**No processes are spawned by the observer.** There is no `child_process` import, and no `exec`,
+`execSync`, `spawn` or `spawnSync` call, in `server/`, `src/` or `shared/`. The one exception in
+the project is the launcher, `bin/roundtable.mjs`, which spawns the operating system's own opener
+(`cmd /c start`, `open`, `xdg-open`) on the local address it just printed, with no shell and
+nothing interpolated. `--no-open` skips it. It is kept out of `server/` deliberately: the hub reads
+private transcripts, and a program that reads transcripts should not also be one that runs things.
 
 **The observed root is opened read-only.** `server/sessions.ts` imports exactly three things from
 `node:fs` — `readdirSync`, `readFileSync`, `statSync` — plus `homedir` and `join`. There is no

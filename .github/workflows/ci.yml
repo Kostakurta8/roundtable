@@ -55,11 +55,18 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      # There is no `build` script — the client is a plain Vite app and this is the only step that
-      # compiles it the way a user would receive it. A type error `tsc` tolerates but the bundler
-      # does not (or vice versa) shows up here and nowhere else.
+      # The client bundle and the server bundle, exactly as they are published. A type error
+      # `tsc` tolerates but a bundler does not (or vice versa) shows up here and nowhere else.
       - name: Build
-        run: npx vite build
+        run: npm run build
+
+      # Packs the tarball, installs it into an empty directory the way a stranger would, runs the
+      # installed binary and checks that the page, the bundle and the socket all answer. This is
+      # the only step that tests what `npx claude-roundtable` actually does, and it belongs in the
+      # matrix rather than beside it: its first failure was a dynamic `import()` of a Windows path,
+      # which every other platform accepts.
+      - name: Package smoke
+        run: npm run smoke
 
   e2e:
     name: e2e (linux, ${{ matrix.watch }} watcher)

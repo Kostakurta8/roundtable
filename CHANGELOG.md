@@ -5,9 +5,47 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Nothing is published to a registry — `package.json` is `private` by design, and the project is
-> distributed by clone. The entry below describes everything on `main`, written from `git log`
-> rather than from memory.
+> Published to npm as `claude-roundtable` since 0.2.0. Entries are written from `git log` rather
+> than from memory.
+
+## [0.2.0] — 2026-08-28
+
+### Added
+
+**`npx claude-roundtable`.** Installing was a clone, an `npm install` and an `npm start`, which is
+three more steps than anyone spends on a tool they have not tried yet. The package is now published,
+and one command serves the app and opens it. The hub serves the built client over its own port when
+it is given one — `bin/roundtable.mjs` points it at the package's `dist/client` — so a packaged
+install runs one process instead of two, and needs no Vite.
+
+**A command line.** `--port` (or `ROUNDTABLE_PORT`), `--root`, `--no-open`, `--help`, `--version`.
+An unrecognised option is reported rather than ignored: the two things worth getting wrong here are
+the port and the root, and both fail the same silent way — an app that starts, looks perfectly
+normal, and observes nothing.
+
+**The hub tells the page which port to dial.** A published bundle is built on one machine and run on
+another, possibly with `ROUNDTABLE_PORT` set, so it cannot carry the answer the way the dev build
+does. The hub writes the socket URL into the HTML it serves, and the client prefers it over its
+build-time default — but only if it is a loopback `ws://` address, so the global cannot be used to
+point the page somewhere else.
+
+### Changed
+
+**The Origin gate names the hub's own port.** Served by the hub, the page's origin is
+`http://localhost:<hub port>`, which is none of the dev server's origins — a gate that did not name
+it would refuse the only page a packaged install has, and that failure is indistinguishable from a
+crashed server. `allowedOrigins` is now built per server from the port it actually bound.
+
+**`react` and `react-dom` are build-time dependencies.** They are compiled into the bundle, so an
+install pulls two packages (`chokidar`, `ws`) instead of four.
+
+### Security
+
+The static handler is the first code in the project that reads a file because a request asked it to,
+in a process that can read the user's entire home directory. It is opt-in, `GET`/`HEAD` only, serves
+from a fixed table of content types with `nosniff`, and resolves every path before checking that it
+is inside the client directory — the check is on the resolved result, never the request text.
+`SECURITY.md` says so in full, and four spellings of `..` are asserted against in the test suite.
 
 ## [0.1.0] — 2026-08-09
 

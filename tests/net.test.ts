@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_HUB_PORT, hubWsUrl, pageOrigins, readPort } from '../shared/net';
+import {
+  allowedOrigins,
+  appOrigins,
+  DEFAULT_HUB_PORT,
+  hubWsUrl,
+  pageOrigins,
+  readPort,
+} from '../shared/net';
 
 describe('readPort', () => {
   it('takes a plain port number out of an environment string', () => {
@@ -50,5 +57,38 @@ describe('pageOrigins', () => {
     // 5173 is a hub no page can reach, and the failure looks exactly like a crashed server.
     expect(pageOrigins(3000, 4173)).toContain('http://localhost:3000');
     expect(pageOrigins(3000, 4173)).not.toContain('http://localhost:5173');
+  });
+});
+
+describe('appOrigins', () => {
+  it('names the hub’s own port under both loopback spellings', () => {
+    expect(appOrigins(7411).sort()).toEqual(
+      ['http://127.0.0.1:7411', 'http://localhost:7411'].sort(),
+    );
+  });
+
+  it('moves with the hub, because installed from npm the page is served by the hub itself', () => {
+    // No Vite in a packaged install: page and socket share a port, so the page's own origin is
+    // the only one that can ever appear on a handshake. A gate pinned to 7411 would refuse it.
+    expect(appOrigins(9000)).toContain('http://localhost:9000');
+    expect(appOrigins(9000)).not.toContain('http://localhost:7411');
+  });
+});
+
+describe('allowedOrigins', () => {
+  it('is the dev server’s origins plus the hub’s own, and nothing else', () => {
+    expect(allowedOrigins(7411, 5173, 4173).sort()).toEqual(
+      [...pageOrigins(5173, 4173), ...appOrigins(7411)].sort(),
+    );
+  });
+
+  it('still admits the dev server, so installing the package cannot break `npm run dev`', () => {
+    expect(allowedOrigins(9000, 5173, 4173)).toContain('http://localhost:5173');
+  });
+
+  it('names no origin that is not loopback', () => {
+    for (const o of allowedOrigins(7411, 5173, 4173)) {
+      expect(o, o).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+$/);
+    }
   });
 });

@@ -40,8 +40,27 @@ import { initialState, reduce, type RtState } from './store';
  */
 const VITE_PORT: unknown = import.meta.env ? import.meta.env.VITE_ROUNDTABLE_PORT : undefined;
 
+/**
+ * What the hub said when it served this page, if it served this page.
+ *
+ * An installed copy has no Vite: the hub serves the built client over its own port and writes the
+ * socket URL into the HTML on the way out, because a bundle built months earlier on somebody
+ * else's machine cannot have been told about the `ROUNDTABLE_PORT` this run was started with.
+ * Under `npm run dev` nothing sets it and the build-time value below stands.
+ *
+ * Read defensively and only trusted as a loopback `ws://` URL: it arrives as a global, and a
+ * global is exactly the sort of thing another script on the page could have written first.
+ */
+const injected: unknown = typeof window === 'undefined' ? undefined : (window as { __ROUNDTABLE_WS__?: unknown }).__ROUNDTABLE_WS__;
+const servedUrl =
+  typeof injected === 'string' && /^ws:\/\/(localhost|127\.0\.0\.1):\d+\/ws$/.test(injected)
+    ? injected
+    : null;
+
 /** Loopback, always. The observer reads one machine's transcripts: its own. */
-export const WS_URL = hubWsUrl(readPort(typeof VITE_PORT === 'string' ? VITE_PORT : undefined, DEFAULT_HUB_PORT));
+export const WS_URL =
+  servedUrl ??
+  hubWsUrl(readPort(typeof VITE_PORT === 'string' ? VITE_PORT : undefined, DEFAULT_HUB_PORT));
 
 /** A row of the hub's session roster. Same shape the hub publishes, by construction. */
 export type RtSession = SessionSummary;

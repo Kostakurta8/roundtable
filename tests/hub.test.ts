@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { evSession, isEv, type Ev } from '../shared/events';
-import { pageOrigins } from '../shared/net';
+import { appOrigins, pageOrigins } from '../shared/net';
 import { MAX_BATCH_BYTES } from '../server/tail';
 import type { ReadyMsg, ResetMsg, TailNoticeMsg } from '../shared/protocol';
 import { startServer, type HubOptions, type StopServer } from '../server/hub';
@@ -1305,3 +1305,121 @@ function mkdirRuns(sessionDir: string): string {
   mkdirSync(dir, { recursive: true });
   return dir;
 }
+
+/**
+ * The packaged install: `npx claude-roundtable` has no Vite, so the hub serves the built client
+ * over the same port as the socket. That turns a websocket-only server into one that reads files
+ * off disk for anybody who asks — in a process that can read the user's whole home directory —
+ * so the escape attempts below are the point of this block, not an afterthought.
+ */
+describe('serving the built client', () => {
+  /** A stand-in for `dist/client`: a shell, a fingerprinted asset, and a file to try to escape to. */
+  function makeClientDir(): { dir: string; secret: string } {
+    const base = mkdtempSync(join(tmpdir(), 'rt-client-'));
+    const dir = join(base, 'client');
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><html><head><title>Roundtable</title></head><body><div id="root"></div></body></html>');
+    writeFileSync(join(dir, 'assets', 'index-abc123.js'), 'export const x = 1;\n');
+    const secret = join(base, 'secret.txt');
+    writeFileSync(secret, 'a transcript the page must never reach');
+    return { dir, secret };
+  }
+
+  it('stays websocket-only when no client directory is configured', async () => {
+    // The dev and test path. Serving files is opt-in; without the option nothing on disk is
+    // reachable through this port, which is what every other test in this file assumes.
+    const { root } = makeRoot({ subagents: false });
+    const port = await start(root);
+    const res = await fetch(`http://127.0.0.1:${port}/index.html`);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toContain('websocket only');
+  });
+
+  it('serves the shell, and tells it which port to dial', async () => {
+    // A published bundle cannot know the port this run chose — it was built months earlier on
+    // somebody else's machine. The hub is the only thing that knows, so it writes it into the
+    // page. Without this, `ROUNDTABLE_PORT=…` is an app that loads and sits at OFFLINE.
+    const { root } = makeRoot({ subagents: false });
+    const { dir } = makeClientDir();
+    const port = await start(root, { clientDir: dir });
+
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const html = await res.text();
+    expect(html).toContain(`window.__ROUNDTABLE_WS__="ws://127.0.0.1:${port}/ws"`);
+    expect(html).toContain('<div id="root">');
+    // The shell must never be cached, or an upgrade goes on running the old JavaScript.
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('serves a fingerprinted asset as JavaScript, and lets it be cached', async () => {
+    const { root } = makeRoot({ subagents: false });
+    const { dir } = makeClientDir();
+    const port = await start(root, { clientDir: dir });
+
+    const res = await fetch(`http://127.0.0.1:${port}/assets/index-abc123.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/javascript');
+    expect(res.headers.get('cache-control')).toContain('immutable');
+    expect(await res.text()).toContain('export const x');
+  });
+
+  it('refuses to walk out of the client directory, however the escape is spelt', async () => {
+    // The hub's process can read `~/.claude`. A path that resolves outside the client directory
+    // is the difference between serving a page and serving somebody's transcripts.
+    const { root } = makeRoot({ subagents: false });
+    const { dir } = makeClientDir();
+    const port = await start(root, { clientDir: dir });
+
+    for (const path of [
+      '/../secret.txt',
+      '/assets/../../secret.txt',
+      '/%2e%2e/secret.txt',
+      '/..%2fsecret.txt',
+    ]) {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`);
+      const body = await res.text();
+      expect(res.status, path).not.toBe(200);
+      expect(body, path).not.toContain('must never reach');
+    }
+  });
+
+  it('answers an unknown route with the shell, and a missing file with a 404', async () => {
+    const { root } = makeRoot({ subagents: false });
+    const { dir } = makeClientDir();
+    const port = await start(root, { clientDir: dir });
+
+    // A route the client owns: it gets the shell, so the app boots and routes it itself.
+    const route = await fetch(`http://127.0.0.1:${port}/session/abc`);
+    expect(route.status).toBe(200);
+    expect(await route.text()).toContain('<div id="root">');
+
+    // A missing *file* must not arrive as HTML, or the failure surfaces somewhere far away.
+    const missing = await fetch(`http://127.0.0.1:${port}/assets/gone.js`);
+    expect(missing.status).toBe(404);
+  });
+
+  it('refuses to be written to — the observer is read-only, including over HTTP', async () => {
+    const { root } = makeRoot({ subagents: false });
+    const { dir } = makeClientDir();
+    const port = await start(root, { clientDir: dir });
+
+    const res = await fetch(`http://127.0.0.1:${port}/`, { method: 'POST', body: 'x' });
+    expect(res.status).toBe(405);
+  });
+
+  it('opens the socket for the page it just served', async () => {
+    // The new origin: served by the hub, the page announces `http://localhost:<hub port>`, which
+    // is none of the dev server's origins. A gate that does not name it refuses the only page a
+    // packaged install has — and that failure looks exactly like a crashed server.
+    const { root } = makeRoot({ subagents: false });
+    const { dir } = makeClientDir();
+    const port = await start(root, { clientDir: dir });
+
+    for (const origin of appOrigins(port)) {
+      const client = await connect(port, origin);
+      expect((await client.wait(isHello)).sessions.map((s) => s.sessionId), origin).toContain('fix-sess');
+    }
+  });
+});

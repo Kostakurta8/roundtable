@@ -20,13 +20,13 @@
  * 127.0.0.1 for any page that asks — so the handshake is also gated on `Origin`; see
  * `ALLOWED_ORIGINS`.
  */
-import { statSync } from 'node:fs';
-import { createServer, type IncomingMessage } from 'node:http';
-import { basename, dirname, join, resolve } from 'node:path';
+import { readFileSync, statSync } from 'node:fs';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { watch as chokidarWatch, type FSWatcher } from 'chokidar';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { AgentMeta, Ev } from '../shared/events';
-import { pageOrigins } from '../shared/net';
+import { allowedOrigins, hubWsUrl } from '../shared/net';
 import { matchSession, readActiveTab } from './termtabs';
 import type {
   BacklogTruncatedMsg,
@@ -97,6 +97,14 @@ export type HubOptions = {
    * without this a dead watcher is indistinguishable from an idle session.
    */
   onError?: (err: unknown, ctx: string) => void;
+  /**
+   * A directory of built client files to serve over the same port as the socket.
+   *
+   * This is what an installed copy is: `npx claude-roundtable` has no Vite to serve the page, so
+   * the hub serves it. Unset — the whole dev and test path — the HTTP side stays what it was, a
+   * 404 that says websocket only, and nothing on disk is reachable through this port.
+   */
+  clientDir?: string;
 };
 
 const WS_PATH = '/ws';
@@ -191,15 +199,140 @@ const STREAM_CAP = 12;
  * app no longer serves is a hub no page can reach, and it fails exactly like a crashed server: the
  * page loads, the hub is up, and the top bar says OFFLINE.
  */
-const ALLOWED_ORIGINS = new Set(pageOrigins());
+/**
+ * Built per server rather than once per module, because the hub's port is an argument and the
+ * gate has to name the port the page is actually served from — see `allowedOrigins`.
+ */
+const originsFor = (port: number): ReadonlySet<string> => new Set(allowedOrigins(port));
 
 /**
  * An absent Origin is allowed: only browsers send one, so its absence means no web page is
  * behind the request — a CLI, a test, or the app talking to itself. Those already have whatever
  * access to the transcript files the hub could give them, so refusing them buys nothing.
  */
-const originAllowed = (origin: string | undefined): boolean =>
-  origin === undefined || ALLOWED_ORIGINS.has(origin);
+const originAllowed = (origin: string | undefined, allowed: ReadonlySet<string>): boolean =>
+  origin === undefined || allowed.has(origin);
+
+/**
+ * Content types for the handful of things a built client is made of.
+ *
+ * A short allowlist rather than a dependency: anything not named here is served as
+ * `application/octet-stream`, which a browser downloads rather than runs. Guessing generously is
+ * how a server ends up executing something it only meant to hand over.
+ */
+const CONTENT_TYPES: Readonly<Record<string, string>> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.mp4': 'video/mp4',
+  '.map': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+/**
+ * Where the page is told to dial, injected into the HTML the hub itself serves.
+ *
+ * The dev client learns the hub's port at bundle time, from `vite.config.mts`'s `define`. A
+ * packaged client cannot: it is built once, published, and then run by somebody who may pass
+ * `ROUNDTABLE_PORT`. The page is served by the hub, so the hub is the one thing that knows the
+ * answer at the moment it matters, and it says so here. `src/ws.ts` prefers this over its
+ * build-time default; when it is absent — Vite's dev server, `vite preview` — nothing changes.
+ */
+const wsUrlScript = (port: number): string =>
+  `<script>window.__ROUNDTABLE_WS__=${JSON.stringify(hubWsUrl(port))}</script>`;
+
+/**
+ * Serve one file out of the built client directory.
+ *
+ * The path is resolved and then checked to be inside `dir`, which is the whole security story of
+ * this function: the hub's process can read the user's entire home directory, so a request for
+ * `/../../.claude/projects/…` that resolved naively would hand a transcript to any page that
+ * asked. `resolve` collapses the `..` segments first, and a prefix check on the result is what
+ * decides — never the request string, which can spell the same escape a dozen ways.
+ */
+function serveClient(
+  dir: string,
+  port: number,
+  req: IncomingMessage,
+  res: ServerResponse,
+): void {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { 'content-type': 'text/plain', allow: 'GET, HEAD' });
+    res.end('roundtable observer: read-only\n');
+    return;
+  }
+
+  // `req.url` is a path, not a URL, and carries the query string; the base is thrown away.
+  const requested = decodeSafely(new URL(req.url ?? '/', 'http://localhost').pathname);
+  if (requested === null) {
+    res.writeHead(400, { 'content-type': 'text/plain' });
+    res.end('bad request\n');
+    return;
+  }
+
+  const root = resolve(dir);
+  // An extensionless path is a client route (the app has none today, but the timeline scrubber is
+  // one URL away from being one), so it gets the shell. Everything else is a file or a 404 —
+  // never the shell, or a missing asset would arrive as HTML and fail somewhere far away.
+  const looksLikeFile = /\.[a-z0-9]+$/i.test(requested);
+  const rel = requested === '/' || !looksLikeFile ? 'index.html' : requested.replace(/^\/+/, '');
+  const file = resolve(root, rel);
+  if (file !== root && !file.startsWith(root + sep)) {
+    res.writeHead(403, { 'content-type': 'text/plain' });
+    res.end('forbidden\n');
+    return;
+  }
+
+  let body: Buffer;
+  try {
+    body = readFileSync(file);
+  } catch {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('not found\n');
+    return;
+  }
+
+  const ext = file.slice(file.lastIndexOf('.')).toLowerCase();
+  const isHtml = ext === '.html';
+  if (isHtml) {
+    // The port the hub actually bound, handed to the page that is about to dial it.
+    const html = body.toString('utf8');
+    const marked = html.includes('</head>')
+      ? html.replace('</head>', `${wsUrlScript(port)}</head>`)
+      : wsUrlScript(port) + html;
+    body = Buffer.from(marked, 'utf8');
+  }
+
+  res.writeHead(200, {
+    'content-type': CONTENT_TYPES[ext] ?? 'application/octet-stream',
+    'content-length': body.byteLength,
+    // Vite fingerprints asset filenames, so those are safe to keep for ever; the shell must never
+    // be, or an upgraded install would go on running last version's JavaScript.
+    'cache-control': isHtml ? 'no-store' : 'public, max-age=31536000, immutable',
+    // The page only ever talks to its own origin, and saying so costs one header.
+    'x-content-type-options': 'nosniff',
+  });
+  res.end(req.method === 'HEAD' ? undefined : body);
+}
+
+/** `decodeURIComponent` throws on a malformed escape; a bad URL is a 400, not a crash. */
+function decodeSafely(path: string): string | null {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return null;
+  }
+}
 
 /** Windows paths compare case-insensitively; chokidar echoes whatever casing the FS reports. */
 const samePath = (a: string, b: string): boolean =>
@@ -363,6 +496,8 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   const quietMs = opts.quietMs ?? AGENT_QUIET_MS;
   const openGraceMs = opts.openGraceMs ?? OPEN_TOOL_GRACE_MS;
   const drainPasses = Math.max(1, opts.drainPasses ?? MAX_DRAIN_PASSES);
+  const clientDir = opts.clientDir ?? null;
+  const allowed = originsFor(port);
 
   const watches = new Map<string, Watch>();
 
@@ -1402,9 +1537,13 @@ export async function startServer(root: string, port: number, opts: HubOptions =
 
   // ------------------------------------------------------------------ server
 
-  const server = createServer((_req, res) => {
-    res.writeHead(404, { 'content-type': 'text/plain' });
-    res.end('roundtable observer: websocket only\n');
+  const server = createServer((req, res) => {
+    if (!clientDir) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('roundtable observer: websocket only\n');
+      return;
+    }
+    serveClient(clientDir, port, req, res);
   });
   const wss = new WebSocketServer({
     server,
@@ -1414,7 +1553,7 @@ export async function startServer(root: string, port: number, opts: HubOptions =
     // The parameter is annotated because `verifyClient` is a union of a sync and an async
     // signature, which gives nothing for TypeScript to infer this callback's shape from.
     // A rejected handshake gets a 401 and is destroyed — no connection, no roster, no events.
-    verifyClient: ({ req }: { req: IncomingMessage }) => originAllowed(req.headers.origin),
+    verifyClient: ({ req }: { req: IncomingMessage }) => originAllowed(req.headers.origin, allowed),
   });
   // ws mirrors the HTTP server's 'error' onto this emitter, and an EventEmitter with no 'error'
   // listener throws. Without this guard a failed bind rejects *and* crashes the process. The
