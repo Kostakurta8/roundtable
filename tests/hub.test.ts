@@ -1410,7 +1410,7 @@ describe('serving the built client', () => {
     // so the refusal reaches the client as ECONNRESET rather than as a 405. A one-byte body fits
     // in the first packet and hides that entirely; this is what failed on Node 22 and passed on
     // Node 24.
-    const res = await fetch(`http://127.0.0.1:${port}/`, { method: 'POST', body: 'x'.repeat(2_000_000) });
+    const res = await fetch(`http://127.0.0.1:${port}/`, { method: 'POST', body: 'x'.repeat(64 * 1024) });
     expect(res.status).toBe(405);
     expect(await res.text()).toContain('read-only');
   });

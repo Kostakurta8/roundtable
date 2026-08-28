@@ -266,12 +266,6 @@ function serveClient(
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
-  // Read the request body and throw it away. Nothing here wants it, but a response that finishes
-  // while bytes are still arriving makes Node destroy the socket, and the client sees ECONNRESET
-  // instead of the answer it was given — which is how the 405 below arrived as a *network error*
-  // on Node 22 while Node 24 tolerated it. The refusal has to be legible to be a refusal.
-  req.resume();
-
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { 'content-type': 'text/plain', allow: 'GET, HEAD' });
     res.end('roundtable observer: read-only\n');
@@ -329,6 +323,46 @@ function serveClient(
     'x-content-type-options': 'nosniff',
   });
   res.end(req.method === 'HEAD' ? undefined : body);
+}
+
+/**
+ * How much of an unwanted request body is read before answering. One megabyte covers every
+ * request a confused client actually sends; past that the connection is dropped rather than
+ * letting a stream hold a slot open for as long as it likes.
+ */
+const MAX_DRAIN_BYTES = 1024 * 1024;
+
+/**
+ * Answer only once the request body has arrived — and only when there is one.
+ *
+ * Nothing here wants the body. It still has to be read, because a response that finishes while
+ * bytes are in flight makes Node destroy the socket, and then the client sees `ECONNRESET` instead
+ * of the answer it was actually given. That is not a cosmetic difference: the 405 this server
+ * returns for a write *is* the read-only guarantee, and a refusal nobody can read is not a refusal.
+ *
+ * The bug was visible on Node 22 and invisible on Node 24, and on Windows and macOS but not Linux
+ * — four of the six matrix legs were green with it in. `req.resume()` alone does not fix it: it
+ * starts the drain, then the response ends before the drain finishes and the socket dies anyway.
+ * The answer has to wait for `end`.
+ *
+ * A bodyless request — every `GET` the app makes — is answered straight away, so the page and its
+ * assets are not made to wait on a stream that was never coming.
+ */
+function whenDrained(req: IncomingMessage, answer: () => void): void {
+  const declared = Number(req.headers['content-length'] ?? '0');
+  const hasBody = req.headers['transfer-encoding'] !== undefined || (Number.isFinite(declared) && declared > 0);
+  if (!hasBody) {
+    answer();
+    return;
+  }
+  let seen = 0;
+  req.on('data', (chunk: Buffer) => {
+    seen += chunk.length;
+    // A deliberate flood gets the reset it was asking for; `end` never fires, so nothing answers.
+    if (seen > MAX_DRAIN_BYTES) req.destroy();
+  });
+  req.on('end', answer);
+  req.on('error', () => {}); // a client that hangs up mid-body must not take the hub with it
 }
 
 /** `decodeURIComponent` throws on a malformed escape; a bad URL is a 400, not a crash. */
@@ -1544,12 +1578,16 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   // ------------------------------------------------------------------ server
 
   const server = createServer((req, res) => {
-    if (!clientDir) {
-      res.writeHead(404, { 'content-type': 'text/plain' });
-      res.end('roundtable observer: websocket only\n');
-      return;
-    }
-    serveClient(clientDir, port, req, res);
+    // Both answers wait for the body, the 404 included: a request nobody wanted still deserves a
+    // reply the client can read rather than a reset socket. See `whenDrained`.
+    whenDrained(req, () => {
+      if (!clientDir) {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('roundtable observer: websocket only\n');
+        return;
+      }
+      serveClient(clientDir, port, req, res);
+    });
   });
   const wss = new WebSocketServer({
     server,
