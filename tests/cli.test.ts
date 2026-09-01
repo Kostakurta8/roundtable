@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { appUrl, busyMessage, HELP, parseArgs } from '../server/cli';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
+import { appUrl, busyMessage, demoRoot, HELP, parseArgs, run } from '../server/cli';
+import { DEMO_SESSIONS } from '../scripts/promo/demoRoom';
 import { DEFAULT_HUB_PORT } from '../shared/net';
 
 /**
@@ -63,6 +68,76 @@ describe('parseArgs', () => {
   it('turns the browser off when asked', () => {
     expect(parseArgs(['--no-open'], {}).open).toBe(false);
   });
+
+  it('points --demo at a directory of its own, whatever --root said', () => {
+    // The stage wipes the directory it is handed. The only directory it may ever be handed is the
+    // one this process names under the temp directory — never a path a person typed.
+    const opts = parseArgs(['--demo', '--root', '/home/someone/.claude'], { ROUNDTABLE_HOME: '/env/home' });
+    expect(opts.demo).toBe(true);
+    expect(opts.root).toBe(demoRoot());
+    expect(opts.root.startsWith(tmpdir())).toBe(true);
+    expect(parseArgs([], {}).demo).toBe(false);
+  });
+});
+
+describe('run --demo', () => {
+  const stops: (() => Promise<void>)[] = [];
+  const dirs: string[] = [];
+  afterEach(async () => {
+    for (const stop of stops.splice(0)) await stop().catch(() => {});
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  /** A stand-in for `dist/client`: one page is enough for the hub to have something to serve. */
+  const fakeClient = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'rt-cli-client-'));
+    dirs.push(dir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><html><head></head><body></body></html>');
+    return dir;
+  };
+
+  it('stages a room the roster names, and removes it again on stop', async () => {
+    // Not the shared demo root: a test must not wipe a demo somebody is watching right now.
+    const root = mkdtempSync(join(tmpdir(), 'rt-cli-demo-'));
+    dirs.push(root);
+    const base = parseArgs(['--demo', '--no-open'], {});
+    let stop: (() => Promise<void>) | undefined;
+    let port = 0;
+    for (let p = 7480; p < 7495; p++) {
+      try {
+        stop = await run({ ...base, root, port: p }, fakeClient());
+        port = p;
+        break;
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'EADDRINUSE') throw err;
+      }
+    }
+    if (!stop) throw new Error('no free port in 7480-7494');
+    stops.push(stop);
+
+    expect(existsSync(join(root, 'sessions'))).toBe(true);
+    const hello = await new Promise<{ sessions: { sessionId: string }[]; root: string }>((resolve, reject) => {
+      const sock = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: `http://localhost:${port}` });
+      const timer = setTimeout(() => reject(new Error('no hello in 10s')), 10_000);
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'hello') {
+          clearTimeout(timer);
+          sock.close();
+          resolve(msg);
+        }
+      });
+      sock.on('error', reject);
+    });
+    const ids = hello.sessions.map((s) => s.sessionId);
+    for (const id of DEMO_SESSIONS) expect(ids).toContain(id);
+    expect(hello.root).toBe(root);
+
+    await stops.pop()!();
+    // The staged root was this process's to create, so it is gone once the hub is.
+    expect(existsSync(root)).toBe(false);
+  });
 });
 
 describe('what the CLI prints', () => {
@@ -80,7 +155,7 @@ describe('what the CLI prints', () => {
   it('documents every option it accepts', () => {
     // A help text that has drifted from the parser is worse than none: it is a wrong answer to
     // the only question the user thought to ask.
-    for (const flag of ['--port', '--root', '--no-open', '--version', '--help']) {
+    for (const flag of ['--port', '--root', '--demo', '--no-open', '--version', '--help']) {
       expect(HELP, flag).toContain(flag);
     }
     expect(HELP).toContain('never writes');

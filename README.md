@@ -32,6 +32,7 @@ run builds the client, so give it a minute; after that it is cached.
 ```
 npx github:Kostakurta8/roundtable --port 9000   # somewhere else
 npx github:Kostakurta8/roundtable --root /path  # a different Claude directory
+npx github:Kostakurta8/roundtable --demo        # a staged session, when nothing of yours is running
 npx github:Kostakurta8/roundtable --no-open     # print the address, do not open a browser
 ```
 
@@ -66,22 +67,25 @@ whatever session ran most recently. If you have a session running right now, you
 
 ### If you don't have Claude Code, or nothing is running
 
-From a clone:
-
 ```
-npm run demo
+npx github:Kostakurta8/roundtable --demo
 ```
 
 An office with nobody in it is what an idle machine honestly looks like, and it is a poor way to
-find out what this does. `npm run demo` writes a synthetic `~/.claude` root under your temp
-directory and points the observer at that instead: agents arrive, work, report to each other, hand
-down verdicts, fill the desks past the point where there are chairs, and go home — and then it
-keeps going, so the room is still moving when you come back to it.
+find out what this does. `--demo` writes a synthetic `~/.claude` root under your temp directory and
+points the observer at that instead: agents arrive, work, report to each other, hand down verdicts,
+fill the desks past the point where there are chairs, and go home — and then it keeps going, so the
+room is still moving when you come back to it.
 
 Nothing about it is faked except the transcripts. The lines go to disk and come back through the
 same watcher, parser, normalizer, socket and store as a real session, and the hub's timing is left
 at its shipped defaults. It never reads your own `~/.claude`, so no prompt, path or project name of
-yours can appear in it. `Ctrl+C` deletes the staged root on the way out.
+yours can appear in it, and `--root` is ignored with it, so it cannot be pointed at a real
+directory. `Ctrl+C` deletes the staged root on the way out. From a clone, `npm run demo` is the same
+room beside the Vite dev server.
+
+Without it, the first screen tells you where the observer is looking — the directory, in full —
+and that the first Claude Code session to start on this machine will appear there on its own.
 
 ## Platforms
 
@@ -138,15 +142,17 @@ shortcut points into the checkout.
 ```
 ┌──────────────────────────────────────────────────────────┬──────────────┐
 │ ROUNDTABLE  ▾ session   ● LIVE      TOK  EST  AGENTS  ⟲ ⌘K ◐ ▤        │
-├──────────────────────────────────────────────────────────┼──────────────┤
-│                                                          │  CHAT        │
-│   the office — one person per agent                      │  AGENTS      │
-│                                                          │  TOOLS       │
-│   ┌─────────┐                                            │              │
-│   │ AGENTS  │  roster rail: who is here, what they are   │  the same    │
-│   │  ·····  │  doing, how many tokens they have spent    │  events, in  │
-│   └─────────┘                                            │  words       │
-├──────────────────────────────────────────────────────────┴──────────────┤
+├──────────┬───────────────────────────────────────────────┼──────────────┤
+│ AGENTS   │                                               │  CHAT        │
+│  ·····   │   the office — one person per agent           │  AGENTS      │
+│  ·····   │                                               │  TOOLS       │
+│  ·····   │                                               │              │
+│ roster:  │                                               │  the same    │
+│ who is   │                                               │  events, in  │
+│ here and │                                               │  words       │
+│ doing    │                                               │              │
+│ what     │                                               │              │
+├──────────┴───────────────────────────────────────────────┴──────────────┤
 │ ELAPSED  ▁▃▅▂▇▃▁▂▅▃▁  activity, one bar per second — click to rewind     │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -218,8 +224,11 @@ the feed to just the verdicts agents gave each other.
 
 ## If something looks wrong
 
-**`OFFLINE` in the top bar.** The hub is not running. `npm start` runs both halves; if you started
-only Vite, the page has nothing to connect to.
+**`OFFLINE` in the top bar.** The hub is not running — the terminal that ran
+`npx github:Kostakurta8/roundtable` or `npm start` was closed, or the machine slept. A note above the
+panel says so and names the socket it is retrying; start the hub again and the page reconnects on
+its own, and what it shows meanwhile is the session as it stood when the connection dropped. From a
+clone, if you started only Vite, the page has nothing to connect to.
 
 **"port 7411 is already in use".** Roundtable is already running in another terminal. Open
 `http://localhost:5173` instead of starting a second copy.
@@ -243,6 +252,7 @@ npm run dev          # same as start, without opening a browser
 npm test             # the unit suite — ~15s, binds nothing
 npx tsc --noEmit     # types
 npx vite build       # the client, built the way a user would get it
+npm run smoke        # pack, install into an empty directory, run the installed binary — and --demo
 npm run e2e          # Playwright — needs 7411 and 5173 free, so stop `npm start` first
 npm run room         # render the office to .preview/room-{day,night,spawn}.png
 npm run room:bless   # accept a deliberate visual change as the new baseline

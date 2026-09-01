@@ -134,7 +134,51 @@ try {
   const expected = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version;
   if (version !== expected) fail(`--version says ${version}, package says ${expected}`);
 
-  if (!process.exitCode) console.log(`[smoke] PASS — page, bundle, socket, origin gate, traversal, --help, --version (v${version})`);
+  // 10. --demo stages its own root under the temp directory and serves it, with nothing of the
+  //     consumer's read. A second port, a second process, the same checks as steps 5 and 6.
+  const DEMO_PORT = PORT + 1;
+  const demo = spawn(process.execPath, [binJs, '--demo', '--port', String(DEMO_PORT), '--no-open'], {
+    cwd: consumer,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let demoOut = '';
+  demo.stdout.on('data', (d) => (demoOut += d.toString()));
+  demo.stderr.on('data', (d) => (demoOut += d.toString()));
+  try {
+    const demoHtml = await until(
+      async () => {
+        const res = await fetch(`http://127.0.0.1:${DEMO_PORT}/`);
+        return res.ok ? await res.text() : null;
+      },
+      30000,
+      'the demo page',
+    );
+    if (!demoHtml.includes(`window.__ROUNDTABLE_WS__="ws://127.0.0.1:${DEMO_PORT}/ws"`)) fail('demo page does not carry the socket URL');
+    const demoRoster = await new Promise((res, rej) => {
+      const sock = new WebSocket(`ws://127.0.0.1:${DEMO_PORT}/ws`, { origin: `http://localhost:${DEMO_PORT}` });
+      const timer = setTimeout(() => rej(new Error('no demo hello in 10s')), 10000);
+      sock.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.kind === 'hello') {
+          clearTimeout(timer);
+          sock.close();
+          res(msg);
+        }
+      });
+      sock.on('error', (e) => {
+        clearTimeout(timer);
+        rej(e);
+      });
+    });
+    const demoIds = (demoRoster.sessions ?? []).map((s) => s.sessionId);
+    if (!demoIds.includes('demo-7f2a91')) fail(`demo roster does not name the staged session: ${JSON.stringify(demoIds)}`);
+    if (!String(demoRoster.root).startsWith(tmpdir())) fail(`--demo observes ${demoRoster.root}, which is not under the temp directory`);
+    if (!demoOut.includes('--demo')) fail('the launcher did not say it was running a demo');
+  } finally {
+    demo.kill();
+  }
+
+  if (!process.exitCode) console.log(`[smoke] PASS — page, bundle, socket, origin gate, traversal, --help, --version, --demo (v${version})`);
 } catch (err) {
   fail(err.message);
 } finally {

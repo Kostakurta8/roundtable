@@ -5,8 +5,56 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> Published to npm as `claude-roundtable` since 0.2.0. Entries are written from `git log` rather
+> Installable with `npx github:Kostakurta8/roundtable` since 0.2.0; the npm name `claude-roundtable`
+> is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
+
+## [0.2.1] — 2026-09-01
+
+### Added
+
+**`--demo`.** The first run is the product's front door, and on a machine that has never run Claude
+Code it opened on an empty office with no explanation. `claude-roundtable --demo` stages the same
+synthetic session `npm run demo` did from a clone — under the temp directory, deleted on exit,
+`--root` overridden so it can never be pointed at a real directory — and the installed binary
+serves it. The package smoke test runs it.
+
+**The first screen says where it is looking.** The empty state names the directory being watched,
+says that the first session to start there appears on its own, and gives the demo command.
+
+**OFFLINE says what to do.** With a session on screen and the socket down, the top bar said
+`OFFLINE` and nothing else said anything. A note above the panel now names the socket being
+retried and the terminal that has to be started again.
+
+### Fixed
+
+**The feed came up blank.** Every replayed card mounted with the entrance fade, sixty at once, and
+Chromium ran them at a fraction of real time: at +1.5s the cards in view still had `opacity: 0`.
+Only a card that arrives while the panel is on screen animates now; history lands already there.
+
+**The session-tab strip covered the roster's header**, and the inspector, when two sessions were
+running. Both now start below it.
+
+**A finished session read `main · talking` for ever**, and a subagent whose transcript had not
+changed since lunch pulsed `thinking…`. Panels now print a phase as a claim about the present,
+expiring it on the same windows the tab strip already used.
+
+**A truncated replay called itself "whole session"** on the strip and "waiting for a task…" on the
+whiteboard. Both now say that earlier history was not replayed.
+
+**Focus rings** on session tabs, agent cards, tool rows, monologue summaries and the picker's rows,
+which had the browser's default or none; a narrow dock clipped the search placeholder mid-word; a
+session with three busy seconds drew three columns as one block across the whole strip.
+
+### Changed
+
+**The shell.** The frame around the room was a default: frosted, shadowed cards on an untinted
+ground, eight-point type. It is now flat paper in daylight and warm charcoal at night, every neutral
+tinted toward the room, hairlines instead of shadows, the roster as a column down the stage's left
+edge instead of a card floating over a corner of the office (which also removes the dead band of
+letterbox the inset left beside it), the feed as a list under hairlines with verdicts and the
+human's turns as washes rather than boxes, and the type one step larger throughout. Every colour is
+a token; the room is untouched.
 
 ## [0.2.0] — 2026-08-28
 

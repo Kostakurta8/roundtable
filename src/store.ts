@@ -884,6 +884,27 @@ export function workingAgents(state: RtState, now: number): RtAgent[] {
   return out;
 }
 
+/**
+ * What a panel may print as an agent's phase *now*.
+ *
+ * The store's `phase` is the last thing an agent did, and the store is right to keep it that way:
+ * it is a fold of the transcript, and the transcript does not carry "and then nothing happened".
+ * Printed as a claim about the present it goes wrong quietly — a session that ended six hours ago
+ * still read `main · talking` with a green dot, and a subagent whose file had not changed since
+ * lunch pulsed `thinking…` in the rail for as long as the window stayed open.
+ *
+ * So the panels ask this instead. It applies exactly the windows `workingAgents` already uses for
+ * the tab strip — silence past `WORKING_WINDOW_MS`, or past `OPEN_TOOL_GRACE_MS` while a call is
+ * open — and past them an agent is `idle`, which is the one phase that claims nothing. `done` is
+ * never touched: it is a fact about the past, and the past does not expire.
+ */
+export function displayPhase(a: RtAgent, now: number): { phase: AgentPhase; status: string } {
+  if (a.phase === 'done' || a.phase === 'idle') return { phase: a.phase, status: a.status };
+  const quiet = now - a.lastTs;
+  const window = a.activeTools > 0 ? OPEN_TOOL_GRACE_MS : WORKING_WINDOW_MS;
+  return quiet > window ? { phase: 'idle', status: '' } : { phase: a.phase, status: a.status };
+}
+
 /** Display name: the sidecar's sentence if there is one, else the bare id. */
 export const agentName = (a: RtAgent | undefined, id: string): string => a?.label ?? id;
 

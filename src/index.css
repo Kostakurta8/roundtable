@@ -97,47 +97,52 @@ canvas {
 
 /* ============================================================= tokens ==== */
 
+/*
+ * Every colour is OKLCH, and every neutral is tinted toward the room. The office is oak and plaster
+ * under a teal-blue wall; a frame in untinted grey around it reads as a default, which is what the
+ * old shell was. Day is warm paper with the daylit room set into it; night is warm charcoal, the
+ * same room lamp-lit. Neither uses pure white or pure black anywhere.
+ *
+ * Contrast is measured, not assumed: `--ink-3` carries timestamps, status lines and the caption
+ * under the strip, and it clears WCAG AA (≥4.5:1) against `--panel` and `--panel-2` in both
+ * themes. The three status colours clear it against their own washes, which is where they are
+ * printed as text. `--accent-2` does not, and is used only for rings, bars and dots.
+ */
 :root {
-  /* --- office surfaces, also read by scene.css --- */
-  --oak-1: #e3d4b6;
-  --oak-2: #d9c8a6;
-  --oak-3: #d2bf9a;
-  --plank: rgba(122, 94, 58, 0.12);
-  --wall: #efe9dc;
-  --wall-2: #e6dfd0;
-  --base: #cfc7b4;
-  --shadow-floor: rgba(96, 78, 46, 0.22);
+  /* --- surfaces --- */
+  --bg: oklch(0.905 0.022 82);
+  --panel: oklch(0.985 0.006 88);
+  --panel-solid: oklch(0.985 0.006 88);
+  --panel-2: oklch(0.958 0.01 86);
+  --panel-3: oklch(0.93 0.013 84);
+  --line: oklch(0.865 0.016 82);
+  --line-soft: oklch(0.905 0.012 84);
+  /* The letterbox around the room, when the stage is not 16:9. The room's own "outside": a
+     deeper cut of its wall colour, so the band above it reads as part of the picture. */
+  --stage-bg: oklch(0.24 0.03 230);
 
-  /* --- UI surfaces --- */
-  --bg: #d9c8a6;
-  --panel: rgba(255, 255, 255, 0.94);
-  --panel-solid: #ffffff;
-  --panel-2: #faf8f3;
-  --panel-3: #f2eee4;
-  --line: #e4dfd1;
-  --line-soft: #eee9dc;
+  /* --- ink --- */
+  --ink: oklch(0.26 0.018 70);
+  --ink-2: oklch(0.46 0.018 70);
+  --ink-3: oklch(0.5 0.016 70);
 
-  --ink: #2e2d29;
-  --ink-2: #67675f;
-  /* Carries status lines, timestamps and the OFFLINE state, so it has to clear WCAG AA against
-     the panel it sits on — the mockup's lighter grey measured 2.7:1 and was unreadable in sun. */
-  --ink-3: #75736a;
+  /* --- the one accent, and the three status colours --- */
+  --accent: oklch(0.5 0.1 200);
+  --accent-2: oklch(0.63 0.1 200);
+  --accent-wash: oklch(0.94 0.03 200);
+  --ok: oklch(0.52 0.14 150);
+  --ok-wash: oklch(0.95 0.03 150);
+  --ok-line: oklch(0.85 0.06 150);
+  --err: oklch(0.52 0.16 25);
+  --err-wash: oklch(0.95 0.03 25);
+  --err-line: oklch(0.85 0.06 25);
+  --warn: oklch(0.53 0.12 75);
+  --warn-wash: oklch(0.95 0.04 80);
 
-  --accent: #1e7280;
-  --accent-2: #3e9aa8;
-  --accent-wash: #e8f3f4;
-  --ok: #2e9e5b;
-  --ok-wash: #e9f6ee;
-  --ok-line: #cfe8da;
-  --err: #c04848;
-  --err-wash: #fbeaea;
-  --err-line: #ebcaca;
-  --warn: #b07d1a;
-  --warn-wash: #f8f0dc;
-
-  --shadow-1: 0 1px 3px rgba(96, 78, 46, 0.1);
-  --shadow-2: 0 12px 30px rgba(96, 78, 46, 0.18);
-  --shadow-3: 0 22px 60px rgba(96, 78, 46, 0.26);
+  /* Panels are flat and hairlined; only what floats over the room, or over the page, casts. */
+  --shadow-1: none;
+  --shadow-2: 0 6px 20px oklch(0.2 0.02 70 / 0.16);
+  --shadow-3: 0 20px 50px oklch(0.2 0.02 70 / 0.25);
 
   --font-mono: 'Cascadia Code', ui-monospace, 'JetBrains Mono', Consolas, monospace;
   --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
@@ -148,11 +153,12 @@ canvas {
      same reason as `--dock-w`: hiding the panel has to collapse whichever axis it is laid out on,
      and a rule that knows which one is a rule that goes stale when the layout changes. */
   --dock-row: minmax(0, 1fr);
-  --top-h: 46px;
-  --time-h: 62px;
+  --top-h: 44px;
+  --time-h: 66px;
   --rail-w: 244px;
-  --radius: 12px;
-  --radius-sm: 7px;
+  --gap: 6px;
+  --radius: 6px;
+  --radius-sm: 4px;
   --ease: cubic-bezier(0.22, 0.7, 0.3, 1);
 }
 
@@ -161,42 +167,34 @@ canvas {
  * over it reads as a screenshot with the brightness pulled down instead of as evening.
  */
 :root[data-theme='dark'] {
-  --oak-1: #3a3229;
-  --oak-2: #322b23;
-  --oak-3: #2a241d;
-  --plank: rgba(0, 0, 0, 0.25);
-  --wall: #2a2822;
-  --wall-2: #24221d;
-  --base: #1e1c18;
-  --shadow-floor: rgba(0, 0, 0, 0.5);
+  --bg: oklch(0.17 0.012 60);
+  --panel: oklch(0.215 0.012 60);
+  --panel-solid: oklch(0.215 0.012 60);
+  --panel-2: oklch(0.25 0.012 60);
+  --panel-3: oklch(0.29 0.012 60);
+  --line: oklch(0.32 0.012 60);
+  --line-soft: oklch(0.27 0.012 60);
+  --stage-bg: oklch(0.11 0.012 240);
 
-  --bg: #1c1915;
-  --panel: rgba(38, 35, 30, 0.94);
-  --panel-solid: #262320;
-  --panel-2: #2e2a25;
-  --panel-3: #34302a;
-  --line: #423c34;
-  --line-soft: #383229;
+  --ink: oklch(0.92 0.014 80);
+  --ink-2: oklch(0.74 0.014 80);
+  --ink-3: oklch(0.64 0.014 80);
 
-  --ink: #ece5d8;
-  --ink-2: #b0a795;
-  --ink-3: #7d7566;
+  --accent: oklch(0.76 0.1 200);
+  --accent-2: oklch(0.7 0.1 200);
+  --accent-wash: oklch(0.3 0.04 200);
+  --ok: oklch(0.74 0.14 150);
+  --ok-wash: oklch(0.28 0.04 150);
+  --ok-line: oklch(0.4 0.06 150);
+  --err: oklch(0.72 0.14 25);
+  --err-wash: oklch(0.28 0.04 25);
+  --err-line: oklch(0.42 0.06 25);
+  --warn: oklch(0.78 0.12 80);
+  --warn-wash: oklch(0.3 0.04 80);
 
-  --accent: #4fb3c2;
-  --accent-2: #6ac6d4;
-  --accent-wash: #22383c;
-  --ok: #5cc98a;
-  --ok-wash: #21372a;
-  --ok-line: #385b45;
-  --err: #e57a7a;
-  --err-wash: #3a2424;
-  --err-line: #61393a;
-  --warn: #d6a544;
-  --warn-wash: #3a3021;
-
-  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 12px 30px rgba(0, 0, 0, 0.5);
-  --shadow-3: 0 22px 60px rgba(0, 0, 0, 0.62);
+  --shadow-1: none;
+  --shadow-2: 0 6px 20px oklch(0 0 0 / 0.4);
+  --shadow-3: 0 20px 50px oklch(0 0 0 / 0.55);
 }
 
 html,
@@ -214,6 +212,11 @@ body {
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Scrollbars and form controls follow the theme; `theme.ts` writes the same value inline. */
+  color-scheme: light;
+}
+:root[data-theme='dark'] body {
+  color-scheme: dark;
 }
 
 /* ============================================================== shell ==== */
@@ -233,8 +236,8 @@ body {
     'top   top'
     'stage dock'
     'time  time';
-  gap: 8px;
-  padding: 8px;
+  gap: var(--gap);
+  padding: var(--gap);
   background: var(--bg);
 }
 /*
@@ -259,12 +262,16 @@ body {
   display: none;
 }
 
+/*
+ * A panel is a flat sheet with a hairline. It used to float: a 12px radius, a 30px drop shadow and
+ * a backdrop blur on every one of them, which made four sheets of frosted glass around a room
+ * drawn in hard-edged pixels. What floats now is only what actually floats — the picker, the
+ * palette, the inspector over the room — and those carry their own shadow.
+ */
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-2);
-  backdrop-filter: blur(6px);
 }
 
 /* The stage owns the room and everything that floats over it. */
@@ -273,9 +280,19 @@ body {
   position: relative;
   min-width: 0;
   min-height: 0;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  box-shadow: var(--shadow-2);
+  /*
+   * Headroom for the session-tab strip. The rail and the inspector float over the room's corners
+   * and size themselves to the stage; when the strip is present they used to grow straight under
+   * it, and the rail's own header — AGENTS, and how many are working — was the first thing
+   * covered. The strip is 8px down, 24px tall and casts a shadow, so 44px clears it.
+   */
+  --strip-h: 0px;
+}
+.stage.has-tabs {
+  --strip-h: 44px;
 }
 /*
  * Two classes deep on purpose: `office/pixel.css` is imported after this file, so an equally
@@ -285,6 +302,11 @@ body {
 .stage > .office {
   position: absolute;
   inset: 0;
+}
+/* The letterbox is the shell's colour, not the renderer's: `pixel.css` paints a fixed near-black
+   there because it cannot know the theme, and this is the one place the theme is known. */
+.stage > .office.pixel {
+  background: var(--stage-bg);
 }
 
 /* ============================================================ top bar ==== */
@@ -305,17 +327,17 @@ body {
   z-index: 70;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 0 12px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 11.5px;
   min-width: 0;
 }
 .wordmark {
   display: flex;
   align-items: center;
-  gap: 7px;
-  letter-spacing: 0.2em;
+  gap: 8px;
+  letter-spacing: 0.24em;
   font-weight: 700;
   flex: none;
   color: var(--ink);
@@ -342,10 +364,11 @@ body {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
+  font-size: 13px;
 }
 .stat .k {
-  font-size: 9px;
-  letter-spacing: 0.12em;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
   color: var(--ink-3);
 }
 
@@ -354,11 +377,11 @@ body {
   align-items: center;
   gap: 5px;
   flex: none;
-  padding: 3px 9px;
+  padding: 3px 10px;
   border-radius: 20px;
   font-weight: 700;
-  font-size: 9.5px;
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  letter-spacing: 0.12em;
   border: 1px solid var(--line);
   background: var(--panel-2);
   color: var(--ink-3);
@@ -414,7 +437,7 @@ body {
   background: var(--panel-2);
   color: var(--ink-2);
   font: inherit;
-  font-size: 10px;
+  font-size: 10.5px;
   cursor: pointer;
   transition:
     background 0.14s var(--ease),
@@ -437,10 +460,21 @@ body {
 .tab:focus-visible,
 .pill-seek:focus-visible,
 .session-pick:focus-visible,
+.session-tab:focus-visible,
+.session-list button:focus-visible,
 .arow:focus-visible,
-.filter-chip:focus-visible {
+.acard:focus-visible,
+.trow:focus-visible,
+.filter-chip:focus-visible,
+details.monologue summary:focus-visible,
+.help-body:focus-visible {
   outline: 2px solid var(--accent-2);
   outline-offset: 1px;
+}
+/* A text field's ring is its border: an outline on top of a border reads as a double frame. */
+.search:focus-visible {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 2px var(--accent-wash);
 }
 
 /* --- session picker --- */
@@ -619,11 +653,12 @@ body {
   background: var(--panel);
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
   letter-spacing: 0.04em;
   cursor: pointer;
-  /* The room is drawn in flat colour; a tab sitting on top of it needs to read as *above* it. */
-  box-shadow: 0 1px 3px rgb(0 0 0 / 22%);
+  /* Over the room's letterbox, which is dark in both themes: a hairline of the panel's own colour
+     is what makes the edge read, and a drop shadow is not. */
+  box-shadow: 0 0 0 1px var(--panel);
 }
 .session-tab:hover {
   border-color: var(--ink-3);
@@ -648,11 +683,16 @@ body {
  * bug back.
  */
 .session-tab .slug {
-  max-width: 168px;
+  max-width: 124px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink-3);
+}
+/* With the roster column up, the strip centres on the room beside it rather than on the stage. */
+.stage.has-rail .session-tabs {
+  left: calc(var(--rail-w) + (100% - var(--rail-w)) / 2);
+  max-width: calc(100% - var(--rail-w) - 20px);
 }
 /* The working-agent count is the reason the tab exists, so it is the loudest thing on it. */
 .session-tab .n {
@@ -667,28 +707,39 @@ body {
 
 /* =============================================================== rail ==== */
 
-/* The roster, floating over the room's bottom-left corner. */
+/*
+ * The roster, as a column down the stage's left edge.
+ *
+ * It used to float over the room's bottom-left corner as a card, and the room was inset past it.
+ * Two things were wrong with that at once: on a busy session the card grew to the top of the stage
+ * and covered a third of the office, and on a quiet one it covered a corner while the inset left a
+ * dead band of letterbox above it, the full width of the card. A column is what the inset was
+ * already treating it as. `useRailInset` measures the same box either way, so the room starts
+ * exactly where the column ends; below 900px the column is gone and the room has the whole stage.
+ */
 .rail {
   position: absolute;
-  left: 10px;
-  bottom: 10px;
+  left: 0;
+  top: 0;
+  bottom: 0;
   z-index: 30;
   width: var(--rail-w);
-  max-height: calc(100% - 20px);
   display: flex;
   flex-direction: column;
-  padding: 8px;
+  padding: 10px 8px;
+  border-width: 0 1px 0 0;
+  border-radius: 0;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
 }
 .rail-hd {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 8.5px;
-  letter-spacing: 0.2em;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
   color: var(--ink-3);
-  padding: 0 2px 6px;
+  padding: 0 4px 8px;
 }
 .rail-hd .spacer {
   margin-left: auto;
@@ -703,9 +754,9 @@ body {
   display: grid;
   grid-template-columns: 15px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
-  padding: 4px 5px;
+  padding: 5px 6px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -745,7 +796,7 @@ body {
 }
 .arow .sub {
   color: var(--ink-3);
-  font-size: 8.5px;
+  font-size: 9.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -819,22 +870,22 @@ body {
 .tabs {
   display: flex;
   gap: 2px;
-  padding: 6px 6px 0;
+  padding: 4px 8px 0;
   border-bottom: 1px solid var(--line);
   font-family: var(--font-mono);
 }
 .tab {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 10px 7px;
+  gap: 6px;
+  padding: 9px 10px 8px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--ink-3);
   font: inherit;
-  font-size: 9.5px;
-  letter-spacing: 0.14em;
+  font-size: 10px;
+  letter-spacing: 0.16em;
   cursor: pointer;
   transition: color 0.14s var(--ease);
 }
@@ -846,7 +897,7 @@ body {
   border-bottom-color: var(--accent-2);
 }
 .tab .n {
-  font-size: 8.5px;
+  font-size: 9.5px;
   color: var(--ink-3);
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
@@ -861,7 +912,7 @@ body {
   border-top: 1px solid var(--line);
   padding: 7px 12px;
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 9.5px;
   color: var(--ink-3);
   letter-spacing: 0.05em;
   display: flex;
@@ -882,29 +933,35 @@ body {
 .search {
   flex: 1;
   min-width: 0;
-  padding: 4px 8px;
+  padding: 5px 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--panel-2);
   color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 10.5px;
 }
 .search::placeholder {
   color: var(--ink-3);
+}
+/* A narrow dock clips the placeholder mid-word; an ellipsis says so. */
+.search {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .search:focus {
   outline: none;
   border-color: var(--accent-2);
 }
 .filter-chip {
-  padding: 3px 7px;
+  padding: 3px 8px;
   border: 1px solid var(--line);
   border-radius: 20px;
   background: var(--panel-2);
   color: var(--ink-3);
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 9.5px;
   letter-spacing: 0.08em;
   cursor: pointer;
 }
@@ -922,10 +979,37 @@ body {
 .empty-note {
   text-align: center;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--ink-3);
   padding: 18px 8px;
   letter-spacing: 0.06em;
+}
+
+/*
+ * The socket is down and a session is on screen. Sits above whichever tab is open, in the warning
+ * tone the seek pill uses — the same family of "what you see is not now".
+ */
+.offline-note {
+  flex: none;
+  display: grid;
+  gap: 3px;
+  margin: 8px 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--warn-wash);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+.offline-note b {
+  color: var(--warn);
+  letter-spacing: 0.06em;
+}
+.offline-note code {
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 /*
@@ -940,7 +1024,7 @@ body {
   padding: 20px 16px;
   text-align: center;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
   line-height: 1.75;
   color: var(--ink-3);
 }
@@ -948,12 +1032,19 @@ body {
   display: block;
   margin-bottom: 7px;
   color: var(--ink-2);
-  font-size: 10.5px;
+  font-size: 11px;
   letter-spacing: 0.08em;
 }
 .nothing p {
   margin: 0;
   overflow-wrap: anywhere;
+}
+.nothing p + p {
+  margin-top: 8px;
+}
+.nothing code {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 /* =============================================================== chat ==== */
@@ -966,7 +1057,7 @@ body {
 }
 .chat-head .l2 {
   margin-top: 3px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -979,38 +1070,64 @@ body {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 0 8px;
-  padding: 5px 0;
+  padding: 7px 0;
+}
+/*
+ * Only a card that arrived live fades in. A replayed backlog mounts sixty cards at once, and sixty
+ * simultaneous fades ran at a fraction of real time in Chromium — the feed sat at `opacity: 0`
+ * for seconds after load. `Chat` decides what is fresh; history lands already there.
+ */
+.msg.fresh,
+.msg-sys.fresh {
   animation: msg-in 0.3s var(--ease);
 }
 .msg .mini {
   margin-top: 4px;
   justify-self: center;
 }
+/*
+ * A turn is a run of text under a hairline, not a card. Two hundred bordered, shadowed boxes in a
+ * 400px column were the densest thing on screen and the least readable; the line does the same
+ * separating with none of the weight. What *is* boxed is what needs to stand out from the run —
+ * the human's turn, a verdict, the selected agent — and those are washes, not borders.
+ */
 .msg-card {
-  background: var(--panel-solid);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 7px 10px 8px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  padding: 0 0 9px;
   min-width: 0;
-  box-shadow: var(--shadow-1);
 }
+.msg:last-child .msg-card {
+  border-bottom: 0;
+}
+.msg-card.verdict-err,
+.msg-card.verdict-ok,
+.msg.focus .msg-card {
+  border-bottom: 0;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+/* Half-strength washes: a fan-out's feed can be verdicts end to end, and a column of full-strength
+   red and green tiles shouts. The chip on the card already says which it is. */
 .msg-card.verdict-err {
-  border-left: 3px solid var(--err);
+  background: color-mix(in oklch, var(--err-wash) 55%, var(--panel));
 }
 .msg-card.verdict-ok {
-  border-left: 3px solid var(--ok);
+  background: color-mix(in oklch, var(--ok-wash) 55%, var(--panel));
 }
 /* The card of whoever is selected in the roster or the room. */
 .msg.focus .msg-card {
-  border-color: var(--accent-2);
-  box-shadow: 0 0 0 1px var(--accent-2);
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px var(--accent-2);
 }
 .msg-head {
   display: flex;
   align-items: baseline;
   gap: 7px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 10.5px;
 }
 .msg-head .who {
   font-weight: 700;
@@ -1020,19 +1137,20 @@ body {
 }
 .msg-head .model {
   color: var(--ink-3);
-  font-size: 8.5px;
+  font-size: 9.5px;
   flex: none;
 }
 .msg-head time {
   margin-left: auto;
   flex: none;
   color: var(--ink-3);
-  font-size: 9px;
+  font-size: 9.5px;
   font-variant-numeric: tabular-nums;
 }
 .msg-body {
-  margin-top: 2px;
-  font-size: 12px;
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .msg-body p {
@@ -1055,23 +1173,22 @@ body {
 }
 .msg-user .msg-card {
   background: var(--accent-wash);
-  border-color: var(--accent-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
 }
 /* A machine-written `user` line: real, but not the human talking. */
 .msg-user.machine .msg-card {
   background: var(--panel-2);
-  border-color: var(--line);
-  border-left: 3px solid var(--line);
 }
 .msg-sys {
   text-align: center;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--ink-3);
   padding: 6px 0;
   letter-spacing: 0.06em;
   overflow-wrap: anywhere;
-  animation: msg-in 0.3s var(--ease);
 }
 
 /* Mini-head: skin, hair and a sliver of torso, in the agent's own tints. */
@@ -1116,7 +1233,7 @@ body {
 }
 .chip {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 9.5px;
   padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid var(--line);
@@ -1172,7 +1289,7 @@ details.monologue {
 }
 details.monologue summary {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--ink-3);
   cursor: pointer;
   list-style: none;
@@ -1197,7 +1314,7 @@ details.monologue[open] summary::before {
   background: var(--panel-2);
   border-radius: 0 5px 5px 0;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
   line-height: 1.65;
   color: var(--ink-2);
   white-space: pre-wrap;
@@ -1210,11 +1327,10 @@ details.monologue[open] summary::before {
 
 .acard {
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius);
   background: var(--panel-solid);
   padding: 8px 10px;
   margin-bottom: 6px;
-  box-shadow: var(--shadow-1);
 }
 .acard.on {
   border-color: var(--accent-2);
@@ -1224,7 +1340,7 @@ details.monologue[open] summary::before {
   align-items: center;
   gap: 7px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 10.5px;
 }
 .acard-head b {
   overflow: hidden;
@@ -1238,15 +1354,15 @@ details.monologue[open] summary::before {
   gap: 6px;
   flex: none;
   color: var(--ink-3);
-  font-size: 9px;
+  font-size: 9.5px;
 }
 .kv {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 2px 10px;
+  gap: 3px 10px;
   margin-top: 6px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--ink-2);
 }
 .kv dt {
@@ -1270,7 +1386,7 @@ details.monologue[open] summary::before {
   padding: 3px 4px;
   border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
   color: var(--ink-2);
 }
 .trow:hover {
@@ -1320,7 +1436,7 @@ details.monologue[open] summary::before {
   align-items: center;
   gap: 8px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--ink-2);
   padding: 2px 0;
 }
@@ -1347,8 +1463,8 @@ details.monologue[open] summary::before {
 
 .section-hd {
   font-family: var(--font-mono);
-  font-size: 8.5px;
-  letter-spacing: 0.2em;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
   color: var(--ink-3);
   margin: 10px 0 5px;
 }
@@ -1361,14 +1477,15 @@ details.monologue[open] summary::before {
 .inspector {
   position: absolute;
   right: 10px;
-  top: 10px;
+  top: calc(10px + var(--strip-h));
   z-index: 40;
   width: 262px;
-  max-height: calc(100% - 20px);
+  max-height: calc(100% - 20px - var(--strip-h));
   overflow-y: auto;
   padding: 10px 12px 12px;
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10px;
+  box-shadow: var(--shadow-3);
   animation: pop-in 0.16s var(--ease);
 }
 .inspector .close {
@@ -1394,10 +1511,10 @@ details.monologue[open] summary::before {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
+  gap: 14px;
+  padding: 8px 14px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--ink-3);
   min-width: 0;
 }
@@ -1406,17 +1523,17 @@ details.monologue[open] summary::before {
   flex-direction: column;
   gap: 2px;
   flex: none;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
 }
 .tl-side b {
   color: var(--ink);
-  font-size: 11px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
 .tl-plot {
   position: relative;
-  height: 42px;
+  height: 40px;
   min-width: 0;
   display: flex;
   align-items: flex-end;
@@ -1436,6 +1553,8 @@ details.monologue[open] summary::before {
 .tl-bar {
   flex: 1 1 0;
   min-width: 0;
+  /* Three seconds of activity are three columns, not one block across the whole strip. */
+  max-width: 14px;
   height: 100%;
   display: flex;
   align-items: flex-end;
@@ -1512,7 +1631,7 @@ details.monologue[open] summary::before {
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: rgba(20, 16, 10, 0.32);
+  background: oklch(0.15 0.02 60 / 0.4);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1629,12 +1748,12 @@ details.monologue[open] summary::before {
 }
 .help-row dt {
   color: var(--ink);
-  font-size: 11px;
+  font-size: 11.5px;
 }
 .help-row dd {
   margin: 0;
   color: var(--ink-2);
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.45;
 }
 .help-ft {

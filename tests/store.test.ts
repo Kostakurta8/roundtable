@@ -8,6 +8,7 @@ import { Normalizer } from '../server/normalize';
 import { parseLine } from '../server/parse';
 import {
   agentLook,
+  displayPhase,
   initialState,
   MSG_CAP,
   OPEN_TOOL_GRACE_MS,
@@ -17,7 +18,7 @@ import {
   WORKING_WINDOW_MS,
   type RtState,
 } from '../src/store';
-import { clashingNames, hasChosenName, sessionAbout, sessionName } from '../src/ui/format';
+import { boardText, clashingNames, hasChosenName, sessionAbout, sessionName } from '../src/ui/format';
 
 /** Same helper the Normalizer tests use: a whole fixture file → the events it produces. */
 const feedAll = (file: string, agentId: 'main' | string): Ev[] => {
@@ -1013,5 +1014,57 @@ describe('agentLook', () => {
     expect(agentLook('abc123')).toEqual(agentLook('abc123'));
     expect(agentLook('main').tint).not.toBe(agentLook('abc123').tint);
     expect(agentLook('zz9').tint).toMatch(/^#[0-9A-Fa-f]{6}$/);
+  });
+});
+
+describe('displayPhase — what the roster may claim about now', () => {
+  /**
+   * The store's phase is the last thing an agent did, and it never decays: a session that ended
+   * six hours ago still had `main · talking` with a green dot in the rail, and a subagent whose
+   * transcript had not changed since lunch read `thinking…` with a pulsing dot. Those are claims
+   * about the present. The store is right to keep the fact; the panels are wrong to print it as
+   * news past the same window `workingAgents` already applies.
+   */
+  it('keeps a recent phase as it is', () => {
+    const a = fold([agentSeen('a'), text('a', 'hello', 1000)]).agents.a;
+    expect(displayPhase(a, 1000 + 5000)).toEqual({ phase: 'talking', status: 'talking' });
+  });
+
+  it('demotes a silent agent to idle once the working window has passed', () => {
+    const a = fold([agentSeen('a'), thinking('a', 'hm', 1000)]).agents.a;
+    expect(displayPhase(a, 1000 + WORKING_WINDOW_MS - 1).phase).toBe('thinking');
+    expect(displayPhase(a, 1000 + WORKING_WINDOW_MS + 1)).toEqual({ phase: 'idle', status: '' });
+  });
+
+  it('gives an open tool call the longer grace, and no more', () => {
+    const b = fold([agentSeen('b'), toolStart('b', 'Bash', 'npm test', 1000)]).agents.b;
+    expect(displayPhase(b, 1000 + WORKING_WINDOW_MS + 1).phase).toBe('working');
+    expect(displayPhase(b, 1000 + OPEN_TOOL_GRACE_MS + 1).phase).toBe('idle');
+  });
+
+  it('never touches done', () => {
+    const seen = agentSeen('c');
+    const done: Ev = { kind: 'agentDone', ref: ref('c'), ok: true, ts: 1000, seq: next() };
+    const c = fold([seen, done]).agents.c;
+    expect(displayPhase(c, 1000 + 10 * OPEN_TOOL_GRACE_MS)).toEqual({ phase: 'done', status: 'done' });
+  });
+});
+
+describe('boardText — what the whiteboard is allowed to say', () => {
+  it('is the task when there is one', () => {
+    expect(boardText('audit the release', true, 0)).toBe('audit the release');
+  });
+  it('says nothing is observed when nothing is followed', () => {
+    expect(boardText(undefined, false, 0)).toBe('nothing to observe yet');
+  });
+  it('waits for a task on a fresh session', () => {
+    expect(boardText(undefined, true, 0)).toBe('waiting for a task…');
+  });
+  /**
+   * A truncated replay can lose the opening turn — the one the task comes from. "Waiting for a
+   * task" is then a claim that a task is coming, when it was asked hours ago and dropped.
+   */
+  it('does not wait for a task the hub already dropped', () => {
+    expect(boardText(undefined, true, 600)).toBe('earlier history not replayed');
   });
 });

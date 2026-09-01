@@ -83,6 +83,14 @@ export type TimelineProps = {
    * that caused it looked exactly as it does when nothing is held.
    */
   seekTs: number | null;
+  /**
+   * Events the hub could no longer replay before this session's backlog, or zero.
+   *
+   * The caption used to decide "whole session" by bucket count alone, and a replay the hub had
+   * cut the front off — it keeps the last 4 000 events and says how many it dropped — passed that
+   * test with room to spare. The bars were honest; the word "whole" over them was not.
+   */
+  dropped?: number;
   onSeek: (ts: number) => void;
 };
 
@@ -92,6 +100,7 @@ export const Timeline = memo(function Timeline({
   lastTs,
   turns,
   seekTs,
+  dropped = 0,
   onSeek,
 }: TimelineProps) {
   const plot = useRef<HTMLDivElement>(null);
@@ -239,7 +248,7 @@ export const Timeline = memo(function Timeline({
             that ever existed is on screen — that is what "whole" means. */}
         <span>
           {turns} turns ·{' '}
-          {shown.length === 0 || (shown.length === buckets.length && buckets.length < BUCKET_CAP)
+          {shown.length === 0 || (dropped === 0 && shown.length === buckets.length && buckets.length < BUCKET_CAP)
             ? 'whole session'
             : lastTs - (shown[shown.length - 1].t + BUCKET_MS) < BUCKET_MS * 2
               ? `bars cover the last ${duration(shown[shown.length - 1].t + BUCKET_MS - shown[0].t)}`
@@ -248,6 +257,10 @@ export const Timeline = memo(function Timeline({
                 `bars cover ${duration(shown[shown.length - 1].t + BUCKET_MS - shown[0].t)} ending ${clockSec(
                   shown[shown.length - 1].t + BUCKET_MS,
                 )}`}
+          {/* The hole is named at the strip as well as at the top of the feed: this is the
+              surface that claims to summarise the session, so it is the one that must say when
+              it cannot. */}
+          {dropped > 0 && shown.length > 0 ? ` · ${dropped} earlier events not replayed` : ''}
         </span>
       </div>
 

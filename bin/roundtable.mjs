@@ -70,6 +70,7 @@ try {
   const stop = await run(opts, here('../dist/client'));
   const url = appUrl(opts.port);
   console.log(`[roundtable] observing ${opts.root}`);
+  if (opts.demo) console.log('[roundtable] --demo: a staged session under the temp directory; nothing of yours is read');
   console.log(`[roundtable] ${url}`);
   if (opts.open) openBrowser(url);
 

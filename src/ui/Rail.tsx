@@ -5,7 +5,7 @@
  * a busy room stays navigable once there are more people in it than you can tell apart by shirt.
  */
 import { memo } from 'react';
-import { agentLook, MAIN, type RtAgent } from '../store';
+import { agentLook, displayPhase, MAIN, type RtAgent } from '../store';
 import { modelInfo } from '../../shared/models';
 import { clip, tokens } from './format';
 import { MiniHead } from './MiniHead';
@@ -18,17 +18,21 @@ function Row({
   row,
   peak,
   selected,
+  now,
   onSelect,
 }: {
   row: RosterRow;
   peak: number;
   selected: boolean;
+  now: number;
   onSelect: (id: string | null) => void;
 }) {
   const a: RtAgent = row.agent;
   const name = a.label ?? a.id;
   const model = a.model ? modelInfo(a.model).short : undefined;
-  const sub = a.status ? clip(a.status, STATUS_MAX) : (model ?? a.agentType ?? '');
+  // What may be claimed about this agent *now* — a `thinking…` from before lunch is not it.
+  const { phase, status } = displayPhase(a, now);
+  const sub = status ? clip(status, STATUS_MAX) : (model ?? a.agentType ?? '');
 
   return (
     <button
@@ -50,7 +54,7 @@ function Row({
         <span className="tokbar" aria-hidden="true">
           <i style={{ width: `${peak > 0 ? Math.round((a.tokens / peak) * 100) : 0}%` }} />
         </span>
-        <span className={`phase ${a.phase}`} title={a.phase} />
+        <span className={`phase ${phase}`} title={phase} />
       </span>
     </button>
   );
@@ -59,10 +63,12 @@ function Row({
 export type RailProps = {
   rows: RosterRow[];
   selected: string | null;
+  /** The shell's coarse clock, so a phase can expire without an event to expire it. */
+  now: number;
   onSelect: (id: string | null) => void;
 };
 
-export const Rail = memo(function Rail({ rows, selected, onSelect }: RailProps) {
+export const Rail = memo(function Rail({ rows, selected, now, onSelect }: RailProps) {
   if (rows.length === 0) return null;
   const peak = peakTokens(rows);
   // "Workers not yet finished", not "busy this second" — the header answers how much of the
@@ -86,6 +92,7 @@ export const Rail = memo(function Rail({ rows, selected, onSelect }: RailProps) 
             row={row}
             peak={peak}
             selected={selected === row.agent.id}
+            now={now}
             onSelect={onSelect}
           />
         ))}

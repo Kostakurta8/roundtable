@@ -11,6 +11,10 @@
  * out — the hub reads transcripts, and a program that reads transcripts should not be able to run
  * anything.
  */
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { stageDemoRoom } from '../scripts/promo/demoRoom';
 import { DEFAULT_HUB_PORT, HUB_HOST, PORT_ENV, readPort } from '../shared/net';
 import { startServer, type StopServer } from './hub';
 import { claudeRoot } from './sessions';
@@ -26,6 +30,15 @@ export type CliOptions = {
   help: boolean;
   /** Print the version and exit. */
   version: boolean;
+  /**
+   * Observe a staged session instead of a real directory.
+   *
+   * The first run is the product's front door, and on a machine that has never run Claude Code
+   * it opens on an empty office. This writes a synthetic root under the OS temp directory — the
+   * same one `npm run demo` stages from a clone — and points the hub at that. It never reads
+   * `~/.claude`; `root` is overridden so nothing else can be pointed at, either.
+   */
+  demo: boolean;
   /** An argument that is not understood. Reported rather than ignored — see `parseArgs`. */
   unknown: string | null;
 };
@@ -39,6 +52,10 @@ Options
   -p, --port <n>   Port for the app and its socket (default ${DEFAULT_HUB_PORT}).
                    ${PORT_ENV} sets the same thing.
       --root <dir> The Claude directory to observe (default ~/.claude).
+      --demo       Watch a staged session instead: agents arrive, work, argue and leave, so there
+                   is something to see on a machine that has never run Claude Code. The
+                   transcripts are written under the temp directory and deleted on exit; nothing
+                   of yours is read. Overrides --root.
       --no-open    Do not open a browser; just print the address.
   -v, --version    Print the version.
   -h, --help       Print this.
@@ -63,6 +80,7 @@ export function parseArgs(
     open: true,
     help: false,
     version: false,
+    demo: false,
     unknown: null,
   };
 
@@ -77,14 +95,22 @@ export function parseArgs(
     if (flag === '-h' || flag === '--help') opts.help = true;
     else if (flag === '-v' || flag === '--version') opts.version = true;
     else if (flag === '--no-open') opts.open = false;
+    else if (flag === '--demo') opts.demo = true;
     else if (flag === '-p' || flag === '--port') opts.port = readPort(take(), opts.port);
     else if (flag === '--root') {
       const value = take();
       if (value) opts.root = value;
     } else if (opts.unknown === null) opts.unknown = arg;
   }
+  // The demo root is decided here and nowhere else, and it wins over `--root` on purpose: the
+  // stage wipes and recreates whatever directory it is handed, and the one directory that is
+  // safe to wipe is the one this process names itself, under the temp directory.
+  if (opts.demo) opts.root = demoRoot();
   return opts;
 }
+
+/** Where `--demo` writes. Under the OS temp directory, so no path leads from it to a real transcript. */
+export const demoRoot = (): string => join(tmpdir(), 'roundtable-demo-root');
 
 /** The address to print, and to open. `localhost` because that is what a person recognises. */
 export const appUrl = (port: number): string => `http://localhost:${port}`;
@@ -97,12 +123,32 @@ export const appUrl = (port: number): string => `http://localhost:${port}`;
  * layout changes. The launcher knows where it is installed, so the launcher says.
  */
 export async function run(opts: CliOptions, clientDir: string): Promise<StopServer> {
-  return startServer(opts.root, opts.port, {
-    clientDir,
-    onError: (err, ctx) => {
-      console.error(`[roundtable] ${ctx}:`, err);
-    },
-  });
+  // Staged before the hub starts, so its first sweep already finds two sessions to attach.
+  const room = opts.demo ? stageDemoRoom(opts.root) : null;
+  let stop: StopServer;
+  try {
+    stop = await startServer(opts.root, opts.port, {
+      clientDir,
+      // The demo writes in bursts a few seconds apart; polling at 200ms keeps every burst a beat
+      // rather than a lump, on every platform. A real directory keeps the hub's own default.
+      ...(room ? { usePolling: true, interval: 200 } : {}),
+      onError: (err, ctx) => {
+        console.error(`[roundtable] ${ctx}:`, err);
+      },
+    });
+  } catch (err) {
+    room?.stop();
+    if (room) rmSync(opts.root, { recursive: true, force: true });
+    throw err;
+  }
+  if (!room) return stop;
+  // The staged root is this process's to create, so it is this process's to remove: the watcher
+  // is closed first, and the directory goes after it, exactly as `npm run demo` does on Ctrl+C.
+  return async () => {
+    room.stop();
+    await stop();
+    rmSync(opts.root, { recursive: true, force: true });
+  };
 }
 
 /** What to say when the port is taken, which is nearly always a second copy of the app. */

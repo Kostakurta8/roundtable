@@ -7,7 +7,7 @@
  */
 import { memo } from 'react';
 import { modelInfo } from '../../shared/models';
-import { agentLook, type RtMsg, type RtState } from '../store';
+import { agentLook, displayPhase, type RtMsg, type RtState } from '../store';
 import { clip, clockSec, duration, editLines, money, oneLine, shortPath, tokens } from './format';
 import { MiniHead } from './MiniHead';
 
@@ -30,6 +30,7 @@ export const Inspector = memo(function Inspector({ state, agentId, now, onClose 
   const alive = a.lastTs > a.firstTs ? a.lastTs - a.firstTs : 0;
   const recent = state.tools.filter((t) => t.agentId === agentId).slice(-LAST_TOOLS).reverse();
   const last: RtMsg | undefined = [...state.msgs].reverse().find((m) => m.agentId === agentId);
+  const shown = displayPhase(a, now);
 
   return (
     <aside className="inspector panel" aria-label={`details for ${a.label ?? a.id}`}>
@@ -49,8 +50,8 @@ export const Inspector = memo(function Inspector({ state, agentId, now, onClose 
       <dl className="kv">
         <dt>PHASE</dt>
         <dd>
-          {a.phase}
-          {a.status ? ` · ${clip(a.status, 26)}` : ''}
+          {shown.phase}
+          {shown.status ? ` · ${clip(shown.status, 26)}` : ''}
         </dd>
         <dt>ID</dt>
         <dd title={a.id}>{a.id}</dd>

@@ -14,9 +14,10 @@ import { Chat } from './chat/Chat';
 import { useKeys, useNow } from './hooks';
 import { PixelOffice, useOffice } from './office/PixelOffice';
 import { initialState, roster as rosterOf, turnCount, workingAgents } from './store';
+import { OfflineNote } from './ui/OfflineNote';
 import { useTheme } from './theme';
 import { AgentsTab } from './ui/AgentsTab';
-import { clashingNames, clip, clockSec, hasChosenName, sessionAbout, sessionName, shortId } from './ui/format';
+import { boardText, clashingNames, clip, clockSec, hasChosenName, sessionAbout, sessionName, shortId } from './ui/format';
 import { Help } from './ui/Help';
 import { Inspector } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
@@ -28,8 +29,6 @@ import { ToolsTab } from './ui/ToolsTab';
 import { useRtStream, WS_URL, type RtSession } from './ws';
 
 const TITLE_MAX = 110;
-/** The whiteboard is 220px of monospace: three lines fit, and the CSS clamps what does not. */
-const BOARD_MAX = 150;
 /**
  * How much of a session's opening prompt a tab may carry. A tab is a glance, not a paragraph: past
  * this the CSS ellipsis is doing all the work anyway, and the accessible name is the surface that
@@ -123,23 +122,46 @@ const FeedPanel = memo(Chat);
  * "connected with nothing to watch" is a different state, it belongs to the shell rather than to
  * any session's feed, and this is the one sentence it gets to say.
  */
-function Nothing({ connected, sessions }: { connected: boolean; sessions: number }) {
-  const [head, body] = !connected
-    ? ['Not connected to the observer hub', `Retrying ${WS_URL}. Nothing can be observed until it answers.`]
-    : sessions === 0
-      ? [
-          'Nothing to observe yet',
-          'The observer is connected and watching this machine. No Claude Code session has run here — the first one to start shows up in this panel.',
-        ]
-      : [
-          'Pick a session to observe',
-          `${sessions} session${sessions === 1 ? '' : 's'} on this machine, and none of them is being followed. Choose one from the picker in the top bar.`,
-        ];
-
+function Nothing({ connected, sessions, root }: { connected: boolean; sessions: number; root: string }) {
+  if (!connected) {
+    return (
+      <div className="nothing" role="status">
+        <b>Not connected to the observer hub</b>
+        <p>
+          Retrying <code>{WS_URL}</code>. The hub is the terminal that ran <code>npx github:Kostakurta8/roundtable</code> or{' '}
+          <code>npm start</code>; if it was closed, start it again and this page reconnects on its own.
+        </p>
+      </div>
+    );
+  }
+  if (sessions > 0) {
+    return (
+      <div className="nothing" role="status">
+        <b>Pick a session to observe</b>
+        <p>
+          {sessions} session{sessions === 1 ? '' : 's'} on this machine, and none of them is being followed. Choose one
+          from the picker in the top bar.
+        </p>
+      </div>
+    );
+  }
+  /*
+   * The first run, on a machine that has never run Claude Code. This is the product's front door,
+   * and what it owes a stranger is three facts and nothing invented: where it is looking, what will
+   * make something appear there, and the one command that shows a busy room without waiting.
+   */
   return (
-    <div className="nothing" role="status">
-      <b>{head}</b>
-      <p>{body}</p>
+    <div className="nothing nothing-first" role="status">
+      <b>Nothing to observe yet</b>
+      <p>
+        Connected, and watching {root ? <code>{root}</code> : 'this machine'} for the transcripts Claude Code writes. Nothing
+        has been written there yet.
+      </p>
+      <p>Start a Claude Code session in any terminal and it appears here on its own, live.</p>
+      <p>
+        To see a busy room without one: <code>npx github:Kostakurta8/roundtable --demo</code>. It stages a session under
+        the temp directory and never reads this one.
+      </p>
     </div>
   );
 }
@@ -207,7 +229,7 @@ export default function App() {
   const now = useNow(5000);
   const office = useOffice();
   const { feed } = office;
-  const { states, sessions, dropped, replaying, notices, connected, rescan } = useRtStream(sessionId, feed);
+  const { states, sessions, dropped, replaying, notices, connected, root, rescan } = useRtStream(sessionId, feed);
 
   /**
    * The session on screen. One selection drives everything: the picker sets it, a tab sets it, and
@@ -303,17 +325,12 @@ export default function App() {
       : task
         ? `TASK · ${clip(task, TITLE_MAX)}`
         : (current?.cwd ?? current?.slug ?? `session ${shortId(sessionId)}`);
+  /** Events the hub could no longer replay for this session, or zero. Three surfaces read it. */
+  const droppedHere = (sessionId && dropped[sessionId]) || 0;
   // The whiteboard is the fourth surface that had an opinion about this. An empty room whose board
-  // says "waiting for a task…" is waiting for a session that was never asked to exist.
-  const board = task
-    ? // No `TASK:` label. The board is a whiteboard in an office and visibly already is the task;
-      // spending six of the thirty-odd characters it can hold on saying so cost more than it
-      // explained. `scene.ts` still strips the old prefix defensively, so a stale client and this
-      // one produce the same board rather than one reading `TASK: TASK: …`.
-      clip(task, BOARD_MAX)
-    : sessionId === null
-      ? 'nothing to observe yet'
-      : 'waiting for a task…';
+  // says "waiting for a task…" is waiting for a session that was never asked to exist — and a
+  // truncated replay may have dropped the very turn the task came from. `boardText` decides.
+  const board = boardText(task, sessionId !== null, droppedHere);
 
   const pickSession = useCallback((id: string) => {
     setSessionId(id);
@@ -431,13 +448,21 @@ export default function App() {
         onRescan={rescan}
       />
 
-      <main className="stage" ref={stageRef}>
+      {/* `has-tabs` reserves headroom for the strip: the inspector floats over the same corner of
+          the room and used to grow straight under it. `has-rail` says the roster column is up, so
+          the strip can centre on the room beside it rather than on the whole stage. */}
+      <main
+        className={['stage', tabs.length > 0 ? 'has-tabs' : '', rows.length > 0 ? 'has-rail' : '']
+          .filter(Boolean)
+          .join(' ')}
+        ref={stageRef}
+      >
         {/* Over the room rather than in the shell's grid: the strip is not always there, and a
             grid row that collapses to zero height is how the dock ended up invisible at 800×600.
             It floats, it does not take the room's clicks, and when one session is working it does
             not exist at all. */}
         {tabs.length > 0 && (
-          <nav className="session-tabs" role="tablist" aria-label="sessions with agents working">
+          <nav className="session-tabs" role="tablist" aria-label="running sessions">
             {tabs.map((s) => {
               const busy = workingAgents(states[s.sessionId] ?? initialState, now).length;
               const on = s.sessionId === sessionId;
@@ -537,7 +562,7 @@ export default function App() {
           onOpenSession={openSession}
           onFilterCrossTalk={filterCrossTalk}
         />
-        <Rail rows={rows} selected={selected} onSelect={select} />
+        <Rail rows={rows} selected={selected} now={now} onSelect={select} />
         {selected && state.agents[selected] && (
           <Inspector state={state} agentId={selected} now={now} onClose={() => setSelected(null)} />
         )}
@@ -566,12 +591,15 @@ export default function App() {
         </nav>
 
         <div className="dock-body" role="tabpanel">
+          {/* The socket is down and a session is on screen: the pill says OFFLINE, this says what
+              that means and what to do. Above every tab, because the question is the same on each. */}
+          {!connected && title !== null && <OfflineNote url={WS_URL} />}
           {/* A feed of nothing is not a feed. `title === null` is exactly "no session is
               followed", so the same test picks the panel and titles it — there is no arrangement
               of state in which one of them can be answered and the other left saying otherwise. */}
           {tab === 'chat' &&
             (title === null ? (
-              <Nothing connected={connected} sessions={sessions.length} />
+              <Nothing connected={connected} sessions={sessions.length} root={root} />
             ) : (
               <FeedPanel
                 // Remounted per session. The search term, the lane chips and the render window are
@@ -582,7 +610,7 @@ export default function App() {
                 state={state}
                 title={title}
                 live={connected}
-                truncatedDropped={(sessionId && dropped[sessionId]) || 0}
+                truncatedDropped={droppedHere}
                 notice={sessionId ? notices[sessionId] : undefined}
                 focusAgent={selected}
                 seekTs={seekTs}
@@ -613,6 +641,7 @@ export default function App() {
         firstTs={state.firstTs}
         lastTs={state.lastTs}
         turns={turns}
+        dropped={droppedHere}
         // The strip is what put the room in the past, so it is the surface that marks where the
         // past is — `aria-current` on the column, and a live region that says so out loud.
         seekTs={seekTs}

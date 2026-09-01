@@ -116,16 +116,22 @@ export const MessageCard = memo(function MessageCard({
   msg,
   agent,
   focus,
+  fresh,
 }: {
   msg: RtMsg;
   agent?: RtAgent;
   focus?: boolean;
+  /**
+   * Whether this card arrived while the panel was on screen, as opposed to being replayed into
+   * it. Only a fresh card gets the entrance animation — see `Chat` for why a replay must not.
+   */
+  fresh?: boolean;
 }) {
   // `data-mid` is how the timeline finds a card to scroll to: seeking by index would break the
   // moment a filter is on, and seeking by scroll fraction assumes every card is the same height.
   if (msg.agentId === SYSTEM) {
     return (
-      <div className="msg-sys" data-mid={msg.id}>
+      <div className={fresh ? 'msg-sys fresh' : 'msg-sys'} data-mid={msg.id}>
         — {msg.text} —
       </div>
     );
@@ -140,7 +146,7 @@ export const MessageCard = memo(function MessageCard({
   const color = isUser ? 'var(--ink-2)' : agentLook(msg.agentId).color;
   const model = agent?.model ? modelInfo(agent.model).short : undefined;
 
-  const cls = [isUser ? 'msg msg-user' : 'msg', machine ? 'machine' : '', focus ? 'focus' : '']
+  const cls = [isUser ? 'msg msg-user' : 'msg', machine ? 'machine' : '', focus ? 'focus' : '', fresh ? 'fresh' : '']
     .filter(Boolean)
     .join(' ');
 

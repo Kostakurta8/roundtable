@@ -61,6 +61,18 @@ const LANES: readonly { key: Lane; label: string }[] = [
  */
 const RENDER_WINDOW = 250;
 
+/**
+ * How many messages may land in one render and still count as news.
+ *
+ * A card that arrives while the panel is on screen fades in; a card that is *replayed* into it
+ * must not, and the two are told apart by how many came at once. A live turn is one card, a busy
+ * second a handful. A backlog — first load, a reconnect, switching back to a session the hub had
+ * evicted — is hundreds in a single batch, and animating all of them is what left the packaged
+ * app with an empty feed: sixty simultaneous fades that Chromium ran at a fraction of real time,
+ * so that at +1.5s every card in view still had `opacity: 0`. History lands already there.
+ */
+const FRESH_BATCH_MAX = 8;
+
 const laneOf = (m: RtMsg): Lane =>
   m.agentId === SYSTEM ? 'system' : m.agentId === USER ? 'human' : 'agents';
 
@@ -96,6 +108,26 @@ export function Chat({
 
   const hidden = Math.max(0, shown.length - limit);
   const visible = hidden > 0 ? shown.slice(hidden) : shown;
+
+  /**
+   * Which cards are news. Ids are ascending and never reused, so "everything above the id this
+   * panel had already seen" names the arrivals exactly — provided they arrived in a live-sized
+   * batch. The first render primes the mark without animating anything: whatever is on screen when
+   * the panel opens is history by definition. Kept in a ref and read during render, so a re-render
+   * for a keystroke in the search box neither advances the mark nor cuts a fade short.
+   */
+  const lastId = state.msgs.length > 0 ? state.msgs[state.msgs.length - 1].id : -1;
+  const fresh = useRef<{ seen: number; from: number; primed: boolean }>({ seen: -1, from: Number.POSITIVE_INFINITY, primed: false });
+  const t = fresh.current;
+  if (!t.primed) {
+    t.primed = true;
+    t.seen = lastId;
+  } else if (lastId !== t.seen) {
+    // A reset replays from id 0, so `lastId` can go *down*; that is a batch, not news.
+    t.from = lastId > t.seen && lastId - t.seen <= FRESH_BATCH_MAX ? t.seen : Number.POSITIVE_INFINITY;
+    t.seen = lastId;
+  }
+  const freshFrom = t.from;
 
   // Keyed on the newest id rather than on the list length: once the feed reaches its cap the
   // length stops changing, and an effect watching it would stop following the live edge for the
@@ -224,6 +256,7 @@ export function Chat({
             msg={m}
             agent={state.agents[m.agentId]}
             focus={focusAgent !== null && m.agentId === focusAgent}
+            fresh={m.id > freshFrom}
           />
         ))}
       </div>

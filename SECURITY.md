@@ -20,8 +20,9 @@ rather than a same-day fix, and assume nothing is embargoed forever.
 
 ## Supported versions
 
-There has never been a release, and there are no tags. The only supported version is the current
-`main`. `package.json` says `0.1.0`; see `CHANGELOG.md`.
+Releases are tagged (`v0.1.0`, `v0.2.1`); `package.json` names the current one, and
+`npx github:Kostakurta8/roundtable` installs whatever `main` is. The only supported version is the
+current `main`.
 
 ## What it does
 
@@ -33,9 +34,13 @@ bind every interface. `host` is overridable through `HubOptions` for tests; the 
 **The WebSocket handshake is gated on `Origin`.** Browsers do not apply the same-origin policy to
 WebSockets: without a check, any page you happened to have open could open a socket to
 `127.0.0.1:7411`, take the session roster and stream your transcripts, silently. `verifyClient` in
-`server/hub.ts` rejects the upgrade unless the `Origin` header is one of four loopback dev origins
-(`http://localhost:5173`, `http://127.0.0.1:5173`, and the same two on `4173`). A rejected
-handshake gets a 401 and the socket is destroyed — no connection, no roster, no events.
+`server/hub.ts` rejects the upgrade unless the `Origin` header is one of the loopback origins the
+app is actually served from: the dev server's (`http://localhost:5173`, `http://127.0.0.1:5173`,
+and the same two on `4173`) and the hub's own, when it is the hub serving the page
+(`http://localhost:<port>` and `http://127.0.0.1:<port>`, 7411 by default). The list is built per
+server from the port it bound — `allowedOrigins` in `shared/net.ts` — so moving the hub moves the
+gate with it. A rejected handshake gets a 401 and the socket is destroyed — no connection, no
+roster, no events.
 
 This is why `vite.config.ts` sets `strictPort: true` on both the dev and preview servers. Vite's
 default is to move quietly to 5174 when 5173 is busy; that origin is not on the list, so the app
@@ -83,8 +88,19 @@ Nothing under the observed root is created, modified, renamed or deleted, becaus
 present that could do it.
 
 The root is `~/.claude`, or `$ROUNDTABLE_HOME` when that is set — `claudeRoot()` in
-`server/sessions.ts`. The override is what lets `npm run demo` and the e2e suite drive the whole
-app from a synthetic tree without ever touching your real sessions.
+`server/sessions.ts` — or `--root`. The override is what lets `npm run demo` and the e2e suite drive
+the whole app from a synthetic tree without ever touching your real sessions.
+
+**`--demo` is the one mode in which the process writes files, and it never writes to a directory
+you named.** It stages a synthetic session for the observer to watch. The path is fixed by
+`demoRoot()` in `server/cli.ts` to `roundtable-demo-root` under the operating system's temp
+directory; `--root` and `$ROUNDTABLE_HOME` are overridden when `--demo` is given, so the stage —
+which wipes and recreates the directory it is handed — can never be pointed at a real one. The
+writer is `scripts/promo/stage.ts`, bundled into `dist/server/cli.mjs` for the installed binary;
+the three files that read your transcripts (`server/sessions.ts`, `server/tail.ts`,
+`server/hub.ts`) still import no write API, and that is asserted by the paragraphs above rather
+than changed by this one. The staged root is deleted when the process exits. Nothing under
+`~/.claude` is read in this mode: the hub is handed the staged directory and only that.
 
 **A client cannot name a path.** The only command that takes an argument is
 `{"cmd":"follow","sessionId":"…"}`. Before anything happens, the id is looked up with
@@ -155,9 +171,9 @@ guarantee.
 **No authentication on the socket.** The `Origin` header is the whole gate. There is no token, no
 handshake secret and no pairing step.
 
-**The port is fixed and unauthenticated.** 7411 is hardcoded in `server/index.ts`. Anything else
-that binds it first simply wins, and the app exits with `EADDRINUSE`; nothing verifies that the hub
-a page connects to is *this* hub.
+**The port is unauthenticated.** 7411 by default; `--port` or `ROUNDTABLE_PORT` moves it. Anything
+else that binds it first simply wins, and the app exits with `EADDRINUSE`; nothing verifies that
+the hub a page connects to is *this* hub.
 
 **Transcript content is rendered as it comes.** The events carry text written by models and by
 tools. It is rendered as text by React — which escapes it — and never as HTML, but no other

@@ -4,7 +4,7 @@
  */
 import { memo } from 'react';
 import { modelInfo } from '../../shared/models';
-import { agentLook, type RtAgent } from '../store';
+import { agentLook, displayPhase, type RtAgent } from '../store';
 import { duration, money, tokens } from './format';
 import { MiniHead } from './MiniHead';
 import { peakTokens, type RosterRow } from './roster';
@@ -27,6 +27,8 @@ function Card({
   const alive = a.lastTs > a.firstTs ? a.lastTs - a.firstTs : 0;
   const share = peak > 0 ? Math.round((a.tokens / peak) * 100) : 0;
   const toolTotal = Object.values(a.toolCounts).reduce((n, v) => n + v, 0);
+  // The phase as a claim about now, not as the last event: see `displayPhase`.
+  const { phase } = displayPhase(a, now);
 
   return (
     <div
@@ -46,8 +48,8 @@ function Card({
         <MiniHead agentId={a.id} />
         <b style={{ color: agentLook(a.id).color }}>{a.label ?? a.id}</b>
         <span className="right">
-          <span className={`phase ${a.phase}`} title={a.phase} />
-          {a.phase}
+          <span className={`phase ${phase}`} title={phase} />
+          {phase}
         </span>
       </div>
 

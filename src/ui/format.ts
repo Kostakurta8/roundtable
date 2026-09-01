@@ -159,6 +159,29 @@ export function sessionAbout(s: SessionSummary): string {
   return pathLeaf(s.cwd) ?? s.slug;
 }
 
+/** The whiteboard is 220px of monospace: three lines fit, and the CSS clamps what does not. */
+const BOARD_MAX = 150;
+
+/**
+ * What the whiteboard says.
+ *
+ * The board is the room's own statement of what the session is doing, so it is held to the same
+ * rule as the panels: a fact, or an honest absence, never a guess. `followed` is whether any
+ * session is on screen at all; `dropped` is how many events the hub could no longer replay. That
+ * last one matters here because a truncated replay can lose the opening turn — the one the task
+ * comes from — and "waiting for a task…" over a session that was asked hours ago is a claim that a
+ * task is still coming.
+ */
+export function boardText(task: string | undefined, followed: boolean, dropped: number): string {
+  // No `TASK:` label. The board is a whiteboard in an office and visibly already is the task;
+  // spending six of the thirty-odd characters it can hold on saying so cost more than it
+  // explained. `scene.ts` still strips the old prefix defensively.
+  if (task) return clip(task, BOARD_MAX);
+  if (!followed) return 'nothing to observe yet';
+  if (dropped > 0) return 'earlier history not replayed';
+  return 'waiting for a task…';
+}
+
 /**
  * What an edit did to a file: `+12 −3`, or nothing at all.
  *
