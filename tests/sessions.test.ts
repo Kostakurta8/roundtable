@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  agentDirs,
   claudeRoot,
   LABEL_SCAN_BYTES,
   listSessions,
@@ -72,6 +73,61 @@ describe('subagentFiles edge cases', () => {
     copyFileSync('fixtures/agent-abc123.meta.json', join(subagentsDir, 'agent-abc123.meta.json'));
     const subs = subagentFiles(root, 'demo', 'fix-sess');
     expect(subs).toEqual([expect.objectContaining({ agentId: 'abc123' })]);
+  });
+});
+
+/**
+ * Workflow agents live a directory deeper than plain subagents, under
+ * `subagents/workflows/wf_<id>/`, and the entry that leads to them is a *directory* — so a
+ * collector that filters the listing on `.jsonl` skips them in silence, with no error.
+ *
+ * That regression has real teeth: a single Workflow call can spawn a dozen agents that exist
+ * nowhere else, and losing them empties the office through the busiest part of a run. On this
+ * machine they are 318 of 646 child transcripts, so the miss is about half of everything.
+ */
+describe('subagentFiles finds the workflow tier', () => {
+  /** A session with one plain subagent and two agents belonging to one Workflow run. */
+  function rootWithBothTiers(): string {
+    const root = mkdtempSync(join(tmpdir(), 'rt-root-'));
+    const subagentsDir = join(root, 'projects', 'demo', 'fix-sess', 'subagents');
+    const wfDir = join(subagentsDir, 'workflows', 'wf_aaaaaaaa-111');
+    mkdirSync(wfDir, { recursive: true });
+    copyFileSync('fixtures/agent-abc123.jsonl', join(subagentsDir, 'agent-abc123.jsonl'));
+    copyFileSync('fixtures/agent-abc123.jsonl', join(wfDir, 'agent-w1.jsonl'));
+    copyFileSync('fixtures/agent-abc123.jsonl', join(wfDir, 'agent-w2.jsonl'));
+    return root;
+  }
+
+  it('returns both tiers, tagging workflow agents with their run id', () => {
+    const subs = subagentFiles(rootWithBothTiers(), 'demo', 'fix-sess');
+    expect(subs.map((s) => s.agentId).sort()).toEqual(['abc123', 'w1', 'w2']);
+
+    // The plain subagent carries no workflowId; both workflow agents carry the run's.
+    expect(subs.find((s) => s.agentId === 'abc123')?.workflowId).toBeUndefined();
+    expect(subs.find((s) => s.agentId === 'w1')?.workflowId).toBe('wf_aaaaaaaa-111');
+    expect(subs.find((s) => s.agentId === 'w2')?.workflowId).toBe('wf_aaaaaaaa-111');
+  });
+
+  it('watches each workflow run directory, so agents appearing mid-run are picked up', () => {
+    const root = rootWithBothTiers();
+    const subagentsDir = join(root, 'projects', 'demo', 'fix-sess', 'subagents');
+    expect(agentDirs(root, 'demo', 'fix-sess')).toEqual([
+      subagentsDir,
+      join(subagentsDir, 'workflows'),
+      join(subagentsDir, 'workflows', 'wf_aaaaaaaa-111'),
+    ]);
+  });
+
+  it('ignores a plain file sitting where a workflow run directory would be', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rt-root-'));
+    const workflowsDir = join(root, 'projects', 'demo', 'fix-sess', 'subagents', 'workflows');
+    mkdirSync(workflowsDir, { recursive: true });
+    writeFileSync(join(workflowsDir, 'wf_stray.json'), '{}');
+    expect(subagentFiles(root, 'demo', 'fix-sess')).toEqual([]);
+    expect(agentDirs(root, 'demo', 'fix-sess')).toEqual([
+      join(root, 'projects', 'demo', 'fix-sess', 'subagents'),
+      workflowsDir,
+    ]);
   });
 });
 
