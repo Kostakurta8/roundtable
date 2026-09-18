@@ -134,6 +134,15 @@ try {
   const expected = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8')).version;
   if (version !== expected) fail(`--version says ${version}, package says ${expected}`);
 
+  // 9b. --stats reads a root and prints a report without starting a server. Pointed at an empty
+  //     directory on purpose: the packaged build must survive a machine with no sessions at all,
+  //     which is exactly the machine someone runs this on first.
+  const emptyRoot = mkdtempSync(join(tmpdir(), 'rt-smoke-empty-'));
+  const stats = execFileSync(process.execPath, [binJs, '--stats', '--root', emptyRoot], { encoding: 'utf8' });
+  if (!stats.includes('--stats')) fail('--stats printed no header');
+  if (!stats.includes('0 session transcripts')) fail('--stats did not report an empty root as empty');
+  if (!stats.includes('nothing left this machine')) fail('--stats dropped the read-only statement');
+
   // 10. --demo stages its own root under the temp directory and serves it, with nothing of the
   //     consumer's read. A second port, a second process, the same checks as steps 5 and 6.
   const DEMO_PORT = PORT + 1;
@@ -178,7 +187,7 @@ try {
     demo.kill();
   }
 
-  if (!process.exitCode) console.log(`[smoke] PASS — page, bundle, socket, origin gate, traversal, --help, --version, --demo (v${version})`);
+  if (!process.exitCode) console.log(`[smoke] PASS — page, bundle, socket, origin gate, traversal, --help, --version, --stats, --demo (v${version})`);
 } catch (err) {
   fail(err.message);
 } finally {

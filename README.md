@@ -32,6 +32,7 @@ run builds the client, so give it a minute; after that it is cached.
 ```
 npx github:Kostakurta8/roundtable --port 9000   # somewhere else
 npx github:Kostakurta8/roundtable --root /path  # a different Claude directory
+npx github:Kostakurta8/roundtable --stats       # what every transcript you already have says
 npx github:Kostakurta8/roundtable --demo        # a staged session, when nothing of yours is running
 npx github:Kostakurta8/roundtable --no-open     # print the address, do not open a browser
 ```
@@ -64,6 +65,62 @@ synthetic, so that no private session appears in it. `scripts/promo/` is the har
 One command is the whole thing. `npx github:Kostakurta8/roundtable` opens `http://localhost:7411`
 — from a clone, `npm start` opens `http://localhost:5173` instead — and either way it starts showing
 whatever session ran most recently. If you have a session running right now, you are watching it live.
+
+### What your own machine already knows
+
+```
+npx github:Kostakurta8/roundtable --stats
+```
+
+The office shows the run you are in. This reads every transcript under `~/.claude` and tells you what
+has been happening all along, then exits. It starts no server, opens no port, and writes nothing.
+
+```
+roundtable --stats   ~/.claude
+
+  1,469 session transcripts, 51 of them spawned subagents
+  513 children  (327 task, 186 workflow)  median 7 per run
+
+  children wrote 58.4% of the output of the runs that spawned them
+  across every session on this machine, children are 52.6% of all output  (24,694,800 vs 22,269,746 written in main transcripts)
+  cold start: 46,669 cache-creation tokens per child, before it does any work
+  median child: 65 tool calls over 1,286 s
+  13 of 513 children (2.5%) made no tool call and wrote nothing
+  407 cache-read tokens per output token
+
+  usage blocks: 130,017 lines describe 63,025 responses — summing per line reports 90,961,379 output tokens against 46,964,546 real (+93.7%)
+    and it is not evenly spread: main transcripts +195.4%, subagent transcripts +1.9%
+
+  hooks: 8,831 records = 6,898 firings (+28% if you count lines)
+    UserPromptSubmit         3,506
+    SessionStart:startup     1,469
+    SessionStart             1,469
+    PostToolUse:Edit         250
+    PostToolUse:Write        191
+    SessionStart:compact     9
+    PostToolUse:Bash         4
+    a hook absent from this list is one of three things: never registered,
+    never fired, or fired without writing a record. Absence is a hint, not proof.
+
+  Nothing was written and nothing left this machine.
+```
+
+That is this machine on 2026-09-18, and three of those lines are there because they cost the author
+something to learn:
+
+- **Children write most of the output.** The main transcript you watch live is under half of what a
+  fan-out run produces, so "I barely use my quota" often just means "I do not spawn subagents".
+- **Summing usage per line over-reports you by about 3x — and almost only in the main transcripts.**
+  A response with several content blocks is written as several lines, and every line repeats the same
+  complete usage object. Deduplicate on `message.id`. Subagent transcripts hardly do it, which is how
+  a tool that gets this wrong can still look right on the files you spot-check.
+- **A hook firing writes two records.** `hook_success` carries the command, exit code and duration;
+  `hook_additional_context` carries what it injected; they share a `toolUseID`. Count lines and you
+  over-report your own guardrails by a third. And absence is not proof — a hook can fire and write
+  nothing at all, so a name missing from that list is *never registered*, *never fired* **or**
+  *never recorded*, three cases this file cannot tell apart.
+
+Run it on your own machine and the numbers will not match these. That is the point of running it.
 
 ### If you don't have Claude Code, or nothing is running
 

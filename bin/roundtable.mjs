@@ -29,7 +29,7 @@ if (major < 22 || (major === 22 && minor < 12)) {
 
 // The URL, not the path: on Windows `import()` of `C:\…` fails with ERR_UNSUPPORTED_ESM_URL_SCHEME
 // because the drive letter parses as a protocol. `fileURLToPath` is for the filesystem calls below.
-const { parseArgs, run, appUrl, busyMessage, HELP } = await import(
+const { parseArgs, run, appUrl, busyMessage, HELP, collectStats, formatStats } = await import(
   new URL('../dist/server/cli.mjs', import.meta.url).href
 );
 
@@ -46,6 +46,12 @@ if (opts.help) {
 }
 if (opts.version) {
   console.log(pkg.version);
+  process.exit(0);
+}
+if (opts.stats) {
+  // Reads the same files the hub reads, starts nothing, and prints one screen meant to be pasted
+  // somewhere.
+  console.log(formatStats(collectStats(opts.root), opts.root));
   process.exit(0);
 }
 

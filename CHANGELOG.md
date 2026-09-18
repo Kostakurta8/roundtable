@@ -9,6 +9,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
+## [Unreleased]
+
+### Added
+
+**`--stats`.** One command that reads every transcript under `--root` and prints what they say about
+this machine's own fan-out — how much output is written inside subagents, what a child costs in
+cache-creation tokens before it does any work, how many children produced nothing at all, and which
+hooks have ever fired — then exits without starting a server. It exists because three counting
+mistakes in these files are easy to make and hard to notice: a multi-block response repeats its
+complete usage object on every line it is written to (deduplicate on `message.id`, or over-report
+output by about 3x, almost entirely in main transcripts); `subagents/` holds a workflow `journal.jsonl`
+that is not an agent; and one hook firing writes two records sharing a `toolUseID`. The report names
+all three rather than quietly correcting them, and says plainly that a hook absent from the list may
+have fired without writing a record. `server/stats.ts`, twelve tests, and a package smoke step that
+runs it against an empty root.
+
 ## [0.2.1] — 2026-09-01
 
 ### Added

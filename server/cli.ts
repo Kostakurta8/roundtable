@@ -39,6 +39,13 @@ export type CliOptions = {
    * `~/.claude`; `root` is overridden so nothing else can be pointed at, either.
    */
   demo: boolean;
+  /**
+   * Print what the transcripts already on disk say about this machine's fan-out, and exit.
+   *
+   * The office shows the run you are in; this shows every run you have had. It is separate from
+   * the server on purpose — it starts nothing, opens no port, and answers in one screen.
+   */
+  stats: boolean;
   /** An argument that is not understood. Reported rather than ignored — see `parseArgs`. */
   unknown: string | null;
 };
@@ -56,6 +63,9 @@ Options
                    is something to see on a machine that has never run Claude Code. The
                    transcripts are written under the temp directory and deleted on exit; nothing
                    of yours is read. Overrides --root.
+      --stats      Print what every transcript under --root says about your own fan-out — how
+                   much of your output is written inside subagents, what a child costs before it
+                   starts, which of your hooks have ever fired — then exit. Starts no server.
       --no-open    Do not open a browser; just print the address.
   -v, --version    Print the version.
   -h, --help       Print this.
@@ -81,6 +91,7 @@ export function parseArgs(
     help: false,
     version: false,
     demo: false,
+    stats: false,
     unknown: null,
   };
 
@@ -96,6 +107,7 @@ export function parseArgs(
     else if (flag === '-v' || flag === '--version') opts.version = true;
     else if (flag === '--no-open') opts.open = false;
     else if (flag === '--demo') opts.demo = true;
+    else if (flag === '--stats') opts.stats = true;
     else if (flag === '-p' || flag === '--port') opts.port = readPort(take(), opts.port);
     else if (flag === '--root') {
       const value = take();
@@ -157,3 +169,6 @@ export const busyMessage = (port: number): string =>
   `             Open ${appUrl(port)}, or start this one on another port with --port.`;
 
 export { DEFAULT_HUB_PORT, HUB_HOST };
+// Re-exported through the CLI bundle on purpose: `dist/server/cli.mjs` is the one file the
+// launcher imports, and a second entry point would be a second thing to keep in step.
+export { collectStats, formatStats } from './stats';
