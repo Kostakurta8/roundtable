@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
-## [Unreleased]
+## [0.2.2] — 2026-09-18
 
 ### Added
 
@@ -239,4 +239,7 @@ implied.
   exports of the binding pixel contract with live preview entries — unbuilt API, not dead code —
   and were left alone.
 
+[0.2.2]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.2.2
+[0.2.1]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.2.1
+[0.2.0]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.1.0
