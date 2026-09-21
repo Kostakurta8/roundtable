@@ -1155,12 +1155,21 @@ export async function startServer(root: string, port: number, opts: HubOptions =
   /**
    * A subagent can be spawned, run and finish while the parent transcript stays silent, so a
    * followed session polls for new subagent directories on its own.
+   *
+   * It re-reads the main transcript on the same tick, because the watcher is best effort and
+   * always has been. chokidar arms itself asynchronously: a line appended between the catch-up
+   * read and the poller taking its baseline is folded into that baseline, so the change never
+   * fires — and `createWatcher`'s one sweep on `ready` has already run by then. That line was
+   * not late, it was *lost*, until the session happened to write again; on a session whose last
+   * line landed in that window, for ever. Every other file the hub reads had this safety net and
+   * the most important one did not. A read that finds nothing costs a `statSync`: `readNew`
+   * returns immediately when the offset is already at the end of the file.
    */
   function armRescan(w: Watch): void {
     if (w.rescan || !w.watcher) return;
     const timer = setInterval(() => {
       try {
-        syncSubagents(w);
+        pumpSession(w);
         sweepDone(w);
       } catch (err) {
         report(err, `rescan:${w.sessionId}`);
@@ -1366,8 +1375,9 @@ export async function startServer(root: string, port: number, opts: HubOptions =
         },
       ]);
     }
-    // Watcher first, then the sweep: a write landing in between is caught by the sweep,
-    // and one that lands after it is caught by the watcher. No gap either way.
+    // Watcher first, then the sweep: a write landing in between is caught by the sweep, and one
+    // that lands after it is caught by the watcher — as long as the watcher reports it. It is
+    // asynchronous and may not, which is what the rescan sweep in `armRescan` is the floor for.
     if (!w.watcher) w.watcher = createWatcher(w);
     pumpSession(w);
     return w;

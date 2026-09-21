@@ -401,6 +401,33 @@ describe('hub', () => {
   );
 
   it(
+    'reads the transcript on its own sweep, so a write the watcher never reports is not lost for ever',
+    async () => {
+      // The watcher is best effort and always has been: chokidar arms itself asynchronously, and a
+      // line appended in the window between the catch-up read and the poller taking its baseline is
+      // folded into that baseline — the change never fires, and the `ready` sweep has already run.
+      // That is not a slow event, it is a lost one: nothing else re-read the main transcript, so
+      // the line stayed invisible until the session happened to write again. A session that writes
+      // its last line in that window stayed wrong on screen for ever.
+      //
+      // One poll a minute stands in for a watcher that misses it. Nothing chokidar reports can
+      // arrive inside this test, so whatever does arrive came from the hub's own sweep.
+      const { root, mainFile } = makeRoot();
+      register(root, 'fix-sess');
+      const client = await connect(await start(root, { interval: 60_000 }));
+      await client.wait(isHello);
+      client.send({ cmd: 'follow', sessionId: 'fix-sess' });
+      await client.wait(isReady);
+      await delay(SETTLE_MS); // the watcher finishes arming and its one `ready` sweep runs
+
+      appendFileSync(mainFile, assistantLine(LIVE_TEXT));
+      const ev = await client.wait(evOf('agentText', (e) => e.text === LIVE_TEXT), 5000);
+      expect(evSession(ev)).toBe('fix-sess');
+    },
+    20_000,
+  );
+
+  it(
     'keeps streaming a session the picker moved away from, as long as it is still running',
     async () => {
       // The acceptance the old single-follow client could not meet: switching tabs must not throw
