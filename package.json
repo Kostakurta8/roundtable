@@ -1,6 +1,6 @@
 {
   "name": "claude-roundtable",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A read-only observer for Claude Code: replays the session transcripts it already writes as a live pixel-art office, with per-agent token and cost accounting.",
   "keywords": [
     "claude",

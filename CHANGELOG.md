@@ -9,6 +9,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
+## [0.2.3] — 2026-09-22
+
+### Fixed
+
+**A line the watcher never reports is read anyway.** The main transcript was the one file the hub
+read on a single, best-effort signal. chokidar arms itself asynchronously, so a line appended
+between the catch-up read and the poller taking its baseline is folded into that baseline: the
+change event never fires, and the one sweep on `ready` has already run. Nothing re-read the file
+after that — the rescan swept the subagent directories every 500ms and skipped the parent, and the
+live sweep returns early for a session it is already streaming — so the line was not late, it was
+lost, until the session happened to write again. For a session whose last line landed in that
+window, for ever. The rescan now reads the main transcript on the same tick, which is the floor
+every other file in the session already had; a read that finds nothing costs one `statSync`. This
+is also what had been failing CI intermittently since August, on whichever matrix leg was busiest.
+
 ## [0.2.2] — 2026-09-18
 
 ### Added
@@ -239,6 +254,7 @@ implied.
   exports of the binding pixel contract with live preview entries — unbuilt API, not dead code —
   and were left alone.
 
+[0.2.3]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.2.3
 [0.2.2]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Kostakurta8/roundtable/releases/tag/v0.2.0
