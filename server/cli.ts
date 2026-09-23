@@ -11,11 +11,13 @@
  * out — the hub reads transcripts, and a program that reads transcripts should not be able to run
  * anything.
  */
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { stageDemoRoom } from '../scripts/promo/demoRoom';
+import { stageShowcase } from '../scripts/promo/showcase';
 import { DEFAULT_HUB_PORT, HUB_HOST, PORT_ENV, readPort } from '../shared/net';
+import { CLIP_DEFAULTS, CLIP_MAX_SECONDS, collectSession, renderClip } from './clip';
 import { startServer, type StopServer } from './hub';
 import { claudeRoot } from './sessions';
 
@@ -46,6 +48,24 @@ export type CliOptions = {
    * the server on purpose — it starts nothing, opens no port, and answers in one screen.
    */
   stats: boolean;
+  /**
+   * Write one session as a looping GIF of the office, and exit.
+   *
+   * The office already replays any second of a session; this plays a whole one, sped up, into a
+   * file. It starts the hub only for as long as it takes to read the session, on a loopback port it
+   * does not print, and the file it was asked for is the only thing it writes.
+   */
+  gif: boolean;
+  /** Where `--gif` writes. Absent means `roundtable-<session>.gif` in the working directory. */
+  out: string | null;
+  /** Which session `--gif` plays: an id or the start of one. Absent means the latest. */
+  session: string | null;
+  /** The longest the clip may run, in seconds. */
+  seconds: number;
+  /** A clip with no text from the transcripts in it at all. */
+  bare: boolean;
+  /** The whole session rather than its busiest stretch. */
+  full: boolean;
   /** An argument that is not understood. Reported rather than ignored — see `parseArgs`. */
   unknown: string | null;
 };
@@ -66,12 +86,22 @@ Options
       --stats      Print what every transcript under --root says about your own fan-out — how
                    much of your output is written inside subagents, what a child costs before it
                    starts, which of your hooks have ever fired — then exit. Starts no server.
+      --gif        Write a session as a looping GIF of the office — a timelapse you can post —
+                   and exit. The latest session unless --session names another; a long one is
+                   cut to its busiest stretch unless --full. With --demo, a staged session.
+        --out <file>     Where to write it (default roundtable-<session>.gif, here).
+        --session <id>   Which session: its id, or the first few characters of it.
+        --seconds <n>    How long the clip may run (default ${CLIP_DEFAULTS.seconds}, at most ${CLIP_MAX_SECONDS}).
+        --bare           No text from your transcripts in the picture: no task, no names,
+                         no speech. The people and what they do are still all there.
+        --full           The whole session, however long, instead of its busiest stretch.
       --no-open    Do not open a browser; just print the address.
   -v, --version    Print the version.
   -h, --help       Print this.
 
 It reads the transcript files Claude Code already writes and never writes to them. Nothing leaves
-the machine: the server binds loopback only and makes no outbound connection of any kind.`;
+the machine: the server binds loopback only and makes no outbound connection of any kind. The one
+file it ever writes is the GIF you ask --gif for.`;
 
 /**
  * Arguments into options, with the environment underneath.
@@ -92,6 +122,12 @@ export function parseArgs(
     version: false,
     demo: false,
     stats: false,
+    gif: false,
+    out: null,
+    session: null,
+    seconds: CLIP_DEFAULTS.seconds,
+    bare: false,
+    full: false,
     unknown: null,
   };
 
@@ -108,6 +144,21 @@ export function parseArgs(
     else if (flag === '--no-open') opts.open = false;
     else if (flag === '--demo') opts.demo = true;
     else if (flag === '--stats') opts.stats = true;
+    else if (flag === '--gif') opts.gif = true;
+    else if (flag === '--bare') opts.bare = true;
+    else if (flag === '--full') opts.full = true;
+    else if (flag === '--out') {
+      const value = take();
+      if (value) opts.out = value;
+    } else if (flag === '--session') {
+      const value = take();
+      if (value) opts.session = value;
+    } else if (flag === '--seconds') {
+      const n = Number(take());
+      // Out of range is clamped rather than refused: `--seconds 90` means "long", and the
+      // longest allowed is the honest reading of that.
+      if (Number.isFinite(n) && n > 0) opts.seconds = Math.min(CLIP_MAX_SECONDS, Math.max(3, n));
+    }
     else if (flag === '-p' || flag === '--port') opts.port = readPort(take(), opts.port);
     else if (flag === '--root') {
       const value = take();
@@ -161,6 +212,70 @@ export async function run(opts: CliOptions, clientDir: string): Promise<StopServ
     await stop();
     rmSync(opts.root, { recursive: true, force: true });
   };
+}
+
+/** Where `--gif --demo` stages its session. Its own directory, never the live demo's. */
+export const showcaseRoot = (): string => join(tmpdir(), 'roundtable-showcase-root');
+
+const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+const span = (ms: number): string => {
+  const m = Math.round(ms / 60_000);
+  if (m < 1) return `${Math.max(1, Math.round(ms / 1000))} s`;
+  if (m < 90) return `${m} min`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h} h` : `${Math.round(h / 24)} days`;
+};
+
+const tok = (n: number): string =>
+  n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+
+/**
+ * `--gif`: read one session, play it into a file, and say what was written.
+ *
+ * Returns the lines to print rather than printing them, so the whole path — which session, what the
+ * file holds, what it does and does not show — is something a test can read.
+ */
+export async function makeClip(opts: CliOptions, cwd: string = process.cwd()): Promise<string> {
+  const staged = opts.demo ? showcaseRoot() : null;
+  if (staged) stageShowcase(staged);
+  try {
+    const root = staged ?? opts.root;
+    const got = await collectSession(root, opts.session ?? undefined);
+    const clip = renderClip(got.evs, {
+      ...CLIP_DEFAULTS,
+      seconds: opts.seconds,
+      bare: opts.bare,
+      full: opts.full,
+    });
+    const id = got.session.sessionId;
+    const file = resolve(cwd, opts.out ?? (staged ? 'roundtable-demo.gif' : `roundtable-${id.slice(0, 8)}.gif`));
+    writeFileSync(file, clip.gif);
+
+    const title = got.session.title ?? got.session.label;
+    const lines = [
+      `[roundtable] ${staged ? 'the staged demo session' : `session ${id.slice(0, 8)}`}${title ? ` — ${title}` : ''}`,
+      `[roundtable] wrote ${file}`,
+      `             ${(clip.clipMs / 1000).toFixed(1)} s · ${clip.width}×${clip.height} · ${mb(clip.gif.length)}`,
+      `             ${clip.agents} ${clip.agents === 1 ? 'agent' : 'agents'} · ${tok(clip.tokens)} tokens · ` +
+        (clip.windowed
+          ? `the busiest ${span(clip.shownTo - clip.shownFrom)} of ${span(clip.realMs)} (--full for all of it)`
+          : `${span(clip.realMs)} of session at ${clip.speed.toFixed(1)}x`),
+    ];
+    if (!staged && !opts.bare) {
+      lines.push(`             It shows this session's task, agent names and speech. Look before you post, or use --bare.`);
+    }
+    if (!staged && !opts.session) {
+      const others = got.sessions.filter((s) => s.sessionId !== id).slice(0, 3);
+      if (others.length > 0) {
+        lines.push(`             Another session: --session <id>. Recent ones:`);
+        for (const s of others) lines.push(`               ${s.sessionId.slice(0, 8)}  ${s.title ?? s.label ?? ''}`.trimEnd());
+      }
+    }
+    return lines.join('\n');
+  } finally {
+    if (staged) rmSync(staged, { recursive: true, force: true });
+  }
 }
 
 /** What to say when the port is taken, which is nearly always a second copy of the app. */

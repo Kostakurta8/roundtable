@@ -102,6 +102,26 @@ the three files that read your transcripts (`server/sessions.ts`, `server/tail.t
 than changed by this one. The staged root is deleted when the process exits. Nothing under
 `~/.claude` is read in this mode: the hub is handed the staged directory and only that.
 
+**`--gif` writes exactly one file: the GIF, where `--out` says or as `roundtable-<session>.gif` in
+the working directory.** The write is one `writeFileSync` in `makeClip` (`server/cli.ts`); the
+reading is done by the same hub as always (`server/clip.ts` starts it with `startServer`), so the
+transcripts are read by the code the paragraphs above describe and by nothing else. That hub binds
+`127.0.0.1` on a port the operating system picks, is followed by one socket from the same process,
+and is stopped before the command returns. `--gif --demo` stages its session in its own directory
+under the temp directory (`showcaseRoot()`, the same rule as `--demo`) and deletes it afterwards.
+
+The GIF is the one artefact this project produces that is *meant* to be shared, so what it contains
+is stated rather than implied: by default it draws what the session drew — the opening prompt on the
+whiteboard, each agent's description over its desk, the first sentence of what agents said or
+thought, and the one-line brief drawn along a spawn line — all after the same
+`redact()`/`redactProse()` pass the page gets, which has the residual gaps listed below. Tool
+targets and status lines are not drawn: the room shows them only for a selected agent, and a clip
+selects nobody. `--bare` draws none of that text: the task board is blank,
+agents are numbered in order of arrival, and every speech and thought bubble is replaced by `...`.
+The caption strip under the room carries only the elapsed time, the agent count, the token total and
+the project's address. The command prints a reminder to look before posting whenever the clip is not
+`--bare`.
+
 **A client cannot name a path.** The only command that takes an argument is
 `{"cmd":"follow","sessionId":"…"}`. Before anything happens, the id is looked up with
 `findSession`, which is `listSessions(root).find((s) => s.sessionId === sessionId)` — a match

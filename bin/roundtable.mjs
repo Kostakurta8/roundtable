@@ -29,7 +29,7 @@ if (major < 22 || (major === 22 && minor < 12)) {
 
 // The URL, not the path: on Windows `import()` of `C:\…` fails with ERR_UNSUPPORTED_ESM_URL_SCHEME
 // because the drive letter parses as a protocol. `fileURLToPath` is for the filesystem calls below.
-const { parseArgs, run, appUrl, busyMessage, HELP, collectStats, formatStats } = await import(
+const { parseArgs, run, appUrl, busyMessage, HELP, collectStats, formatStats, makeClip } = await import(
   new URL('../dist/server/cli.mjs', import.meta.url).href
 );
 
@@ -53,6 +53,17 @@ if (opts.stats) {
   // somewhere.
   console.log(formatStats(collectStats(opts.root), opts.root));
   process.exit(0);
+}
+
+if (opts.gif) {
+  // Reads one session through a hub of its own on a loopback port, writes the one file, exits.
+  try {
+    console.log(await makeClip(opts));
+    process.exit(0);
+  } catch (err) {
+    console.error(`[roundtable] --gif: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
 }
 
 /** The OS's own "open this address" command. Nothing is interpolated into a shell. */

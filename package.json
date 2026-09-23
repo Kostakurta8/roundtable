@@ -1,7 +1,7 @@
 {
   "name": "claude-roundtable",
-  "version": "0.2.3",
-  "description": "A read-only observer for Claude Code: replays the session transcripts it already writes as a live pixel-art office, with per-agent token and cost accounting.",
+  "version": "0.3.0",
+  "description": "A read-only observer for Claude Code: replays the session transcripts it already writes as a live pixel-art office, with per-agent token and cost accounting — and turns any session into a timelapse GIF.",
   "keywords": [
     "claude",
     "claude-code",
@@ -13,7 +13,9 @@
     "tokens",
     "cost",
     "tui",
-    "visualization"
+    "visualization",
+    "gif",
+    "timelapse"
   ],
   "homepage": "https://github.com/Kostakurta8/roundtable#readme",
   "bugs": {

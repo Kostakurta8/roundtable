@@ -143,6 +143,16 @@ try {
   if (!stats.includes('0 session transcripts')) fail('--stats did not report an empty root as empty');
   if (!stats.includes('nothing left this machine')) fail('--stats dropped the read-only statement');
 
+  // 9c. --demo --gif renders the staged session into a file in the working directory, through the
+  //     packaged bundle — the renderer and the encoder are the two parts of the app the page never
+  //     loads, so nothing else in this script would notice them missing from the tarball.
+  const gifDir = mkdtempSync(join(tmpdir(), 'rt-smoke-gif-'));
+  const gifOut = execFileSync(process.execPath, [binJs, '--demo', '--gif', '--seconds', '4'], { encoding: 'utf8', cwd: gifDir });
+  const gif = readFileSync(join(gifDir, 'roundtable-demo.gif'));
+  if (gif.subarray(0, 6).toString('ascii') !== 'GIF89a') fail('--demo --gif did not write a GIF');
+  if (!gifOut.includes(' agents · ')) fail('--gif did not say what it wrote');
+  rmSync(gifDir, { recursive: true, force: true });
+
   // 10. --demo stages its own root under the temp directory and serves it, with nothing of the
   //     consumer's read. A second port, a second process, the same checks as steps 5 and 6.
   const DEMO_PORT = PORT + 1;
@@ -187,7 +197,7 @@ try {
     demo.kill();
   }
 
-  if (!process.exitCode) console.log(`[smoke] PASS — page, bundle, socket, origin gate, traversal, --help, --version, --stats, --demo (v${version})`);
+  if (!process.exitCode) console.log(`[smoke] PASS — page, bundle, socket, origin gate, traversal, --help, --version, --stats, --gif, --demo (v${version})`);
 } catch (err) {
   fail(err.message);
 } finally {

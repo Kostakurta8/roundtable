@@ -155,7 +155,7 @@ describe('what the CLI prints', () => {
   it('documents every option it accepts', () => {
     // A help text that has drifted from the parser is worse than none: it is a wrong answer to
     // the only question the user thought to ask.
-    for (const flag of ['--port', '--root', '--demo', '--no-open', '--version', '--help']) {
+    for (const flag of ['--port', '--root', '--demo', '--no-open', '--version', '--help', '--stats', '--gif', '--out', '--session', '--seconds', '--bare', '--full']) {
       expect(HELP, flag).toContain(flag);
     }
     expect(HELP).toContain('never writes');

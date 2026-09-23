@@ -9,6 +9,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
+## [0.3.0] — 2026-09-23
+
+### Added
+
+**`--gif`: any session, as a looping timelapse of the office, in one file.** `npx
+github:Kostakurta8/roundtable --gif` reads your latest session (or `--session <id>`), replays it
+through the same engine and the same scene the page draws with, and writes `roundtable-<session>.gif`
+where you ran it — usually in a few seconds. Every silence is cut to a beat before anything is sped
+up, so the clip is the part where agents actually arrive, work, hand things back and leave; a session
+too long for the clip becomes its busiest stretch unless `--full` asks for all of it, and the clock
+on the wall keeps the real time so the cuts are visible. `--bare` draws the same run with no text
+from the transcripts at all, and the command says so whenever a clip is not bare. `--demo --gif`
+renders a staged fan-out — six scouts, eight builders, a verifier on every change, one refuted and
+fixed — which is the timelapse now at the top of the README.
+
+Nothing new reads the transcripts: `server/clip.ts` starts the hub itself on a loopback port the
+operating system picks, follows the session with one socket exactly as the page does, and stops it
+before returning. The frames come from `scripts/pixpreview.ts`'s software canvas, the one the
+visual-regression tests hash; the encoder (`server/gif.ts`) is written out rather than installed —
+one palette cut from every frame, each frame cropped to what changed, LZW — and its tests decode
+every pixel back with a decoder written from the format's description. `SECURITY.md` says what a
+clip does and does not show.
+
+### Fixed
+
+**Replaying a finished session read whole put every agent's name at the end.** The hub stamps a
+sidecar's `agentSeen` with the moment it read the file, not the moment the agent started, so a clip
+ordered by timestamps showed nameless people arriving and their names turning up after they had left
+— and stretched a nine-minute session to six days. The clip pins each `agentSeen` to its agent's
+first transcript line. The live page is unaffected: it orders by arrival, which is right for a
+stream.
+
 ## [0.2.3] — 2026-09-22
 
 ### Fixed

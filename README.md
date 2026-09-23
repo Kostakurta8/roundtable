@@ -1,17 +1,53 @@
 # Roundtable
 
+**Watch your Claude Code subagents work — then rewind to any second of it.**
+
 [![CI](https://github.com/Kostakurta8/roundtable/actions/workflows/ci.yml/badge.svg)](https://github.com/Kostakurta8/roundtable/actions/workflows/ci.yml)
 
-A read-only observer for Claude Code. It tails the JSONL transcripts the CLI already writes under
-`~/.claude` and draws the session as a live pixel-art office: every agent is a person at a desk who
-thinks, runs tools, walks over to somebody to deliver a result, argues about a verdict, and walks
-out through the door when they finish. The same events are in a group chat beside the room, in
-words.
+![a nine-minute Claude Code session with 24 subagents — six scouts, eight builders, a verifier on every change, one of them refuted and fixed — played as a 25-second timelapse of the office](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-timelapse.gif)
 
-Three things it does that a session viewer usually does not:
+Every agent in a Claude Code run is a person in this office. They walk in when they are spawned,
+work at a desk while a tool runs, walk over to hand back what they found, tell each other
+`CONFIRMED` or `REFUTED`, and leave through the door when they are done. It reads the transcripts
+Claude Code already writes under `~/.claude` — read-only, entirely local, and it never calls an API.
+
+```
+npx github:Kostakurta8/roundtable
+```
+
+That is the whole install. It serves the office on <http://localhost:7411>, opens your browser, and
+shows your most recent session — live, if one is running. Node 22.12 or newer; the first run builds
+the client, so give it a minute.
+
+## Turn any session into a GIF
+
+The clip above is one command, run on a staged session. Run it on one of yours:
+
+```
+npx github:Kostakurta8/roundtable --gif
+```
+
+It writes `roundtable-<session>.gif` where you ran it: your latest session, every silence cut to a
+beat and the rest sped up to about twenty seconds. A session too long for that becomes its busiest
+stretch — the part where the agents actually arrive — and the clock on the office wall keeps the real
+time, so you can see where it jumped. It takes a few seconds and starts nothing that outlives it.
+
+```
+npx github:Kostakurta8/roundtable --gif --session 3043f946   # a particular session (the first few characters of its id)
+npx github:Kostakurta8/roundtable --gif --bare               # no task, names or speech from your transcripts in it
+npx github:Kostakurta8/roundtable --gif --full --seconds 40 # the whole session, however long, in forty seconds
+npx github:Kostakurta8/roundtable --gif --demo              # the clip above, on a machine with no sessions at all
+```
+
+**Look at it before you post it.** By default the clip shows what the session showed — the task on
+the whiteboard, what each agent was asked to do, what they said. `--bare` draws the same run with
+none of that text in it: the people, their desks and their walks are all still there.
+
+## What it does that a session viewer usually does not
 
 - **Deterministic replay.** Click any second on the timeline and the room rebuilds exactly as it
-  stood — the same events replayed into the same simulation, not an approximation of it.
+  stood — the same events replayed into the same simulation, not an approximation of it. `--gif` is
+  the same replay, played into a file.
 - **Per-agent token and cost accounting.** Every agent carries its own token total, cache included,
   and a cost estimate from published list prices.
 - **Strictly read-only.** It never writes to `~/.claude`, never calls an API, and opens no outbound
@@ -20,14 +56,6 @@ Three things it does that a session viewer usually does not:
 
 It is for anyone who runs Claude Code with subagents and wants to see what the fan-out is actually
 doing: who is working, who is waiting, and who is spending the tokens.
-
-```
-npx github:Kostakurta8/roundtable
-```
-
-That is the whole install. It serves the app on <http://localhost:7411>, opens your browser, and
-watches `~/.claude` — no clone to keep, no build step to run, nothing written anywhere. The first
-run builds the client, so give it a minute; after that it is cached.
 
 ```
 npx github:Kostakurta8/roundtable --port 9000   # somewhere else
@@ -41,32 +69,29 @@ The registry name `claude-roundtable` is reserved for the same thing published t
 shorten that to `npx claude-roundtable`. It is not published yet — this line is, so this is the
 line the README carries.
 
-Node 22.12 or newer. Written and used on Windows — see [Platforms](#platforms) before you assume
-anything about the other two.
+Written and used on Windows — see [Platforms](#platforms) before you assume anything about the
+other two.
 
 From a clone, for hacking on it, `npm install && npm start` runs the hub and Vite together on
 <http://localhost:5173>; `npm run demo` does the same against a staged session so there is
 something to watch on a machine that has never run Claude Code.
 
-### See it first
+### The whole app
 
 ![agents arriving, reporting to each other, and one verdict going each way](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
 
-That is fourteen seconds of it. **[▶ the whole thing, 52 seconds](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)** —
-no narration, and it carries the parts a loop cannot: the timeline rewinding the room to an earlier
-second, two sessions in tabs, and the per-agent token and cost breakdown. Captions are burned in,
-and `media/roundtable-trailer.srt` has them as text.
+The room is one panel of the app. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
+shows the rest: the timeline rewinding the room to an earlier second, two sessions in tabs, and the
+per-agent token and cost breakdown. No narration; captions are burned in, and
+`media/roundtable-trailer.srt` has them as text.
 
-Every frame is the real application driven by real events — only the *content* of the transcripts is
-synthetic, so that no private session appears in it. `scripts/promo/` is the harness that filmed it.
+Every frame of both clips is the real application driven by real events — only the *content* of the
+transcripts is synthetic, so that no private session appears in either. `scripts/promo/` is the
+harness that filmed them.
 
 ![the office, in daylight](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-day.png)
 
-One command is the whole thing. `npx github:Kostakurta8/roundtable` opens `http://localhost:7411`
-— from a clone, `npm start` opens `http://localhost:5173` instead — and either way it starts showing
-whatever session ran most recently. If you have a session running right now, you are watching it live.
-
-### What your own machine already knows
+## What your own machine already knows
 
 ```
 npx github:Kostakurta8/roundtable --stats
@@ -122,7 +147,7 @@ something to learn:
 
 Run it on your own machine and the numbers will not match these. That is the point of running it.
 
-### If you don't have Claude Code, or nothing is running
+## If you don't have Claude Code, or nothing is running
 
 ```
 npx github:Kostakurta8/roundtable --demo
@@ -309,7 +334,7 @@ npm run dev          # same as start, without opening a browser
 npm test             # the unit suite — ~15s, binds nothing
 npx tsc --noEmit     # types
 npx vite build       # the client, built the way a user would get it
-npm run smoke        # pack, install into an empty directory, run the installed binary — and --demo
+npm run smoke        # pack, install into an empty directory, run the installed binary — --gif and --demo too
 npm run e2e          # Playwright — needs 7411 and 5173 free, so stop `npm start` first
 npm run room         # render the office to .preview/room-{day,night,spawn}.png
 npm run room:bless   # accept a deliberate visual change as the new baseline

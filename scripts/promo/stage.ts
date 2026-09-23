@@ -75,8 +75,15 @@ export class Stage {
     return `msg_${String(this.msgId).padStart(4, '0')}`;
   }
 
+  /**
+   * What every line is stamped with. The wall clock by default, because the trailer and the demo
+   * are filmed live; `scripts/promo/showcase.ts` swaps in a virtual one so a twenty-minute session
+   * can be written in a few milliseconds and still read as twenty minutes to everything downstream.
+   */
+  clock: () => number = () => Date.now();
+
   private now(): string {
-    return new Date().toISOString();
+    return new Date(this.clock()).toISOString();
   }
 
   private paths(sessionId: string): { spec: SessionSpec; main: string; subagents: string } {
