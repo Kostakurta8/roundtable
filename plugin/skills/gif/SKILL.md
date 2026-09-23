@@ -13,7 +13,7 @@ Roundtable just rendered this session into a GIF. Its report:
 Tell the user, briefly:
 
 - the full path of the file it wrote, so they can open it, and how long the clip is;
-- that by default the clip shows this session's task, agent names and what agents said, so they should look at it before posting it anywhere — `/roundtable:gif --bare` draws the same run with none of that text;
+- if the report says the clip shows the session's task, agent names and speech: that they should look at it before posting it anywhere, and that `/roundtable:gif --bare` draws the same run with none of that text. If the report does not say so, the clip is already bare or staged — do not add the warning;
 - if the file landed inside a git repository, that it is untracked and probably should not be committed.
 
 If the report is an error instead, show it as it is and suggest `/roundtable:gif --demo`, which renders a staged session and needs nothing of theirs. Do not run anything else.
