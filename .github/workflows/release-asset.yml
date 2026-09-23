@@ -42,7 +42,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        # Deleted by name first rather than relying on `--clobber`: re-running this on a release
+        # that already carries the files failed with "ReleaseAsset.name already exists" (422), the
+        # clobber's delete and the upload racing each other. A release without them skips the delete.
         run: |
           file=$(npm pack --silent | tail -n 1)
           cp "$file" roundtable.tgz
-          gh release upload "$TAG" "$file" roundtable.tgz --clobber
+          for name in "$file" roundtable.tgz; do
+            gh release delete-asset "$TAG" "$name" --yes 2>/dev/null || true
+            gh release upload "$TAG" "$name"
+          done
