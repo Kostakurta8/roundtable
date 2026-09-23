@@ -1,0 +1,48 @@
+name: Release asset
+
+# The fast install line in the README is
+#
+#   npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz
+#
+# which only resolves if every release carries a packed build under exactly that name. `npx
+# github:…` clones the repo, installs the dev dependencies and builds the client on the user's
+# machine — measured at 38 to 99 seconds cold — while the packed tarball is the built package and
+# installs in a few. So the tarball is made here, from the tagged commit, by the same `npm pack`
+# the smoke test installs, and attached under a stable name as well as its versioned one.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach the tarball to
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # `npm pack` runs `prepack`, which builds `dist/`; the smoke test then installs that exact
+      # tarball into an empty directory and runs it, so a broken pack never reaches the release.
+      - run: npm run smoke
+      - name: Pack and attach
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          file=$(npm pack --silent | tail -n 1)
+          cp "$file" roundtable.tgz
+          gh release upload "$TAG" "$file" roundtable.tgz --clobber

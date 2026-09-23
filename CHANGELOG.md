@@ -32,6 +32,16 @@ one palette cut from every frame, each frame cropped to what changed, LZW — an
 every pixel back with a decoder written from the format's description. `SECURITY.md` says what a
 clip does and does not show.
 
+### Changed
+
+**The README's install line is the packed build attached to the release.** `npx
+github:Kostakurta8/roundtable` clones the repository, installs the dev dependencies and builds the
+client on the user's machine — 38 to 99 seconds cold, measured from an empty npm cache. `npx
+https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz` installs the
+built package in about three, and `npm i -g` of the same link gives a `roundtable` command.
+`.github/workflows/release-asset.yml` runs the package smoke test on every published release and
+attaches the tarball under that stable name. The `github:` line still works and is still described.
+
 ### Fixed
 
 **Replaying a finished session read whole put every agent's name at the end.** The hub stamps a

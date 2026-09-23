@@ -12,19 +12,21 @@ work at a desk while a tool runs, walk over to hand back what they found, tell e
 Claude Code already writes under `~/.claude` — read-only, entirely local, and it never calls an API.
 
 ```
-npx github:Kostakurta8/roundtable
+npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz
 ```
 
-That is the whole install. It serves the office on <http://localhost:7411>, opens your browser, and
-shows your most recent session — live, if one is running. Node 22.12 or newer; the first run builds
-the client, so give it a minute.
+That is the whole install, and it takes a few seconds. It serves the office on
+<http://localhost:7411>, opens your browser, and shows your most recent session — live, if one is
+running. Node 22.12 or newer. The link is the packed build attached to the latest release;
+`npx github:Kostakurta8/roundtable` runs the same thing built from source, which takes a minute or
+two the first time.
 
 ## Turn any session into a GIF
 
 The clip above is one command, run on a staged session. Run it on one of yours:
 
 ```
-npx github:Kostakurta8/roundtable --gif
+npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --gif
 ```
 
 It writes `roundtable-<session>.gif` where you ran it: your latest session, every silence cut to a
@@ -32,11 +34,13 @@ beat and the rest sped up to about twenty seconds. A session too long for that b
 stretch — the part where the agents actually arrive — and the clock on the office wall keeps the real
 time, so you can see where it jumped. It takes a few seconds and starts nothing that outlives it.
 
+To use it more than once, install it — `npm i -g https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz` — and it is `roundtable`:
+
 ```
-npx github:Kostakurta8/roundtable --gif --session 3043f946   # a particular session (the first few characters of its id)
-npx github:Kostakurta8/roundtable --gif --bare               # no task, names or speech from your transcripts in it
-npx github:Kostakurta8/roundtable --gif --full --seconds 40 # the whole session, however long, in forty seconds
-npx github:Kostakurta8/roundtable --gif --demo              # the clip above, on a machine with no sessions at all
+roundtable --gif --session 3043f946   # a particular session: the first few characters of its id
+roundtable --gif --bare               # no task, names or speech from your transcripts in it
+roundtable --gif --full --seconds 40  # the whole session, however long, in forty seconds
+roundtable --gif --demo               # the clip above, on a machine with no sessions at all
 ```
 
 **Look at it before you post it.** By default the clip shows what the session showed — the task on
@@ -58,16 +62,15 @@ It is for anyone who runs Claude Code with subagents and wants to see what the f
 doing: who is working, who is waiting, and who is spending the tokens.
 
 ```
-npx github:Kostakurta8/roundtable --port 9000   # somewhere else
-npx github:Kostakurta8/roundtable --root /path  # a different Claude directory
-npx github:Kostakurta8/roundtable --stats       # what every transcript you already have says
-npx github:Kostakurta8/roundtable --demo        # a staged session, when nothing of yours is running
-npx github:Kostakurta8/roundtable --no-open     # print the address, do not open a browser
+roundtable --port 9000   # somewhere else
+roundtable --root /path  # a different Claude directory
+roundtable --stats       # what every transcript you already have says
+roundtable --demo        # a staged session, when nothing of yours is running
+roundtable --no-open     # print the address, do not open a browser
 ```
 
 The registry name `claude-roundtable` is reserved for the same thing published to npm, which will
-shorten that to `npx claude-roundtable`. It is not published yet — this line is, so this is the
-line the README carries.
+shorten all of this to `npx claude-roundtable`. It is not published yet.
 
 Written and used on Windows — see [Platforms](#platforms) before you assume anything about the
 other two.
@@ -94,7 +97,7 @@ harness that filmed them.
 ## What your own machine already knows
 
 ```
-npx github:Kostakurta8/roundtable --stats
+npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --stats
 ```
 
 The office shows the run you are in. This reads every transcript under `~/.claude` and tells you what
@@ -150,7 +153,7 @@ Run it on your own machine and the numbers will not match these. That is the poi
 ## If you don't have Claude Code, or nothing is running
 
 ```
-npx github:Kostakurta8/roundtable --demo
+npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --demo
 ```
 
 An office with nobody in it is what an idle machine honestly looks like, and it is a poor way to
@@ -307,7 +310,7 @@ the feed to just the verdicts agents gave each other.
 ## If something looks wrong
 
 **`OFFLINE` in the top bar.** The hub is not running — the terminal that ran
-`npx github:Kostakurta8/roundtable` or `npm start` was closed, or the machine slept. A note above the
+`roundtable` or `npm start` was closed, or the machine slept. A note above the
 panel says so and names the socket it is retrying; start the hub again and the page reconnects on
 its own, and what it shows meanwhile is the session as it stood when the connection dropped. From a
 clone, if you started only Vite, the page has nothing to connect to.
