@@ -42,13 +42,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        # Deleted by name first rather than relying on `--clobber`: re-running this on a release
-        # that already carries the files failed with "ReleaseAsset.name already exists" (422), the
-        # clobber's delete and the upload racing each other. A release without them skips the delete.
+        # GitHub's asset API is eventually consistent. Replacing a file — a re-run, or a release that
+        # already carries one — failed twice with "ReleaseAsset.name already exists" (422): with
+        # `--clobber`, and with an explicit delete, because an upload made seconds after the delete
+        # still sees the old name. So the old asset is deleted by id and the upload is retried until
+        # the name has actually gone. A fresh release has nothing to delete and uploads first time.
         run: |
           file=$(npm pack --silent | tail -n 1)
           cp "$file" roundtable.tgz
           for name in "$file" roundtable.tgz; do
-            gh release delete-asset "$TAG" "$name" --yes 2>/dev/null || true
-            gh release upload "$TAG" "$name"
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$name\") | .id")
+            if [ -n "$id" ]; then gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"; fi
+            for try in 1 2 3 4 5 6 7 8; do
+              if gh release upload "$TAG" "$name"; then break; fi
+              if [ "$try" = 8 ]; then exit 1; fi
+              sleep 15
+            done
           done
