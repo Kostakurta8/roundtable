@@ -42,16 +42,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        # GitHub's asset API is eventually consistent. Replacing a file — a re-run, or a release that
-        # already carries one — failed twice with "ReleaseAsset.name already exists" (422): with
-        # `--clobber`, and with an explicit delete, because an upload made seconds after the delete
-        # still sees the old name. So the old asset is deleted by id and the upload is retried until
-        # the name has actually gone. A fresh release has nothing to delete and uploads first time.
+        # Replacing a file — a re-run, or a release that already carries one — failed three times
+        # with "ReleaseAsset.name already exists" (422). The asset list embedded in the release
+        # object (`releases/tags/<tag>`, which `gh release view` and `--clobber` read) lags behind
+        # uploads, so it can report no asset where one exists and nothing gets deleted. The
+        # release's own `/assets` listing is current, so the id comes from there; the upload is
+        # still retried in case the delete itself takes a moment to land.
         run: |
           file=$(npm pack --silent | tail -n 1)
           cp "$file" roundtable.tgz
+          rid=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)
           for name in "$file" roundtable.tgz; do
-            id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$name\") | .id")
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases/$rid/assets?per_page=100" --jq ".[] | select(.name == \"$name\") | .id")
             if [ -n "$id" ]; then gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"; fi
             for try in 1 2 3 4 5 6 7 8; do
               if gh release upload "$TAG" "$name"; then break; fi
