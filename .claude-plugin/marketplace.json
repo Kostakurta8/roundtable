@@ -1,0 +1,15 @@
+{
+  "name": "roundtable",
+  "description": "Roundtable for Claude Code: your subagents as a pixel-art office — live, rewindable, and exportable as a timelapse GIF.",
+  "owner": {
+    "name": "Kostakurta8",
+    "url": "https://github.com/Kostakurta8"
+  },
+  "plugins": [
+    {
+      "name": "roundtable",
+      "source": "./plugin",
+      "description": "Turn the session you are in into a timelapse GIF of a pixel-art office, open a live read-only view of your agents, or read what your transcripts say about your fan-out."
+    }
+  ]
+}

@@ -86,6 +86,18 @@ describe('--gif', () => {
     expect(parseArgs(['--gif', '--seconds', 'x'], {}).seconds).toBe(CLIP_DEFAULTS.seconds);
   });
 
+  it('lets --demo win over --session, as it does over --root', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'rt-gifdemo-'));
+    try {
+      const msg = await makeClip(parseArgs(['--gif', '--demo', '--session', 'not-a-real-session', '--seconds', '3'], {}), cwd);
+      expect(readFileSync(join(cwd, 'roundtable-demo.gif')).subarray(0, 6).toString('ascii')).toBe('GIF89a');
+      expect(msg).toContain('the staged demo session');
+      expect(msg).not.toContain('--bare'); // nothing of the user's is in a staged clip
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it('writes the file it names and says what is in it', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'rt-gifout-'));
     try {

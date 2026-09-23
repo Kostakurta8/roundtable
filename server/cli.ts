@@ -241,7 +241,10 @@ export async function makeClip(opts: CliOptions, cwd: string = process.cwd()): P
   if (staged) stageShowcase(staged);
   try {
     const root = staged ?? opts.root;
-    const got = await collectSession(root, opts.session ?? undefined);
+    // `--demo` wins over `--session` the way it wins over `--root`: the staged directory holds one
+    // session, and an id meant for the real one can only fail to match it. The plugin's `gif`
+    // command always passes the id of the session it runs in, so `/roundtable:gif --demo` sent both.
+    const got = await collectSession(root, staged ? undefined : (opts.session ?? undefined));
     const clip = renderClip(got.evs, {
       ...CLIP_DEFAULTS,
       seconds: opts.seconds,

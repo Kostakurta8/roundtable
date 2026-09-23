@@ -9,6 +9,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
+## [0.3.1] — 2026-09-23
+
+### Added
+
+**A Claude Code plugin.** `/plugin marketplace add Kostakurta8/roundtable`, then `/plugin install
+roundtable@roundtable`, gives three commands inside a session: `/roundtable:gif` renders the session
+you are in (the skill passes `${CLAUDE_SESSION_ID}`, so it is never whichever session wrote last),
+`/roundtable:watch` starts the live office in the background, and `/roundtable:stats` prints the
+`--stats` report. They run the packed release tarball, so the plugin needs no build of its own. The
+plugin lives in `plugin/`, the marketplace manifest in `.claude-plugin/`; both pass
+`claude plugin validate`.
+
+### Fixed
+
+**`--demo` now wins over `--session`**, as it already did over `--root`. The staged directory holds
+one session, so an id meant for a real one could only fail to match — which is exactly what
+`/roundtable:gif --demo` did, because the plugin always sends the id of the session it runs in.
+
 ## [0.3.0] — 2026-09-23
 
 ### Added

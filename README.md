@@ -47,6 +47,24 @@ roundtable --gif --demo               # the clip above, on a machine with no ses
 the whiteboard, what each agent was asked to do, what they said. `--bare` draws the same run with
 none of that text in it: the people, their desks and their walks are all still there.
 
+### From inside Claude Code
+
+Roundtable is also a Claude Code plugin, so the session you are in can render itself:
+
+```
+/plugin marketplace add Kostakurta8/roundtable
+/plugin install roundtable@roundtable
+```
+
+| | |
+|---|---|
+| `/roundtable:gif` | this session, as a GIF in the working directory — `--bare`, `--seconds`, `--full` work here too |
+| `/roundtable:watch` | the live office in your browser, started in the background |
+| `/roundtable:stats` | the `--stats` report, with a few lines on what is unusual about your numbers |
+
+Each one runs the same packed release as the lines above, with the session's own id, so a GIF made
+from inside a session is always that session and not whichever one wrote last.
+
 ## What it does that a session viewer usually does not
 
 - **Deterministic replay.** Click any second on the timeline and the room rebuilds exactly as it

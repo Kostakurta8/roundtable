@@ -1,0 +1,14 @@
+{
+  "name": "roundtable",
+  "displayName": "Roundtable",
+  "version": "0.3.1",
+  "description": "Turn the session you are in into a timelapse GIF of a pixel-art office, open a live read-only view of your agents, or read what your transcripts say about your fan-out.",
+  "author": {
+    "name": "Kostakurta8",
+    "url": "https://github.com/Kostakurta8"
+  },
+  "homepage": "https://github.com/Kostakurta8/roundtable#readme",
+  "repository": "https://github.com/Kostakurta8/roundtable",
+  "license": "MIT",
+  "keywords": ["subagents", "observability", "replay", "gif", "timelapse", "pixel-art"]
+}
