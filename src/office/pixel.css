@@ -202,8 +202,9 @@
   pointer-events: none;
   display: grid;
   gap: 1px;
-  max-width: 260px;
-  padding: 7px 9px;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 8px 11px 7px;
   border: 1px solid var(--line, #423c34);
   border-radius: var(--radius-sm, 7px);
   background: var(--panel-solid, #262320);
@@ -221,9 +222,27 @@
   opacity: 1;
 }
 
+.peek-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
 .peek-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
   font-size: 12px;
+}
+
+.peek-model {
+  flex: none;
+  margin-left: auto;
+  padding-left: 10px;
+  font-family: var(--font-mono, monospace);
 }
 
 .peek-model,
@@ -232,11 +251,59 @@
   font-size: 10px;
 }
 
+/*
+ * What the agent is doing, with the roster's own phase dot beside it — the same four colours the
+ * rail uses, so a hover and the roster row it matches read as one thing. The line is `--ink`
+ * rather than the accent it used to be printed in, which measured 3.2:1 on the day panel.
+ */
+.peek-state {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 3px;
+}
+
+.peek-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3, #75736a);
+  transform: translateY(-1px);
+}
+
+.peek[data-state='working'] .peek-dot {
+  background: var(--warn, #c9962c);
+}
+
+.peek[data-state='thinking'] .peek-dot {
+  background: var(--accent-2, #3e9aa8);
+}
+
+.peek[data-state='talking'] .peek-dot {
+  background: var(--ok, #3f9a5c);
+}
+
+.peek[data-state='done'] .peek-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--ink-3, #75736a);
+}
+
 .peek-act {
-  color: var(--accent-2, #3e9aa8);
+  color: var(--ink, #ece5d8);
   font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-size: 10.5px;
   overflow-wrap: anywhere;
+}
+
+.peek-hint {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-soft, #3a352e);
+  color: var(--ink-3, #75736a);
+  font-family: var(--font-mono, monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
 }
 
 .peek-note:empty {
