@@ -136,7 +136,7 @@ describe('renderClip, where a browser would run it', () => {
     // Its own buffer, exactly its size: what the worker transfers is the file and nothing else.
     expect(gif.byteOffset).toBe(0);
     expect(gif.byteLength).toBe(gif.buffer.byteLength);
-  });
+  }, 30_000);
 
   it('reports every frame drawn and then every frame encoded, in that order', () => {
     const seen: ClipProgress[] = [];
@@ -156,5 +156,5 @@ describe('renderClip, where a browser would run it', () => {
     expect(Buffer.from(browser.gif).equals(cli.gif)).toBe(true);
     // Listening changes nothing about what is made.
     expect(Buffer.from(renderClip(evs, opts, () => {}).gif).equals(cli.gif)).toBe(true);
-  });
+  }, 30_000);
 });

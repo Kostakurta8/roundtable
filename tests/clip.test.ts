@@ -52,13 +52,15 @@ describe('renderClip', () => {
     expect(c.agents).toBe(25);
     expect(c.clipMs).toBeLessThanOrEqual((CLIP_DEFAULTS.seconds + 7) * 1000);
     expect(c.frames.length).toBe(Math.round(c.clipMs / (c.delayCs * 10)));
-  });
+    // A whole clip rendered, as the two CLI tests below render one: two seconds alone, and more
+    // than vitest's default five once the other render suites share the runner's cores.
+  }, 30_000);
 
   it('is deterministic: the same session makes the same file', () => {
     const a = renderClip(evs, { ...CLIP_DEFAULTS, seconds: 4 });
     const b = renderClip(evs, { ...CLIP_DEFAULTS, seconds: 4 });
     expect(a.gif.equals(b.gif)).toBe(true);
-  });
+  }, 30_000);
 
   it('cuts a session too long for the clip to its busiest stretch, unless asked for all of it', () => {
     const cut = clipFrames(evs, { ...CLIP_DEFAULTS, seconds: 3 });
