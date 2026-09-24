@@ -28,7 +28,7 @@ import { drawText, PAL, PIX, textWidth } from '../office/pixel/art';
 import { Scene, type Ghost, type SceneAgent } from '../office/pixel/scene';
 import { Replay, type Entry } from '../office/replay';
 import { agentLook, initialState, reduce, turnCount, type RtState } from '../store';
-import { encodeGif, packRgb, type RgbFrame } from './gif';
+import { encodeGif, FrameLog, packRgb, type RgbFrame } from './gif';
 import { asCtx, SoftCtx } from './softctx';
 
 export type ClipOptions = {
@@ -96,9 +96,9 @@ export const REPO_LINE = 'github.com/Kostakurta8/roundtable';
 // --------------------------------------------------------------- the timeline
 
 /** One event, where it falls on the clip's compressed clock and when it really happened. */
-type Beat = { at: number; real: number; ev: Ev; cmds: Cmd[] };
+export type Beat = { at: number; real: number; ev: Ev; cmds: Cmd[] };
 
-type Timeline = {
+export type Timeline = {
   beats: Beat[];
   compressedMs: number;
   realMs: number;
@@ -162,8 +162,12 @@ function busiest(beats: readonly Beat[], span: number): number {
  * The silences are cut progressively harder until the session fits the clip at `MAX_SPEED`. A
  * session that still does not fit once the cut reaches `WINDOW_BELOW_CAP_MS` is too long to
  * watch whole, and the clip becomes its busiest stretch instead — unless `full` asks for all of it.
+ *
+ * Exported for the session card, which wants one moment of the same clock rather than a clip of
+ * it: `full` with an unbounded clip is the loosest cut there is, the one a clip only gets when the
+ * whole session already fits.
  */
-function timeline(evs: readonly Ev[], maxClipMs: number, full: boolean): Timeline {
+export function timeline(evs: readonly Ev[], maxClipMs: number, full: boolean): Timeline {
   // Two kinds of event carry the hub's clock rather than a transcript's: `sessionSeen`, stamped
   // when the hub started streaming, and the `agentSeen` a sidecar produces, stamped when the hub
   // read it. Sorted by those stamps they land at the moment this command ran — after every line of
@@ -293,6 +297,86 @@ const scrub = (a: ActorState): ActorState => ({
   link: a.link ? { child: a.link.child, label: '' } : undefined,
 });
 
+/**
+ * How a bare frame names an agent: `agent 1`, `agent 2`, … in order of first asking, and `main` as
+ * itself. One namer per render, shared across its frames, so a bare clip's names hold still from
+ * frame to frame.
+ */
+export function anonNamer(): (id: string) => string {
+  const anon = new Map<string, string>();
+  return (id) => {
+    if (id === 'main') return 'main';
+    let name = anon.get(id);
+    if (!name) {
+      name = `agent ${anon.size + 1}`;
+      anon.set(id, name);
+    }
+    return name;
+  };
+}
+
+/** What one frame of the room is drawn from, beyond the scene's own memory of the last one. */
+export type RoomFrame = {
+  actors: readonly ActorState[];
+  /** Everyone the office has no chair for at this moment, from `Replay.offsite`. */
+  offsite: readonly string[];
+  /** The store's fold of every event up to this moment, for names, errors and paper. */
+  state: RtState;
+  bare: boolean;
+  anonName: (id: string) => string;
+  dt: number;
+  /** The transcript time this frame stands for, for the clock on the wall. */
+  clockMs: number;
+  /**
+   * What a bare frame's whiteboard says when the session did have a task. Left out, the board is
+   * blank and the scene fills it with its own "waiting for a task" — which the clip has always done.
+   */
+  hiddenTask?: string;
+};
+
+/**
+ * One frame of the room, as every clip frame and the session card's still are drawn.
+ *
+ * Kept in one place because a bare frame is only bare if every text the scene can print is
+ * scrubbed, and a second copy of this block for the card would be a second list of those to keep
+ * complete. The order of the namer's calls — actors first, then the queue outside — is part of
+ * what a bare clip's numbering is, so it stays the order it always was.
+ */
+export function drawRoom(ctx: CanvasRenderingContext2D, scene: Scene, f: RoomFrame): void {
+  const { actors, state, bare, anonName } = f;
+  const agents: Record<string, SceneAgent> = {};
+  for (const a of actors) {
+    const meta = state.agents[a.id];
+    agents[a.id] = {
+      label: bare ? anonName(a.id) : meta?.label ?? a.id,
+      look: agentLook(a.id),
+      status: bare ? '' : a.status,
+      errored: (meta?.errors ?? 0) > 0,
+      tokens: meta?.tokens ?? 0,
+    };
+  }
+  const ghosts: Ghost[] = f.offsite.map((id) => ({
+    id,
+    label: bare ? anonName(id) : state.agents[id]?.label ?? id,
+    look: agentLook(id),
+    busy: (state.agents[id]?.activeTools ?? 0) > 0,
+    done: state.agents[id]?.phase === 'done',
+  }));
+
+  scene.draw(ctx, {
+    actors: bare ? actors.map(scrub) : actors,
+    agents,
+    task: bare ? (state.task !== undefined && f.hiddenTask !== undefined ? f.hiddenTask : '') : state.task ?? '',
+    turns: turnCount(state),
+    selected: null,
+    ghosts,
+    night: 0,
+    spend: Math.min(1, Math.max(0, state.cost / 25)),
+    dt: f.dt,
+    clockMs: f.clockMs,
+  });
+}
+
 /** The clip before it is encoded: every frame, packed, at the room's own size. */
 export type ClipFrames = Omit<ClipResult, 'gif' | 'width' | 'height' | 'frames'> & {
   frames: RgbFrame[];
@@ -316,26 +400,51 @@ export function renderClip(
   opts: ClipOptions = CLIP_DEFAULTS,
   onProgress?: (p: ClipProgress) => void,
 ): ClipResult {
-  const c = clipFrames(evs, opts, onProgress && ((done, total) => onProgress({ phase: 'draw', done, total })));
+  // Kept as the changes between frames, not as frames: see `FrameLog` for what that saves, and why
+  // the file cannot tell the difference.
+  const log = new FrameLog();
+  const c = drawClip(
+    evs,
+    opts,
+    (px) => log.push(px),
+    onProgress && ((done, total) => onProgress({ phase: 'draw', done, total })),
+  );
   const gif = encodeGif(
     {
       width: c.width,
       height: c.height,
-      frames: c.frames,
+      frames: log,
       delayCs: c.delayCs,
       holdLastCs: HOLD_LAST_CS,
       scale: c.scale,
     },
     onProgress && ((done, total) => onProgress({ phase: 'encode', done, total })),
   );
-  return { ...c, gif, frames: c.frames.length, width: c.width * c.scale, height: c.height * c.scale };
+  return { ...c, gif, frames: log.length, width: c.width * c.scale, height: c.height * c.scale };
 }
 
+/** Every frame of the clip, whole, for a caller that wants to look at them rather than post them. */
 export function clipFrames(
   evs: readonly Ev[],
   opts: ClipOptions = CLIP_DEFAULTS,
   onFrame?: (done: number, total: number) => void,
 ): ClipFrames {
+  const frames: RgbFrame[] = [];
+  return { ...drawClip(evs, opts, (px) => frames.push(px.slice()), onFrame), frames };
+}
+
+/**
+ * Draws the clip a frame at a time and hands each to `keep` as it is finished.
+ *
+ * `keep` is lent the frame, not given it: the same buffer is packed again for the next one, so
+ * whatever it wants to hold it copies.
+ */
+function drawClip(
+  evs: readonly Ev[],
+  opts: ClipOptions,
+  keep: (px: RgbFrame) => void,
+  onFrame?: (done: number, total: number) => void,
+): Omit<ClipFrames, 'frames'> {
   const fps = Math.min(50, Math.max(2, opts.fps));
   const delayCs = Math.max(2, Math.round(100 / fps));
   const frameMs = delayCs * 10;
@@ -358,23 +467,14 @@ export function clipFrames(
   const scene = new Scene();
   const room = new SoftCtx(PIX.w, PIX.h + BAR_H);
   const ctx = asCtx(room);
-  const frames: RgbFrame[] = [];
+  const px = new Uint32Array(room.width * room.height);
+  let drawn = 0;
 
   let state: RtState = initialState;
   let folded = 0;
   const seen = new Set<string>();
   const t0 = beats.length > 0 ? beats[0].real : 0;
-  // Numbered in order of first appearance, so a bare clip's names hold still from frame to frame.
-  const anon = new Map<string, string>();
-  const anonName = (id: string): string => {
-    if (id === 'main') return 'main';
-    let name = anon.get(id);
-    if (!name) {
-      name = `agent ${anon.size + 1}`;
-      anon.set(id, name);
-    }
-    return name;
-  };
+  const anonName = anonNamer();
 
   for (let f = 0; f < total; f++) {
     const at = Math.min(end, from + f * step);
@@ -386,44 +486,23 @@ export function clipFrames(
     }
     const lastReal = folded > 0 ? beats[folded - 1].real + Math.max(0, at - beats[folded - 1].at) : t0;
 
-    const agents: Record<string, SceneAgent> = {};
-    for (const a of actors) {
-      const meta = state.agents[a.id];
-      agents[a.id] = {
-        label: opts.bare ? anonName(a.id) : meta?.label ?? a.id,
-        look: agentLook(a.id),
-        status: opts.bare ? '' : a.status,
-        errored: (meta?.errors ?? 0) > 0,
-        tokens: meta?.tokens ?? 0,
-      };
-    }
-    const ghosts: Ghost[] = replay.offsite().map((id) => ({
-      id,
-      label: opts.bare ? anonName(id) : state.agents[id]?.label ?? id,
-      look: agentLook(id),
-      busy: (state.agents[id]?.activeTools ?? 0) > 0,
-      done: state.agents[id]?.phase === 'done',
-    }));
-
-    scene.draw(ctx, {
-      actors: opts.bare ? actors.map(scrub) : actors,
-      agents,
-      task: opts.bare ? '' : state.task ?? '',
-      turns: turnCount(state),
-      selected: null,
-      ghosts,
-      night: 0,
-      spend: Math.min(1, Math.max(0, state.cost / 25)),
+    drawRoom(ctx, scene, {
+      actors,
+      offsite: replay.offsite(),
+      state,
+      bare: opts.bare,
+      anonName,
       dt: frameMs,
       clockMs: lastReal,
     });
     drawBar(ctx, PIX.h, { elapsed: lastReal - t0, agents: seen.size, tokens: state.totalTok });
-    frames.push(packRgb(room.data));
-    onFrame?.(frames.length, total);
+    keep(packRgb(room.data, px));
+    // Counted outside the call: `onFrame?.(++drawn)` skips its arguments when nobody is listening.
+    drawn += 1;
+    onFrame?.(drawn, total);
   }
 
   return {
-    frames,
     width: room.width,
     height: room.height,
     delayCs,
@@ -431,7 +510,7 @@ export function clipFrames(
     agents: seen.size,
     tokens: state.totalTok,
     realMs,
-    clipMs: frames.length * frameMs,
+    clipMs: drawn * frameMs,
     speed,
     shownFrom: realAt(beats, from),
     shownTo: realAt(beats, Math.min(to, compressedMs)),

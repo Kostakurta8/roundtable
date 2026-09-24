@@ -16,6 +16,7 @@ import type { Ev } from '../shared/events';
 import { Normalizer } from '../server/normalize';
 import { parseLine } from '../server/parse';
 import { renderClip as renderForCli } from '../server/clip';
+import { renderCard } from '../src/clip/card';
 import { CLIP_DEFAULTS, renderClip, type ClipProgress } from '../src/clip/render';
 
 const ROOT = resolve(__dirname, '..');
@@ -79,7 +80,7 @@ function fixtureSession(): Ev[] {
 }
 
 describe('the clip module graph', () => {
-  for (const entry of ['src/clip/render.ts', 'src/clip/worker.ts']) {
+  for (const entry of ['src/clip/render.ts', 'src/clip/card.ts', 'src/clip/worker.ts']) {
     describe(entry, () => {
       const g = graph(entry);
       const files = [...g.keys()].map((f) => relative(ROOT, f).replaceAll('\\', '/'));
@@ -157,4 +158,23 @@ describe('renderClip, where a browser would run it', () => {
     // Listening changes nothing about what is made.
     expect(Buffer.from(renderClip(evs, opts, () => {}).gif).equals(cli.gif)).toBe(true);
   }, 30_000);
+});
+
+describe('renderCard, where a browser would run it', () => {
+  it('draws the card with no Buffer in the world, into pixels a worker can hand over whole', () => {
+    const g = globalThis as { Buffer?: unknown };
+    const saved = g.Buffer;
+    delete g.Buffer;
+    let card: ReturnType<typeof renderCard>;
+    try {
+      card = renderCard(fixtureSession());
+    } finally {
+      g.Buffer = saved;
+    }
+    expect(card.rgba).toBeInstanceOf(Uint8ClampedArray);
+    expect(card.rgba.length).toBe(card.width * card.height * 4);
+    // Its own buffer, exactly its size: the worker transfers it rather than copying three megabytes.
+    expect(card.rgba.byteOffset).toBe(0);
+    expect(card.rgba.byteLength).toBe(card.rgba.buffer.byteLength);
+  });
 });

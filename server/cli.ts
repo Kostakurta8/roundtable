@@ -59,6 +59,11 @@ export type CliOptions = {
    * does not print, and the file it was asked for is the only thing it writes.
    */
   gif: boolean;
+  /**
+   * Write one session as the share dialog's card — its numbers over a still of the office at its
+   * busiest — to a PNG, and exit. Reads the session as `--gif` does; see `server/card.ts`.
+   */
+  card: boolean;
   /** Where `--gif` writes. Absent means `roundtable-<session>.gif` in the working directory. */
   out: string | null;
   /** Which session `--gif` plays: an id or the start of one. Absent means the latest. */
@@ -98,13 +103,16 @@ Options
         --bare           No text from your transcripts in the picture: no task, no names,
                          no speech. The people and what they do are still all there.
         --full           The whole session, however long, instead of its busiest stretch.
+      --card       Write a session as one PNG card — its numbers over a still of the office at its
+                   busiest — and exit. Takes --session, --out, --bare and --demo as --gif does
+                   (default roundtable-<session>-card.png, here). With --gif, both are written.
       --no-open    Do not open a browser; just print the address.
   -v, --version    Print the version.
   -h, --help       Print this.
 
 It reads the transcript files Claude Code already writes and never writes to them. Nothing leaves
-the machine: the server binds loopback only and makes no outbound connection of any kind. The one
-file it ever writes is the GIF you ask --gif for.`;
+the machine: the server binds loopback only and makes no outbound connection of any kind. The only
+files it ever writes are the GIF you ask --gif for and the card you ask --card for.`;
 
 /**
  * Arguments into options, with the environment underneath.
@@ -126,6 +134,7 @@ export function parseArgs(
     demo: false,
     stats: false,
     gif: false,
+    card: false,
     out: null,
     session: null,
     seconds: CLIP_DEFAULTS.seconds,
@@ -148,6 +157,7 @@ export function parseArgs(
     else if (flag === '--demo') opts.demo = true;
     else if (flag === '--stats') opts.stats = true;
     else if (flag === '--gif') opts.gif = true;
+    else if (flag === '--card') opts.card = true;
     else if (flag === '--bare') opts.bare = true;
     else if (flag === '--full') opts.full = true;
     else if (flag === '--out') {
@@ -303,3 +313,4 @@ export { DEFAULT_HUB_PORT, HUB_HOST };
 // Re-exported through the CLI bundle on purpose: `dist/server/cli.mjs` is the one file the
 // launcher imports, and a second entry point would be a second thing to keep in step.
 export { collectStats, formatStats } from './stats';
+export { makeCard } from './card';

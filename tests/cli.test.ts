@@ -34,6 +34,19 @@ describe('parseArgs', () => {
     expect(parseArgs(['--port', '9000'], { ROUNDTABLE_PORT: '8000' }).port).toBe(9000);
   });
 
+  it('takes --card with the options it shares with --gif, and alongside it', () => {
+    expect(parseArgs(['--card', '--out', 'c.png', '--session', 'abc', '--bare'], {})).toMatchObject({
+      card: true,
+      gif: false,
+      out: 'c.png',
+      session: 'abc',
+      bare: true,
+      unknown: null,
+    });
+    expect(parseArgs(['--gif', '--card'], {})).toMatchObject({ card: true, gif: true });
+    expect(parseArgs([], {}).card).toBe(false);
+  });
+
   it('falls back rather than binding a port nobody can dial', () => {
     // `readPort`'s rule, reached through the CLI: 0 means "any free port" to `listen`, which is a
     // hub the page cannot find. A typo must not be the reason the app cannot connect to itself.
@@ -200,7 +213,7 @@ describe('what the CLI prints', () => {
   it('documents every option it accepts', () => {
     // A help text that has drifted from the parser is worse than none: it is a wrong answer to
     // the only question the user thought to ask.
-    for (const flag of ['--port', '--root', '--demo', '--no-open', '--version', '--help', '--stats', '--gif', '--out', '--session', '--seconds', '--bare', '--full']) {
+    for (const flag of ['--port', '--root', '--demo', '--no-open', '--version', '--help', '--stats', '--gif', '--card', '--out', '--session', '--seconds', '--bare', '--full']) {
       expect(HELP, flag).toContain(flag);
     }
     expect(HELP).toContain('never writes');
