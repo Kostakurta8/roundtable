@@ -9,12 +9,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# The deploy job mints an OIDC token to prove to Pages which run it is; `pages: write` is the only
-# write this workflow has, and it has it only because that is what publishing is.
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+# Nothing by default; each job gets what it uses. The build runs `npm ci`, which runs install
+# scripts from third-party packages, so it gets no write and no OIDC token. Only the deploy job —
+# which runs one first-party action and nothing from npm — mints the token that proves to Pages
+# which run it is, and holds `pages: write`, because that is what publishing is.
+permissions: {}
 
 # One deploy at a time, and a newer push waits rather than cancelling one already under way — a
 # deploy killed halfway can leave Pages serving nothing until the next one finishes.
@@ -26,6 +25,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # `configure-pages` reads the site's settings, and fails with a reason if Pages is not enabled.
+      pages: read
     steps:
       - uses: actions/checkout@v4
 
@@ -52,6 +55,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
