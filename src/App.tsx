@@ -21,7 +21,7 @@ import { AgentsTab } from './ui/AgentsTab';
 import { boardText, clashingNames, clip, clockSec, hasChosenName, sessionAbout, sessionName, shortId } from './ui/format';
 import { Guide, guideSeen, rememberGuide } from './ui/Guide';
 import { Help } from './ui/Help';
-import { Inspector } from './ui/Inspector';
+import { Inspector, useSheet } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
 import { Rail } from './ui/Rail';
 import { rosterTree } from './ui/roster';
@@ -364,6 +364,17 @@ export default function App() {
    */
   const turns = turnCount(state);
 
+  /**
+   * The inspector, placed by width: a card over the room, or at phone width a sheet over the dock —
+   * a child of the shell's grid rather than of the stage, which clips and contains everything in it.
+   * Rendered straight after the stage either way, so Tab goes from the room into it.
+   */
+  const sheet = useSheet();
+  const inspector =
+    selected && state.agents[selected] ? (
+      <Inspector state={state} agentId={selected} now={now} sheet={sheet} onClose={() => setSelected(null)} />
+    ) : null;
+
   const stageRef = useRef<HTMLElement>(null);
   /** How wide the session's room is, in buffer columns — reported by the room, `null` until then. */
   const [frameCols, setFrameCols] = useState<number | null>(null);
@@ -511,7 +522,9 @@ export default function App() {
   });
 
   return (
-    <div className={`app${dockOpen ? '' : ' dock-hidden'}`}>
+    // A sheet brings the dock's row back while it is open: with the dock hidden a phone's stage is
+    // the whole height, the room sits at its foot, and a sheet over the stage covered exactly that.
+    <div className={`app${dockOpen || (sheet && inspector !== null) ? '' : ' dock-hidden'}`}>
       <TopBar
         sessions={sessions}
         sessionId={sessionId}
@@ -661,13 +674,12 @@ export default function App() {
           onFilterCrossTalk={filterCrossTalk}
         />
         <Rail rows={rows} selected={selected} now={now} onSelect={select} />
-        {selected && state.agents[selected] && (
-          <Inspector state={state} agentId={selected} now={now} onClose={() => setSelected(null)} />
-        )}
+        {!sheet && inspector}
         {/* Only over a room that exists: a guide to the people in an office that has no session in
             it would be explaining pictures nobody can see. */}
         {guideOpen && sessionId !== null && <Guide onClose={closeGuide} />}
       </main>
+      {sheet && inspector}
 
       <aside className="dock panel" aria-label="session detail">
         <nav className="tabs" role="tablist">
