@@ -348,9 +348,26 @@ const FIGURE_K = 4;
  */
 const EXTRA: Readonly<Record<string, readonly string[]>> = {
   '≥': ['#...', '.##.', '#...', '....', '####'],
+  // The font's own `$` is three columns: a bar through an S has no room to be both, and at the
+  // card's size it read as `¢` — in front of the cost, a hundredfold misreading of the number
+  // most likely to be quoted.
+  $: ['.####', '#.#..', '.###.', '..#.#', '####.'],
   '✓': ['.....', '....#', '...#.', '#.#..', '.#...'],
   '✕': ['#...#', '.#.#.', '..#..', '.#.#.', '#...#'],
 };
+
+/**
+ * A duration as a clock reads it — `0:30`, `12:54`, `1:02:03` — rather than as `format.ts`'s
+ * `29.8s`. In a 3x5 font `S` and `5` differ by two pixels, so `29.8s` read as the number `29.85`;
+ * digits and colons have nothing to mistake.
+ */
+export function clock(ms: number): string {
+  const t = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const ss = String(t % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
 
 /** One character's advance: its width and the gap after it, as `textWidth` counts them. */
 const advance = (ch: string): number => (EXTRA[ch]?.[0].length ?? textWidth(ch)) + 1;
@@ -469,7 +486,7 @@ function paint(card: SoftCtx, room: SoftCtx, stats: CardStats): void {
     ...(stats.spawned > 0 ? [[white(String(stats.peak)), 'AT ONCE'] satisfies [Run[], string]] : []),
     [white(tokText(stats)), 'TOKENS'],
     [white(costText(stats)), 'EST COST'],
-    [white(duration(stats.durationMs)), 'DURATION'],
+    [white(clock(stats.durationMs)), 'DURATION'],
   ];
   // In the verdicts' own colours, the only saturated ones the app uses — and only when there were
   // any: `0✓ 0✕` on a session nobody asked for verdicts in would describe a different kind of run.
