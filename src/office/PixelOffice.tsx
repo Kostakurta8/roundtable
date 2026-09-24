@@ -1709,27 +1709,6 @@ export const PixelOffice = memo(function PixelOffice({
       </div>
 
       {/*
-        The off-site strip's names. The room seats thirteen and a workflow spawns forty; the
-        surplus is drawn along the bottom as small heads, which without this is twenty-three
-        anonymous silhouettes — present, which is the point, but unidentifiable, which is not.
-        Hovering one names it; tabbing reaches it; a screen reader reads it.
-      */}
-      <div className="ghost-layer" role="list" aria-label="waiting for a desk">
-        {room.offsite.map((id) => (
-          <GhostMark
-            key={id}
-            id={id}
-            name={agents[id]?.label ?? id}
-            status={agents[id]?.status ?? ''}
-            hovered={hover === id}
-            onHover={hoverAgent}
-            onPick={pick}
-            register={registerGhost}
-          />
-        ))}
-      </div>
-
-      {/*
         The room, as anything that is not an eye sees it. These sit exactly over the sprites the
         canvas paints and carry the label, the state and the text; they are transparent because
         the picture is already there, not because they are decorative.
@@ -1748,6 +1727,29 @@ export const PixelOffice = memo(function PixelOffice({
             onPick={pick}
             onZoomTo={zoomTo}
             register={register}
+          />
+        ))}
+      </div>
+
+      {/*
+        The off-site strip's names. The room seats thirteen and a workflow spawns forty; the
+        surplus is drawn along the bottom as small heads, which without this is twenty-three
+        anonymous silhouettes — present, which is the point, but unidentifiable, which is not.
+        Hovering one names it; tabbing reaches it; a screen reader reads it. After the people in
+        the room in the DOM, so Tab meets whoever is working before the queue at the door; the
+        stylesheet stacks the strip above them either way.
+      */}
+      <div className="ghost-layer" role="list" aria-label="waiting for a desk">
+        {room.offsite.map((id) => (
+          <GhostMark
+            key={id}
+            id={id}
+            name={agents[id]?.label ?? id}
+            status={agents[id]?.status ?? ''}
+            hovered={hover === id}
+            onHover={hoverAgent}
+            onPick={pick}
+            register={registerGhost}
           />
         ))}
       </div>
