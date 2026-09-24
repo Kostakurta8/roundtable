@@ -23,6 +23,8 @@ import { Inspector } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
 import { Rail } from './ui/Rail';
 import { rosterTree } from './ui/roster';
+import { SHARE_KEY, ShareDialog } from './ui/ShareDialog';
+import { useEvLog } from './ui/evlog';
 import { Timeline } from './ui/Timeline';
 import { TopBar } from './ui/TopBar';
 import { ToolsTab } from './ui/ToolsTab';
@@ -221,6 +223,7 @@ export default function App() {
   const [dockOpen, setDockOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [seekTs, setSeekTs] = useState<number | null>(null);
   /** The roundtable's filter: only what the agents said to each other. */
   const [crossTalk, setCrossTalk] = useState(false);
@@ -229,7 +232,9 @@ export default function App() {
   const now = useNow(5000);
   const office = useOffice();
   const { feed } = office;
-  const { states, sessions, dropped, replaying, notices, connected, root, rescan } = useRtStream(sessionId, feed);
+  // The share dialog renders from raw events, which neither the store nor the office keeps.
+  const evlog = useEvLog(feed);
+  const { states, sessions, dropped, replaying, notices, connected, root, rescan } = useRtStream(sessionId, evlog.sink);
 
   /**
    * The session on screen. One selection drives everything: the picker sets it, a tab sets it, and
@@ -359,6 +364,15 @@ export default function App() {
     setCrossTalk((on) => !on);
   }, []);
 
+  /** Why there is no clip to make yet, or `null`. One answer for the button, the palette and `G`. */
+  const shareWhyNot =
+    sessionId === null ? 'pick a session first' : state.lastSeq === 0 ? 'this session has no events yet' : null;
+  const openShare = useCallback(() => {
+    setShareOpen(true);
+    setPaletteOpen(false);
+    setHelpOpen(false);
+  }, []);
+
   const commands = useMemo((): Command[] => {
     const base: Command[] = [
       // First, and only while it means something: a user who has lost the room in the past is
@@ -376,6 +390,9 @@ export default function App() {
       { id: 'theme-night', label: 'Theme: night', run: () => theme.set('night') },
       { id: 'theme-auto', label: 'Theme: follow the system', run: () => theme.set('auto') },
       { id: 'help', label: 'Help: what am I looking at', hint: '?', run: () => setHelpOpen(true) },
+      ...(shareWhyNot === null
+        ? [{ id: 'share', label: 'Share as GIF — this session as a timelapse', hint: SHARE_KEY.toUpperCase(), run: openShare }]
+        : []),
       { id: 'dock', label: dockOpen ? 'Hide the side panel' : 'Show the side panel', hint: 'B', run: () => setDockOpen((v) => !v) },
       ...TABS.map((t) => ({ id: `tab-${t.key}`, label: `Panel: ${t.label.toLowerCase()}`, hint: 'panel', run: () => { setTab(t.key); setDockOpen(true); } })),
       { id: 'clear', label: 'Clear the agent selection', hint: 'Esc', run: () => setSelected(null) },
@@ -401,7 +418,7 @@ export default function App() {
       };
     });
     return [...base, ...agents, ...list];
-  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession]);
+  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession, shareWhyNot, openShare]);
 
   useKeys({
     // The two overlays are exclusive on purpose: they share a z-index, so opening one over the
@@ -414,6 +431,7 @@ export default function App() {
     '1': () => { setTab('chat'); setDockOpen(true); },
     '2': () => { setTab('agents'); setDockOpen(true); },
     '3': () => { setTab('tools'); setDockOpen(true); },
+    [SHARE_KEY]: () => { if (shareWhyNot === null) openShare(); },
     // Newest thing first, so each press undoes the most recent one: the overlays are on top of the
     // room, a seek is a state the whole room is held in, and a selection is the quietest of them
     // all. Escape that only ever cleared the selection left the seek with no keyboard exit.
@@ -446,6 +464,8 @@ export default function App() {
         seekTs={seekTs}
         onResumeLive={resumeLive}
         onRescan={rescan}
+        onShare={openShare}
+        shareWhyNot={shareWhyNot}
       />
 
       {/* `has-tabs` reserves headroom for the strip: the inspector floats over the same corner of
@@ -654,6 +674,15 @@ export default function App() {
 
       {paletteOpen && <Palette commands={commands} onClose={() => setPaletteOpen(false)} />}
       {helpOpen && <Help onClose={() => setHelpOpen(false)} />}
+      {shareOpen && sessionId !== null && (
+        <ShareDialog
+          sessionId={sessionId}
+          sessionName={current ? sessionName(current) : `session ${shortId(sessionId)}`}
+          events={() => evlog.events(sessionId)}
+          missing={droppedHere + evlog.lost(sessionId)}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </div>
   );
 }

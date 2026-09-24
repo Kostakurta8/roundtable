@@ -16,6 +16,7 @@ import type { SessionSummary } from '../../shared/protocol';
 import { useDismiss, useNow } from '../hooks';
 import type { ThemeApi } from '../theme';
 import { ago, clip, clockSec, money, sessionAbout, sessionName, tokens } from './format';
+import './share.css';
 
 const THEME_LABEL: Record<ThemeApi['choice'], { glyph: string; word: string }> = {
   auto: { glyph: '◐', word: 'auto' },
@@ -43,6 +44,10 @@ export type TopBarProps = {
   onResumeLive: () => void;
   /** Ask the hub to look for newly started sessions right now, instead of on its own schedule. */
   onRescan: () => void;
+  /** Open the share dialog. Absent, the bar has no Share button. */
+  onShare?: () => void;
+  /** Why there is nothing to share yet, or `null` when there is. */
+  shareWhyNot?: string | null;
 };
 
 /**
@@ -231,6 +236,36 @@ export function TopBar(props: TopBarProps) {
       )}
 
       <span className="sep" />
+
+      {/* The clip `--gif` writes, one click from the room it is a clip of. Kept focusable while
+          there is nothing to share, so the reason — in the tooltip and the name — is reachable by
+          keyboard too, instead of a greyed-out control nobody can ask about. */}
+      {props.onShare && (
+        <button
+          type="button"
+          className="btn icon share-open"
+          onClick={props.shareWhyNot ? undefined : props.onShare}
+          aria-disabled={props.shareWhyNot ? true : undefined}
+          title={props.shareWhyNot ? `share as GIF — ${props.shareWhyNot}` : 'share this session as a GIF (G)'}
+          aria-label={props.shareWhyNot ? `share as GIF: ${props.shareWhyNot}` : 'share this session as a GIF'}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M6 1.5v6M3.6 3.9 6 1.5l2.4 2.4" />
+            <path d="M2 7.2v2.8h8V7.2" />
+          </svg>
+          <span className="lbl">share</span>
+        </button>
+      )}
 
       {/* The hub finds new sessions by itself every few seconds; this only asks it to look now.
           It says so in the tooltip rather than pretending to be a repair, and it reports back —
