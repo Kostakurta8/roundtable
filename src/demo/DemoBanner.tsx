@@ -15,6 +15,7 @@
  * so it never draws a link that leaves the machine.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { DEMO_SPEED } from './playback';
 
 export const INSTALL = 'npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz';
 export const REPO = 'https://github.com/Kostakurta8/roundtable';
@@ -101,7 +102,9 @@ export function DemoBanner() {
   return (
     <aside className={compact ? 'demo-bar compact' : 'demo-bar'} aria-label="about this demo">
       <p className="demo-what">
-        <span className="demo-tag">STAGED REPLAY</span>
+        <span className="demo-tag" title={`played at ${DEMO_SPEED}× the speed it was recorded`}>
+          STAGED REPLAY · {DEMO_SPEED}×
+        </span>
         {!compact && (
           <>
             <span className="demo-long">Nothing here is anyone&rsquo;s real session. Run it on yours:</span>

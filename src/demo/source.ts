@@ -10,11 +10,11 @@
  * Re-record with `npx tsx scripts/recordDemo.ts`.
  */
 import raw from './recording.json?raw';
-import { play, parseRecording, type Recording } from './playback';
+import { DEMO_SPEED, HOLD_MS, play, parseRecording, type Recording } from './playback';
 
 let parsed: Recording | null = null;
 
 export function playDemo(deliver: (msg: object) => void): () => void {
   parsed ??= parseRecording(JSON.parse(raw));
-  return play(parsed, deliver);
+  return play(parsed, deliver, HOLD_MS, DEMO_SPEED);
 }
