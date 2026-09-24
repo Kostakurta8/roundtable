@@ -1,18 +1,23 @@
 /**
- * The hosted demo's player, and the recording it plays.
+ * The hosted demo's player, the cut that makes its recording, and the recording itself.
  *
  * The page on GitHub Pages is the app fed from `src/demo/recording.json` instead of a hub, so
  * everything the app believes about time, order and resets has to survive being replayed: a frame
  * delivered early, a timestamp left on the recording's clock, or a second pass whose `seq`s the
  * store has already seen would each show up as a room that is subtly wrong rather than broken.
+ *
+ * The recorder's cut deals out again what the hub sent for a session written in one go, so it has
+ * to put every line back where it was written, keep the hub's derived frames after what they were
+ * derived from, and still frame the whole thing as a hub would.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isEv, type Ev } from '../shared/events';
-import type { HelloMsg, ServerMsg } from '../shared/protocol';
+import { evSession, isEv, type Ev } from '../shared/events';
+import type { HelloMsg, RosterMsg, ServerMsg } from '../shared/protocol';
 import { HOLD_MS, parseRecording, play, seqSpan, sessionsOf, shift, type Recording } from '../src/demo/playback';
-import { initialState, reduce, type RtState } from '../src/store';
+import { compressedClock, cut, type Cut, type CutOptions, type Take } from '../src/demo/timelapse';
+import { initialState, MAIN, reduce, roster, type RtState } from '../src/store';
 
 const S = 's-1';
 const ref = { sessionId: S, agentId: 'main' };
@@ -241,6 +246,250 @@ describe('play', () => {
     expect(second.msgs.map((m) => m.text)).toEqual(first.msgs.map((m) => m.text));
     expect(second.lastSeq).toBeGreaterThan(first.lastSeq);
     stop();
+  });
+});
+
+/** `Array.prototype.findLastIndex`, which the ES2022 lib this project compiles against does not have. */
+const lastIndex = <T,>(xs: readonly T[], f: (x: T) => boolean): number => {
+  for (let i = xs.length - 1; i >= 0; i--) if (f(xs[i])) return i;
+  return -1;
+};
+
+describe('compressedClock', () => {
+  /**
+   * The numbers are chosen so the answer is exact: gaps of one second either side of a ten-minute
+   * wait, played in six seconds with a two-second beat, can only come out with the wait as the beat
+   * and every other second kept as a second.
+   */
+  it('clamps a long silence to one beat, then scales the run to the length asked', () => {
+    const times = [0, 1000, 2000, 602_000, 603_000, 604_000];
+    const clock = compressedClock(times, 6000, 2000);
+    expect(times.map((t) => Math.round(clock.at(t)))).toEqual([0, 1000, 2000, 4000, 5000, 6000]);
+    expect(clock.capMs).toBeCloseTo(2000, -1);
+    expect(clock.realMs).toBe(604_000);
+  });
+
+  it('cuts nothing from a run whose longest silence already fits in a beat', () => {
+    const clock = compressedClock([0, 10_000, 20_000, 30_000], 3000, 1500);
+    expect([0, 10_000, 20_000, 30_000].map(clock.at)).toEqual([0, 1000, 2000, 3000]);
+    expect(clock.capMs).toBe(10_000);
+  });
+
+  it('is monotonic everywhere, including between moments and past either end', () => {
+    const clock = compressedClock([5000, 5500, 90_000, 91_000], 4000, 1000);
+    let prev = Number.NEGATIVE_INFINITY;
+    for (let t = -60_000; t <= 200_000; t += 250) {
+      const at = clock.at(t);
+      expect(at).toBeGreaterThanOrEqual(prev);
+      prev = at;
+    }
+  });
+});
+
+describe('cut', () => {
+  const L = 'lead-1';
+  const SIDE = 'side-2';
+  /** The transcripts' clock: the morning the staged session pretends to have happened. */
+  const T0 = Date.UTC(2026, 8, 17, 9, 12, 0);
+  /** The hub's clock: a week later, when it read the whole thing in one go. */
+  const HUB = Date.UTC(2026, 8, 24, 12, 0, 0);
+  const at = (sessionId: string, agentId: string) => ({ sessionId, agentId });
+  type Loose = Ev extends infer E ? (E extends Ev ? Omit<E, 'seq'> : never) : never;
+  const numbered = (evs: Loose[], from: number): Ev[] => evs.map((e, i) => ({ ...e, seq: from + i }) as Ev);
+
+  /**
+   * A finished fan-out in the order the hub replays one: the main transcript whole, then the child's
+   * file whole. Two stamps are the hub's own — `sessionSeen`, and the sidecar's `agentSeen` — and the
+   * derived `agentDone` sits where the hub derives it, beside the sidecar, stamped with the parent's
+   * result. Every one of those is a way for the cut to get the order wrong.
+   */
+  const leadEvs = (): Ev[] =>
+    numbered(
+      [
+        { kind: 'sessionSeen', sessionId: L, cwd: 'C:\\work\\x', live: true, ts: HUB },
+        { kind: 'userMessage', ref: at(L, MAIN), text: 'do the thing', source: 'human', ts: T0 },
+        { kind: 'toolStart', ref: at(L, MAIN), tool: 'Task', toolUseId: 'tu-1', target: 'scout it', ts: T0 + 1000 },
+        { kind: 'agentSpawn', ref: at(L, MAIN), childAgentId: 'pending', prompt: 'scout it', toolUseId: 'tu-1', background: false, ts: T0 + 1000 },
+        { kind: 'toolResult', ref: at(L, MAIN), toolUseId: 'tu-1', ok: true, ts: T0 + 30_000 },
+        { kind: 'agentText', ref: at(L, MAIN), text: 'Done.', ts: T0 + 32_000 },
+        { kind: 'agentSeen', ref: at(L, 'kid'), parentToolUseId: 'tu-1', label: 'scout it', ts: HUB },
+        { kind: 'agentDone', ref: at(L, 'kid'), ok: true, ts: T0 + 30_000 },
+        { kind: 'userMessage', ref: at(L, 'kid'), text: 'scout it', ts: T0 + 2000 },
+        { kind: 'toolStart', ref: at(L, 'kid'), tool: 'Read', toolUseId: 'tu-2', target: 'a.ts', ts: T0 + 5000 },
+        { kind: 'toolResult', ref: at(L, 'kid'), toolUseId: 'tu-2', ok: true, ts: T0 + 7000 },
+        { kind: 'agentText', ref: at(L, 'kid'), text: 'Found it.', ts: T0 + 27_000 },
+      ],
+      1,
+    );
+  /** A second session: asked a minute before the lead was, then says one thing in the middle of the lead's run. */
+  const sideEvs = (): Ev[] =>
+    numbered(
+      [
+        { kind: 'sessionSeen', sessionId: SIDE, cwd: 'C:\\work\\y', live: true, ts: HUB },
+        { kind: 'userMessage', ref: at(SIDE, MAIN), text: 'and this', source: 'human', ts: T0 - 60_000 },
+        { kind: 'agentText', ref: at(SIDE, MAIN), text: 'On it.', ts: T0 + 17_000 },
+      ],
+      100,
+    );
+  const row = (sessionId: string, name: string, mtime: number) => ({ sessionId, slug: sessionId, mtime, live: true, name });
+  const take = (withSide = true): Take => ({
+    // The hub's own order, by real file times: the side session was copied in last, so it looks newest.
+    hello: {
+      kind: 'hello',
+      root: '/tmp/somewhere-private',
+      sessions: withSide ? [row(SIDE, 'side', HUB + 5), row(L, 'lead', HUB)] : [row(L, 'lead', HUB)],
+    },
+    sessions: withSide ? [{ sessionId: L, evs: leadEvs() }, { sessionId: SIDE, evs: sideEvs() }] : [{ sessionId: L, evs: leadEvs() }],
+  });
+  /**
+   * The lead's moments are 0, 1, 2, 5, 7, 27, 30 and 32 s, so its gaps sum to 32 s with one of 20 s.
+   * Played in 16 s with a 4 s beat, the cap can only be 4 s and the scale exactly 1: every moment
+   * lands on a round number, which is what lets these tests say where things go.
+   */
+  const OPTS: CutOptions = { lead: L, playMs: 16_000, beatMs: 4000, tailMs: 3000, rosterMs: 4000, root: '(staged)' };
+  const evsOf = (c: Cut): [number, Ev][] => c.frames.flatMap(([t, m]) => (isEv(m) ? [[t, m] as [number, Ev]] : []));
+  const label = (e: Ev): string => `${'ref' in e ? e.ref.agentId : 'session'} ${e.kind}`;
+
+  it('frames the opening as the hub attaches: hello, then reset, sessionSeen, backlog and ready per session, lead first', () => {
+    const c = cut(take(), OPTS);
+    const opening = c.frames.filter(([t]) => t === 0).map(([, m]) => m);
+    const shape = opening.map((m) => (isEv(m) ? `${evSession(m) === L ? 'L' : 'S'} ${label(m)}` : `${m.kind}${'sessionId' in m ? ` ${m.sessionId === L ? 'L' : 'S'}` : ''}`));
+    expect(shape).toEqual([
+      'hello',
+      'reset L',
+      'L session sessionSeen',
+      'L main userMessage',
+      'ready L',
+      'reset S',
+      'S session sessionSeen',
+      'S main userMessage',
+      'ready S',
+    ]);
+    const hi = opening[0] as HelloMsg;
+    expect(hi.root).toBe('(staged)');
+    // Dated by the cut, not by the recording machine's clock — and the busy room is the newest.
+    expect(hi.sessions.map((r) => [r.sessionId, r.mtime])).toEqual([
+      [L, 0],
+      [SIDE, -4000],
+    ]);
+    expect(opening.filter((m) => !isEv(m) && m.kind === 'ready')).toEqual([
+      { kind: 'ready', sessionId: L, replayed: 2 },
+      { kind: 'ready', sessionId: SIDE, replayed: 2 },
+    ]);
+    // What was on disk before the take is in the past of the take; the attach itself is at zero.
+    for (const m of opening.filter(isEv)) expect(m.ts).toBeLessThanOrEqual(0);
+    expect(opening.filter(isEv).filter((m) => m.kind === 'sessionSeen').map((m) => m.ts)).toEqual([0, 0]);
+  });
+
+  it('is monotonic: arrival never goes back, seq always rises, and every live event is stamped with when it plays', () => {
+    const c = cut(take(), OPTS);
+    let t = 0;
+    let seq = 0;
+    for (const [arrive, m] of c.frames) {
+      expect(arrive).toBeGreaterThanOrEqual(t);
+      t = arrive;
+      if (!isEv(m)) continue;
+      expect(m.seq).toBeGreaterThan(seq);
+      seq = m.seq;
+      if (arrive > 0) expect(m.ts).toBe(arrive);
+    }
+  });
+
+  /**
+   * The hub sent the parent's whole transcript before the child's first line, so in arrival order
+   * the orchestrator said "Done." before anybody had started. Written order is the one to keep.
+   */
+  it('puts every line back in the order it was written, across files', () => {
+    const lead = evsOf(cut(take(false), OPTS)).filter(([, e]) => e.kind !== 'sessionSeen');
+    expect(lead.map(([t, e]) => `${t} ${label(e)}`)).toEqual([
+      '0 main userMessage',
+      '1000 main toolStart',
+      '1000 main agentSpawn',
+      '2000 kid agentSeen',
+      '2000 kid userMessage',
+      '5000 kid toolStart',
+      '7000 kid toolResult',
+      '11000 kid agentText',
+      '14000 main toolResult',
+      '14000 kid agentDone',
+      '16000 main agentText',
+    ]);
+  });
+
+  it('lands a derived agentDone after the last thing its agent did', () => {
+    const evs = evsOf(cut(take(), OPTS)).map(([, e]) => e);
+    for (const [i, e] of evs.entries()) {
+      if (e.kind !== 'agentDone') continue;
+      const last = lastIndex(evs, (x) => x.kind !== 'agentDone' && 'ref' in x && x.ref.agentId === e.ref.agentId && x.ref.sessionId === e.ref.sessionId);
+      expect(i).toBeGreaterThan(last);
+    }
+  });
+
+  it('carries a second session on the lead’s clock without stretching it', () => {
+    const alone = cut(take(false), OPTS);
+    const both = cut(take(), OPTS);
+    const leadAts = (c: Cut): number[] => evsOf(c).flatMap(([t, e]) => (evSession(e) === L ? [t] : []));
+    expect(leadAts(both)).toEqual(leadAts(alone));
+    expect(both.playMs).toBe(OPTS.playMs);
+    // Halfway between the lead's moments at 7 s and 27 s, which play at 7 s and 11 s.
+    const said = evsOf(both).find(([, e]) => e.kind === 'agentText' && evSession(e) === SIDE);
+    expect(said?.[0]).toBe(9000);
+  });
+
+  it('sends a roster on the hub’s tick only when a main transcript moved, newest first', () => {
+    const c = cut(take(), OPTS);
+    const rosters = c.frames.flatMap(([t, m]) => (!isEv(m) && m.kind === 'roster' ? [[t, (m as RosterMsg).sessions] as const] : []));
+    expect(rosters.map(([t, rows]) => [t, rows.map((r) => `${r.name}@${r.mtime}`)])).toEqual([
+      [4000, ['lead@1000', 'side@-4000']],
+      // The side session spoke at 9 s while the lead was quiet, so for one tick it is the newer one.
+      [12000, ['side@9000', 'lead@1000']],
+      [16000, ['lead@16000', 'side@9000']],
+    ]);
+    expect(c.span).toBe(16_000 + OPTS.tailMs);
+  });
+
+  it('gives a tie on the millisecond to the lead', () => {
+    const t = take();
+    const side = [...t.sessions[1].evs];
+    // Written on the lead's own moment at 30 s, which plays at 14 s.
+    side[2] = { ...side[2], ts: T0 + 30_000 };
+    const c = cut({ ...t, sessions: [t.sessions[0], { sessionId: SIDE, evs: side }] }, OPTS);
+    const at16 = c.frames.find(([when, m]) => when === 16_000 && !isEv(m) && m.kind === 'roster');
+    expect((at16?.[1] as RosterMsg).sessions[0].sessionId).toBe(L);
+  });
+
+  describe('played', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-24T12:00:00Z'));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Through the real reducer, honouring resets as the stream does: pass two rebuilds pass one. */
+    it('loops cleanly: the second pass rebuilds each session the first one built', () => {
+      const c = cut(take(), OPTS);
+      const rec = parseRecording(JSON.parse(JSON.stringify({ v: 1, span: c.span, frames: c.frames })));
+      const states: Record<string, RtState> = {};
+      const stop = play(rec, (m) => {
+        if (isEv(m)) states[evSession(m)] = reduce(states[evSession(m)] ?? initialState, m);
+        else if ((m as { kind: string }).kind === 'reset') delete states[(m as { sessionId: string }).sessionId];
+      });
+      vi.advanceTimersByTime(rec.span);
+      const first = { ...states };
+      expect(first[L].agents.kid.phase).toBe('done');
+      vi.advanceTimersByTime(HOLD_MS + 1);
+      // A moment into pass two: rebuilt from the backlog, not stacked on the first pass.
+      expect(Object.keys(states[L].agents)).toEqual([MAIN]);
+      vi.advanceTimersByTime(rec.span);
+      for (const id of [L, SIDE]) {
+        expect(states[id].msgs.map((m) => m.text)).toEqual(first[id].msgs.map((m) => m.text));
+        expect(roster(states[id]).map((a) => [a.id, a.phase])).toEqual(roster(first[id]).map((a) => [a.id, a.phase]));
+        expect(states[id].lastSeq).toBeGreaterThan(first[id].lastSeq);
+      }
+      stop();
+    });
   });
 });
 
