@@ -2702,4 +2702,27 @@ kbd {
     font-size: 10.5px;
     line-height: 1.3;
   }
+  /*
+   * And a two-row one. As three rows it covered two thirds of a phone's room, which is the first
+   * thing anyone who opens a link from their phone sees — a card about a room they could not see.
+   * "Got it" takes the ✕'s place in the header, and the rewind line goes: the strip it describes
+   * is directly under the room, and the Help sheet says it too.
+   */
+  .guide-x {
+    display: none;
+  }
+  .guide-ft {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .guide-ft > :not(.guide-ok) {
+    display: none;
+  }
+  .guide-ok {
+    padding: 3px 10px;
+  }
 }
