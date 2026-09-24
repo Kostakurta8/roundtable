@@ -13,13 +13,14 @@ import { join } from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HOLD_MS, parseRecording } from '../src/demo/playback';
+import { DEMO_SPEED, HOLD_MS, parseRecording } from '../src/demo/playback';
 import { playDemo } from '../src/demo/source';
 import { feedFrom, useRtStream, type EvSink, type RtStream } from '../src/ws';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const SPAN = parseRecording(JSON.parse(readFileSync(join('src', 'demo', 'recording.json'), 'utf8'))).span;
+// The page plays the recording faster than it was made, so one pass takes this long on its clock.
+const SPAN = parseRecording(JSON.parse(readFileSync(join('src', 'demo', 'recording.json'), 'utf8'))).span / DEMO_SPEED;
 const A = 'demo-7f2a91';
 const B = 'demo-9c4d20';
 

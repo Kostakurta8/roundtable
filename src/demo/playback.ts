@@ -39,6 +39,17 @@ export type Recording = {
 export const HOLD_MS = 5000;
 
 /**
+ * How much faster than it was recorded the hosted demo plays.
+ *
+ * The staged room keeps the hub's shipped timing, so the first agent walks out almost three minutes
+ * in — long after somebody who arrived from a link has closed the tab. Playing it faster is the
+ * honest fix: nothing is skipped or reordered, every gap shrinks by the same factor, and the banner
+ * says the replay is sped up. Re-staging a busier room would have meant a second demo that `--demo`
+ * does not show.
+ */
+export const DEMO_SPEED = 2.5;
+
+/**
  * The recording as the page receives it, which is as JSON: checked here, once, and typed after.
  *
  * Only the envelope is checked. What is *inside* a frame is the hub's business and the stream's to
@@ -85,19 +96,21 @@ export function sessionsOf(rec: Recording): string[] {
 }
 
 /**
- * One recorded frame, as it would have been sent at `base`.
+ * One recorded frame, as it would have been sent at `base`, with the recording's clock run `speed`
+ * times faster.
  *
  * Returns a copy; the recording is shared by every pass and must come out of each one untouched.
  */
-export function shift(msg: object, base: number, seqOffset: number): object {
+export function shift(msg: object, base: number, seqOffset: number, speed = 1): object {
+  const at = (t: number): number => base + t / speed;
   if (isEv(msg)) {
-    const ev: Ev = { ...msg, ts: msg.ts + base, seq: msg.seq + seqOffset };
+    const ev: Ev = { ...msg, ts: at(msg.ts), seq: msg.seq + seqOffset };
     if (ev.kind !== 'workflowPhase') return ev;
     return {
       ...ev,
       phases: ev.phases.map((p) => ({
         ...p,
-        agents: p.agents.map((a) => (a.queuedAt === undefined ? a : { ...a, queuedAt: a.queuedAt + base })),
+        agents: p.agents.map((a) => (a.queuedAt === undefined ? a : { ...a, queuedAt: at(a.queuedAt) })),
       })),
     };
   }
@@ -107,7 +120,7 @@ export function shift(msg: object, base: number, seqOffset: number): object {
       ...m,
       sessions: (m.sessions as unknown[]).map((s) => {
         const row = s && typeof s === 'object' ? (s as { mtime?: unknown }) : null;
-        return row && typeof row.mtime === 'number' ? { ...row, mtime: row.mtime + base } : s;
+        return row && typeof row.mtime === 'number' ? { ...row, mtime: at(row.mtime) } : s;
       }),
     };
   }
@@ -115,15 +128,16 @@ export function shift(msg: object, base: number, seqOffset: number): object {
 }
 
 /**
- * Plays `rec` into `deliver` for ever: each frame at its own offset from the start of the pass, then
- * a hold of `holdMs` on the last moment, then the next pass. Returns the way to stop.
+ * Plays `rec` into `deliver` for ever: each frame at its own offset from the start of the pass —
+ * divided by `speed` — then a hold of `holdMs` on the last moment, then the next pass. Returns the
+ * way to stop. The hold is real time, not recording time: it is for the viewer, not the replay.
  *
  * Scheduled against `Date.now()` rather than by counting timer ticks, because a background tab's
  * timers are throttled to once a second or worse: the frames that fell due while nobody was looking
  * arrive together when somebody is, stamped with the times they were due — which is what a socket
  * does for a tab that was asleep, too.
  */
-export function play(rec: Recording, deliver: (msg: object) => void, holdMs = HOLD_MS): () => void {
+export function play(rec: Recording, deliver: (msg: object) => void, holdMs = HOLD_MS, speed = 1): () => void {
   const step = seqSpan(rec);
   const sessions = sessionsOf(rec);
   let pass = 0;
@@ -135,16 +149,16 @@ export function play(rec: Recording, deliver: (msg: object) => void, holdMs = HO
   const tick = (): void => {
     timer = null;
     const elapsed = Date.now() - base;
-    while (next < rec.frames.length && rec.frames[next][0] <= elapsed) {
+    while (next < rec.frames.length && rec.frames[next][0] / speed <= elapsed) {
       const [, msg] = rec.frames[next];
       next += 1;
-      deliver(shift(msg, base, pass * step));
+      deliver(shift(msg, base, pass * step, speed));
       if (stopped) return; // whatever `deliver` did, it included stopping us
     }
     timer =
       next < rec.frames.length
-        ? setTimeout(tick, rec.frames[next][0] - elapsed)
-        : setTimeout(restart, Math.max(0, rec.span + holdMs - elapsed));
+        ? setTimeout(tick, rec.frames[next][0] / speed - elapsed)
+        : setTimeout(restart, Math.max(0, rec.span / speed + holdMs - elapsed));
   };
 
   const restart = (): void => {

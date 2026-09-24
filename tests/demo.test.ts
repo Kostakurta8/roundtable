@@ -173,6 +173,31 @@ describe('play', () => {
     stop();
   });
 
+  it('plays faster by one factor for every gap and every stamp, but holds the end in real time', () => {
+    const rec = TINY();
+    const got: object[] = [];
+    const start = Date.now();
+    const stop = play(rec, (m) => got.push(m), 4000, 2);
+
+    expect(got).toHaveLength(4);
+    vi.advanceTimersByTime(499);
+    expect(got).toHaveLength(4);
+    vi.advanceTimersByTime(1);
+    // Recorded at 1000 ms, delivered at 500, and stamped as having happened then.
+    expect(got[4]).toMatchObject({ text: 'one', ts: start + 500 });
+    vi.advanceTimersByTime(750);
+    expect(got[5]).toMatchObject({ text: 'two', ts: start + 1200 });
+    // The backlog's distance into the past shrinks by the same factor, so its order is kept.
+    expect(got[2]).toMatchObject({ text: 'backlog', ts: start - 20 });
+
+    // The recording is done at span / 2 = 1500; the hold after it is the full 4 s, not 2.
+    vi.advanceTimersByTime(rec.span / 2 + 4000 - 1250 - 1);
+    expect(got).toHaveLength(6);
+    vi.advanceTimersByTime(1);
+    expect(got[6]).toMatchObject({ kind: 'reset', reason: 'rewound' });
+    stop();
+  });
+
   it('delivers nothing once stopped, including from inside a delivery', () => {
     const got: object[] = [];
     let stop = (): void => {};
