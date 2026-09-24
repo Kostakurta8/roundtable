@@ -33,6 +33,17 @@ import { clockSec, duration } from './format';
 /** Columns drawn at once. Past this the strip shows the most recent window rather than shrinking. */
 const MAX_COLUMNS = 220;
 /**
+ * The fewest columns the strip divides its width into.
+ *
+ * Columns used to be capped at 14px and packed from the left, so for the first minute of every
+ * session — the minute a newcomer is deciding what this thing is — the strip was five slivers in a
+ * corner of an empty 1000px track. Now the columns share the width, and a short session's few
+ * columns are wide. Not *all* of it from the first second, though: one second of activity drawn as
+ * one bar across the whole strip is the "three busy seconds as one block" defect again, so the
+ * width is split at least this many ways and the strip is full from its twenty-fourth active second.
+ */
+const MIN_FILL = 24;
+/**
  * How far PageUp/PageDown jump. A strip this wide needs a coarse gear as well as a fine one:
  * crossing 220 columns one arrow press at a time is a keyboard path nobody walks twice.
  */
@@ -49,8 +60,9 @@ const SERIES: readonly { key: Series; label: string; cls: string }[] = [
 const bucketTotal = (b: RtBucket): number => b.says + b.tools + b.thinks + b.errors;
 
 /**
- * One column, in words — the button's accessible name *and* its mouse tooltip, from one string, so
- * what a pointer reads and what a screen reader hears cannot drift.
+ * One column, in words — the button's accessible name *and* the readout over the strip, from one
+ * string, so what a pointer reads and what a screen reader hears cannot drift. (The native `title`
+ * tooltip it also used to be is gone: it arrived a second late and on top of the readout.)
  *
  * Zeroes are dropped. "0 messages, 0 thinking, 0 failed" is noise in a name that is read aloud on
  * every single arrow press.
@@ -112,6 +124,15 @@ export const Timeline = memo(function Timeline({
    * backwards through history at exactly the rate history arrives.
    */
   const [cursorTs, setCursorTs] = useState<number | null>(null);
+  /**
+   * The column under the pointer, or under the keyboard's focus — whichever moved last.
+   *
+   * The only way to learn which second a column was used to be its native tooltip, which takes a
+   * second to appear and says nothing while you sweep across the strip looking for the busy part.
+   * This drives a readout that follows the pointer column by column, and it follows focus too, so an
+   * arrow key names the second it lands on for a sighted keyboard user as well as a screen reader.
+   */
+  const [peek, setPeek] = useState<number | null>(null);
 
   const shown = useMemo(
     () => (buckets.length > MAX_COLUMNS ? buckets.slice(buckets.length - MAX_COLUMNS) : buckets),
@@ -160,6 +181,11 @@ export const Timeline = memo(function Timeline({
   };
 
   const seconds = BUCKET_MS / 1000;
+  const cols = Math.max(shown.length, MIN_FILL);
+  /** A column's centre, as a share of the plot — where the readout and the playhead stand. */
+  const at = (i: number): string => `${((i + 0.5) / cols) * 100}%`;
+  const peekIdx = peek !== null && peek < shown.length ? peek : null;
+  const seekIdx = seekTs === null ? -1 : shown.findIndex((b) => b.t === seekTs);
 
   return (
     <section className="timeline panel" aria-label="activity timeline">
@@ -187,7 +213,30 @@ export const Timeline = memo(function Timeline({
             : 'activity — nothing has happened in this session yet'
         }
         onKeyDown={onKeyDown}
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, columnGap: cols > 90 ? 1 : cols > 40 ? 2 : 4 }}
+        onPointerMove={(e) => {
+          const bar = (e.target as HTMLElement).closest<HTMLElement>('.tl-bar');
+          setPeek(bar ? Number(bar.dataset.i) : null);
+        }}
+        onPointerLeave={() => setPeek(null)}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setPeek(null);
+        }}
       >
+        {/* Where the room is replaying from, as a line through the strip — the column's own wash
+            is easy to lose among two hundred. */}
+        {seekIdx !== -1 && <span className="tl-head" aria-hidden="true" style={{ left: at(seekIdx) }} />}
+        {/* The readout is decoration for the eye: the column under it already carries the same words
+            as its accessible name. */}
+        {peekIdx !== null && (
+          <span
+            className={`tl-read${peekIdx / cols > 0.7 ? ' lean-r' : peekIdx / cols < 0.15 ? ' lean-l' : ''}`}
+            aria-hidden="true"
+            style={{ left: at(peekIdx) }}
+          >
+            <span className="tl-read-box">{labelOf(shown[peekIdx])}</span>
+          </span>
+        )}
         {shown.map((b, i) => {
           const total = bucketTotal(b);
           // Square-root, not linear: a single second with forty tool calls would otherwise flatten
@@ -205,8 +254,9 @@ export const Timeline = memo(function Timeline({
               // Where the room is being replayed from — a claim about the app, not about focus,
               // which is why it is not `aria-selected` and not the focus ring.
               aria-current={seekTs !== null && b.t === seekTs ? 'true' : undefined}
-              title={name}
               aria-label={name}
+              data-i={i}
+              onFocus={() => setPeek(i)}
               onClick={() => {
                 setCursorTs(b.t);
                 onSeek(b.t);
@@ -228,7 +278,7 @@ export const Timeline = memo(function Timeline({
         {shown.length === 0 && <span className="empty-note">no activity yet</span>}
       </div>
 
-      <div className="tl-side" style={{ alignItems: 'flex-end' }}>
+      <div className="tl-side tl-meta">
         <div className="tl-legend">
           {SERIES.map(({ key, label, cls }) => (
             <span key={key}>

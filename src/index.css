@@ -1820,6 +1820,9 @@ details.monologue[open] summary::before {
 
 .timeline {
   grid-area: time;
+  /* Above the stage's floating layers (the rail is z 30), which the readout rises into. */
+  position: relative;
+  z-index: 45;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1843,15 +1846,94 @@ details.monologue[open] summary::before {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
+.tl-meta {
+  align-items: flex-end;
+}
+/*
+ * The columns share the plot's width (`repeat(n, 1fr)`, written by `Timeline`, never fewer than
+ * `MIN_FILL`), so the strip reads as a strip from early in a session instead of five slivers in the
+ * corner of an empty track. The track itself is drawn — a faint floor of slots — so the part not
+ * yet filled reads as time still to come rather than as a strip that failed to draw.
+ */
 .tl-plot {
   position: relative;
   height: 40px;
   min-width: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 1px;
+  display: grid;
+  align-items: end;
   border-bottom: 1px solid var(--line);
+  background: repeating-linear-gradient(to right, transparent 0 7px, var(--line-soft) 7px 8px) bottom / 100% 3px no-repeat;
   cursor: crosshair;
+}
+.tl-plot .empty-note {
+  grid-column: 1 / -1;
+  align-self: center;
+  justify-self: start;
+  padding: 0;
+}
+/*
+ * The second under the pointer (or under focus): a hairline through the column and the column's
+ * own words above the strip. Over the stage rather than clipped inside the timeline — it is a
+ * tooltip, and the strip is 40px tall.
+ */
+.tl-read {
+  position: absolute;
+  top: -4px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--ink-3);
+  pointer-events: none;
+  z-index: 2;
+}
+.tl-read-box {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, -4px);
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow-2);
+  color: var(--ink);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  animation: fade-in 0.1s var(--ease);
+}
+/* Near either end the box hangs inward from the hairline instead of centring on it, so it never
+   runs off the strip's end of the window. */
+.tl-read.lean-r .tl-read-box {
+  left: auto;
+  right: -4px;
+  transform: translateY(-4px);
+}
+.tl-read.lean-l .tl-read-box {
+  left: -4px;
+  transform: translateY(-4px);
+}
+/* The replay's playhead, in the seek pill's warm tone: the two are one fact at two ends of the
+   window. */
+.tl-head {
+  position: absolute;
+  top: -3px;
+  bottom: -1px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--warn);
+  pointer-events: none;
+  z-index: 1;
+}
+.tl-head::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
 }
 /*
  * One column per bucket, and one <button> per column: pressing a column seeks the room, so the
@@ -1863,10 +1945,7 @@ details.monologue[open] summary::before {
  * the height; the button carries the hit area, the focus and the "you are here".
  */
 .tl-bar {
-  flex: 1 1 0;
   min-width: 0;
-  /* Three seconds of activity are three columns, not one block across the whole strip. */
-  max-width: 14px;
   height: 100%;
   display: flex;
   align-items: flex-end;
@@ -1888,9 +1967,13 @@ details.monologue[open] summary::before {
   background: var(--warn-wash);
   box-shadow: inset 0 -2px 0 var(--warn);
 }
-/* Stacked so the mix of work in a second is legible, not just its volume. */
+/* Stacked so the mix of work in a second is legible, not just its volume. Never wider than a bar:
+   early in a session the columns are wide, and a column-wide block of colour read as a slab rather
+   than as one second's activity. The column keeps its full width as the hit target. */
 .tl-stack {
   width: 100%;
+  max-width: 34px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column-reverse;
   justify-content: flex-start;
