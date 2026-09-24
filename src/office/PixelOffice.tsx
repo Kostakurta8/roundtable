@@ -855,6 +855,7 @@ export const PixelOffice = memo(function PixelOffice({
     // First thing, before `measure` reads a rect: reading one flushes styles, and a canvas styled
     // visible there and hidden here fades out — the empty room it was meant never to show.
     el.dataset.framing = 'arriving';
+    el.dataset.cam = 'moving';
 
     buffer.current ??= (() => {
       const c = document.createElement('canvas');
@@ -1178,8 +1179,27 @@ export const PixelOffice = memo(function PixelOffice({
       c.x += (want.x - c.x) * k;
       c.y += (want.y - c.y) * k;
       c.z += (want.z - c.z) * k;
+      // …and then arrives. An exponential ease never does, and the blit snaps its source to whole
+      // buffer pixels, so the last visible step of a move — a whole buffer pixel, five screen
+      // pixels at 2× — came whenever the creeping remainder happened to cross a rounding boundary:
+      // up to 2.4s after the move looked finished, a twitch of the whole room long after anybody
+      // touched it. It fooled the e2e test the same way (`834 → 1112 → 839`: the "settled" first
+      // reading was taken in the still-looking gap before that step; one run in eleven, simulated
+      // over targets). Within half a buffer pixel the camera takes the step now and stops.
+      if (Math.abs(want.x - c.x) < 0.5) c.x = want.x;
+      if (Math.abs(want.y - c.y) < 0.5) c.y = want.y;
+      if (Math.abs(want.z - c.z) < 0.002) c.z = want.z;
       const cl = clampView(c, g);
       cam.current = cl;
+      // Whether the camera is where it was sent — exactly, which only the finish above makes
+      // possible. Said on the room as `data-cam` because nothing else can say it: a sprite that has
+      // stopped moving on screen is not a camera that has arrived, since frames can stall mid-move
+      // on a loaded machine, and "three equal readings" then measures the stall (the e2e's
+      // `834 → 1112 → 839`). Compared clamped against clamped, so a target past the room's edge is
+      // arrived at when the camera reaches the edge.
+      const goal = clampView(want, g);
+      const arrived = cl.x === goal.x && cl.y === goal.y && cl.z === goal.z ? 'still' : 'moving';
+      if (el.dataset.cam !== arrived) el.dataset.cam = arrived;
 
       // --- blit ------------------------------------------------------------------
       const b = blitOf(cl, g);
@@ -1395,6 +1415,9 @@ export const PixelOffice = memo(function PixelOffice({
       const cl = clampView(next, geo.current);
       unframe();
       camWant.current = cl;
+      // Now rather than on the next frame, so nothing that reads the room straight after a key can
+      // see `still` left over from before it.
+      wrap.current?.setAttribute('data-cam', 'moving');
       setZoom(cl.z);
       if (autopilot === false) setFollow(false);
       redraw.current?.();
