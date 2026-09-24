@@ -95,8 +95,9 @@ a habit, it is a property people are asked to trust: `server/sessions.ts` import
 `server/tail.ts` opens files with mode `'r'`. If you have a reason to change that, say so in the PR
 description in as many words, because it changes what `SECURITY.md` can claim.
 
-**Anything outbound.** No `fetch`, no HTTP client, no telemetry, no update check, no `child_process`.
-Same reason.
+**Anything outbound.** No `fetch`, no HTTP client, no telemetry, no update check, no `child_process`
+(the one exception, the Windows terminal-tab probe in `server/termtabs.ts`, is described in
+`SECURITY.md` — a second one needs the same). Same reason.
 
 **Breaking replay.** Rewinding the timeline rebuilds the room by replaying the same events into the
 same simulation, so it is exact rather than approximate. Anything in `src/office/` that reads the
