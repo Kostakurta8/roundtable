@@ -170,9 +170,9 @@ const ROSTER_MAX_SHARE = 0.4;
  * the office came out 776px wide under 330px of empty ceiling, its people ten pixels tall. A roster
  * is a list. It does not need the stage's height; the room does.
  *
- * So the stage's own shape decides. When the room at full width leaves at least a row's worth of
- * height under it, the roster becomes a strip there (`below`) and the room gets the whole width.
- * When it does not, the column comes back (`side`) and sits in what would be letterbox, as before.
+ * So the stage's own shape decides: whichever of the two draws the room larger. On a stage taller
+ * than the room, that is a strip under it (`below`), and the room gets the whole width. On a wide,
+ * short one it is the column (`side`), sitting in what would be letterbox, as before.
  * At ≤900px the stylesheet hides the rail altogether and the Agents tab carries it (`none`).
  *
  * The strip is sized from the room the session actually has — `cols`, from `PixelOffice`. A small
@@ -207,15 +207,23 @@ function useRoomLayout(
         const tabs = host.querySelector('.session-tabs');
         const w = host.clientWidth;
         const h = host.clientHeight - (tabs ? tabs.getBoundingClientRect().height : 0);
-        const slack = h - (w * PIX.h) / PIX.w;
-        if (slack >= ROSTER_MIN) {
-          const want = h - (w * PIX.h) / Math.max(1, cols);
+        // The column's width as the stylesheet has it at this breakpoint. Read rather than
+        // measured off the rail's box: on the frame the mode flips, that box is still the strip.
+        const railW = Number.parseFloat(getComputedStyle(host).getPropertyValue('--rail-w')) || 0;
+        const room = Math.max(1, cols);
+        // Whichever mode draws the bigger room. Deciding on "is there a row's worth of height
+        // under a full-width room" alone flipped to the column at 1920×1080 with 61px of slack
+        // against a 64px row — and the column then took 240px of width from a width-limited
+        // room, which put 200px of empty ceiling above it: a far worse room than a strip three
+        // pixels shorter than it would like.
+        const belowScale = Math.min(w / room, (h - ROSTER_MIN) / PIX.h);
+        const sideScale = Math.min((w - railW) / room, h / PIX.h);
+        if (h > ROSTER_MIN && belowScale >= sideScale) {
+          const slack = Math.max(h - (w * PIX.h) / PIX.w, ROSTER_MIN);
+          const want = h - (w * PIX.h) / room;
           const rosterH = Math.round(Math.min(Math.max(want, ROSTER_MIN), slack, h * ROSTER_MAX_SHARE));
           next = { mode: 'below', insetLeft: 0, rosterH };
         } else {
-          // The column's width as the stylesheet has it at this breakpoint. Read rather than
-          // measured off the rail's box: on the frame the mode flips, that box is still the strip.
-          const railW = Number.parseFloat(getComputedStyle(host).getPropertyValue('--rail-w')) || 0;
           next = { mode: 'side', insetLeft: Math.round(railW), rosterH: 0 };
         }
       }
