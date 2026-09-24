@@ -224,23 +224,14 @@
 /* ======================================================== the top bar ==== */
 
 /*
- * The top bar's pill reports the socket, and says LIVE whenever it is up — which is honest of the
- * app and a lie about this page, where the "socket" is a recording. `TopBar` is not the demo's to
- * change, so the word is replaced here: the original text is collapsed to nothing and the pill
- * speaks through its `::after` instead, in the accent rather than the green that means healthy and
- * live, with a dot that holds still rather than blinking like a recording light.
+ * The pill already says REPLAY here (`isRecorded()` in `ws.ts`); this only takes the green that
+ * means healthy and live out of it, and holds the dot still rather than blinking like a recording
+ * light.
  */
 .rt-demo .topbar .pill-live {
-  gap: 0;
-  font-size: 0;
   color: var(--accent);
   border-color: var(--accent-2);
   background: var(--accent-wash);
-}
-.rt-demo .topbar .pill-live::after {
-  content: 'REPLAY';
-  margin-left: 5px;
-  font-size: 10px;
 }
 .rt-demo .topbar .pill-live .live-dot {
   animation: none;

@@ -15,6 +15,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEMO_SPEED, HOLD_MS, parseRecording } from '../src/demo/playback';
 import { playDemo } from '../src/demo/source';
+import { DEMO_CAPTION, caption } from '../src/ui/ShareDialog';
+import { TopBar } from '../src/ui/TopBar';
 import { feedFrom, useRtStream, type EvSink, type RtStream } from '../src/ws';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -122,5 +124,51 @@ describe('the stream, fed by the demo recording', () => {
     const before = resets.length;
     advance(SPAN + HOLD_MS + 5000, 5000);
     expect(resets.length).toBe(before);
+  });
+});
+
+describe('the status pill, over a recording', () => {
+  // What a screen reader hears is the text, not what CSS paints over it: the pill has to *say* it.
+  it('says REPLAY, not LIVE', () => {
+    const noop = (): void => {};
+    const box = document.createElement('div');
+    document.body.appendChild(box);
+    const r = createRoot(box);
+    act(() =>
+      r.render(
+        <TopBar
+          sessions={[]}
+          sessionId={null}
+          onPick={noop}
+          connected
+          replaying={false}
+          totalTok={0}
+          cost={0}
+          costPartial={false}
+          agents={0}
+          theme={{ choice: 'auto', resolved: 'light', set: noop, cycle: noop }}
+          dockOpen
+          onToggleDock={noop}
+          onOpenPalette={noop}
+          onOpenHelp={noop}
+          seekTs={null}
+          onResumeLive={noop}
+          onRescan={noop}
+        />,
+      ),
+    );
+    expect(box.querySelector('.pill-live')?.textContent).toBe('REPLAY');
+    act(() => r.unmount());
+    box.remove();
+  });
+});
+
+describe('the share caption, over a recording', () => {
+  // Posted under somebody's own name: "my subagents" about a staged session would be theirs to retract.
+  it('says the clip is a staged replay, and links the page it came from', () => {
+    expect(caption()).toBe(DEMO_CAPTION);
+    expect(DEMO_CAPTION).not.toMatch(/\bmy\b/i);
+    expect(DEMO_CAPTION).toContain('staged replay');
+    expect(DEMO_CAPTION).toContain('https://kostakurta8.github.io/roundtable/');
   });
 });
