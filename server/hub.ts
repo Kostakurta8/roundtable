@@ -1136,7 +1136,12 @@ export async function startServer(root: string, port: number, opts: HubOptions =
       // An outstanding call buys a longer silence, not an unlimited one.
       if ((w.openTools.get(agentId)?.size ?? 0) > 0 && quiet < openGraceMs) continue;
       if (quiet < quietMs) continue; // still going
-      w.doneAt.set(agentId, now);
+      // The write that was judged quiet, not the moment of judging. File times come from the
+      // kernel's coarse clock, which runs a few milliseconds behind `Date.now()`: stamping `now`
+      // here meant a line appended within those milliseconds of the report carried an mtime no
+      // later than it, `wrote <= told` held for ever, and an agent that came back was never called
+      // finished again. The mtime is on the same clock as every write after it.
+      w.doneAt.set(agentId, wrote);
       // The parent's verdict when there is one. Without it — a workflow agent, or a spawn whose
       // result has not landed yet — "it stopped" is all that is actually known, and the room says
       // finished rather than failed because nothing observed says otherwise.
