@@ -170,6 +170,53 @@ describe('the feed folds runs of system lines', () => {
   });
 });
 
+describe('the activity strip reads at any session length', () => {
+  const bucket = (t: number, tools = 1) => ({ t, says: 0, tools, thinks: 0, errors: 0 });
+  const strip = (n: number, onSeek: (ts: number) => void = () => {}) => (
+    <Timeline
+      buckets={Array.from({ length: n }, (_, i) => bucket(1000 + i * 1000))}
+      firstTs={1000}
+      lastTs={1000 + n * 1000}
+      turns={n}
+      seekTs={null}
+      onSeek={onSeek}
+    />
+  );
+  const plotOf = (el: HTMLElement) => el.querySelector<HTMLElement>('.tl-plot')!;
+
+  it('shares the width among its columns, never fewer than twenty-four ways', () => {
+    // Columns used to be capped at 14px and packed left: five slivers in a corner of the track.
+    expect(plotOf(mount(strip(3))).style.gridTemplateColumns).toBe('repeat(24, minmax(0, 1fr))');
+    act(() => root?.unmount());
+    host?.remove();
+    expect(plotOf(mount(strip(60))).style.gridTemplateColumns).toBe('repeat(60, minmax(0, 1fr))');
+  });
+
+  it('names the second under the keyboard as well as under the pointer', () => {
+    const el = mount(strip(5));
+    const bars = el.querySelectorAll<HTMLButtonElement>('.tl-bar');
+    act(() => bars[2].focus());
+    expect(el.querySelector('.tl-read-box')?.textContent).toBe(bars[2].getAttribute('aria-label'));
+  });
+
+  it('keeps one tab stop, moves along it with the arrows, and seeks on a press', () => {
+    const seeks: number[] = [];
+    const el = mount(strip(5, (ts) => seeks.push(ts)));
+    const bars = () => Array.from(el.querySelectorAll<HTMLButtonElement>('.tl-bar'));
+    expect(bars().filter((b) => b.tabIndex === 0)).toHaveLength(1);
+    // The newest column holds the stop until the keyboard moves it.
+    expect(bars()[4].tabIndex).toBe(0);
+    act(() => bars()[4].focus());
+    act(() => {
+      plotOf(el).dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(bars()[3]);
+    expect(bars()[3].tabIndex).toBe(0);
+    act(() => bars()[3].click());
+    expect(seeks).toEqual([4000]);
+  });
+});
+
 describe('OFFLINE says what to do', () => {
   it('names the socket it is retrying and the command that brings the hub back', () => {
     const el = mount(<OfflineNote url="ws://127.0.0.1:7411/ws" />);
