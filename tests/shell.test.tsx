@@ -158,6 +158,42 @@ describe('the feed folds runs of system lines', () => {
     expect(el.querySelectorAll('.sys-list .sys-line')).toHaveLength(6);
   });
 
+  /**
+   * Seeking the strip to a system line inside a closed run scrolled to the closed fold — "spawned 3
+   * subagents · 3 prompts ▸" — and nothing opened it, so the line the strip was clicked for was
+   * never on screen. The run holding the target opens for the seek, and the scroll lands on the line.
+   */
+  it('opens the run a seek lands in, and scrolls to the line rather than the fold', () => {
+    const state = fanOut();
+    const line = state.msgs.find((m) => m.agentId === 'system' && m.ts === 1201)!;
+    const scrolledTo: Element[] = [];
+    const real = Element.prototype.scrollIntoView;
+    // jsdom lays nothing out and has no `scrollIntoView`; this records where the feed asked to go.
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolledTo.push(this);
+    };
+    try {
+      const at = (seekTs: number | null) => (
+        <Chat state={state} title="TASK · x" live truncatedDropped={0} focusAgent={null} seekTs={seekTs} />
+      );
+      const el = mount(at(null));
+      expect(el.querySelector('.sys-sum')?.getAttribute('aria-expanded')).toBe('false');
+      rerender(at(line.ts));
+      const sum = el.querySelector<HTMLButtonElement>('.sys-sum')!;
+      expect(sum.getAttribute('aria-expanded')).toBe('true');
+      expect(scrolledTo).toHaveLength(1);
+      expect(scrolledTo[0].matches(`.sys-line[data-mid="${line.id}"]`)).toBe(true);
+      // Opened as the reader's own state: it can still be closed while the seek is held, and a
+      // later render of the same seek does not force it back open under them.
+      act(() => sum.click());
+      expect(sum.getAttribute('aria-expanded')).toBe('false');
+      rerender(at(line.ts));
+      expect(sum.getAttribute('aria-expanded')).toBe('false');
+    } finally {
+      Element.prototype.scrollIntoView = real;
+    }
+  });
+
   it('opens itself while a search is on, so a match inside is not hidden behind the fold', () => {
     const el = mount(chat(fanOut()));
     const input = el.querySelector<HTMLInputElement>('input.search')!;

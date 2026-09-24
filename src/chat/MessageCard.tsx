@@ -153,19 +153,33 @@ export function runSummary(msgs: readonly RtMsg[]): string {
  * system-only filter opens it, because a match hidden behind a fold is a match the reader cannot
  * see.
  *
- * `data-run` lists every id inside, so the timeline can still find a line it is seeking to while
- * the run is closed (`[data-run~="12"]`) and scroll to the fold that holds it.
+ * A seek opens it too. `data-run` lists every id inside, and the timeline used to find a folded
+ * line by it and scroll to the closed fold — which put "spawned 6 subagents · 6 prompts ▸" in the
+ * middle of the feed and never the line the strip was clicked for. `reveal` is the seek's target:
+ * when it is one of this run's lines the run opens in the same render, so the feed's scroll lands
+ * on the line itself. Opened as the reader's own state rather than forced like a search, so the
+ * run stays open after the seek is let go and can still be closed while it is held.
  */
 export const SystemRun = memo(function SystemRun({
   msgs,
   fresh,
   forceOpen,
+  reveal,
 }: {
   msgs: readonly RtMsg[];
   fresh?: boolean;
   forceOpen?: boolean;
+  /** The id a seek is looking for; the run opens itself once when that id is inside it. */
+  reveal?: number;
 }) {
   const [open, setOpen] = useState(false);
+  // Set during render, not in an effect: an effect would open the run one commit after the feed's
+  // own seek effect had already looked for the line, found only the fold, and scrolled to that.
+  const [revealed, setRevealed] = useState<number | undefined>(undefined);
+  if (reveal !== undefined && reveal !== revealed && msgs.some((m) => m.id === reveal)) {
+    setRevealed(reveal);
+    setOpen(true);
+  }
   const shown = open || forceOpen === true;
   const first = msgs[0];
   const last = msgs[msgs.length - 1];
