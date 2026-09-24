@@ -28,9 +28,10 @@ Claude Code already writes under `~/.claude` — read-only, entirely local, and 
 - **Rewind to any second.** Click the timeline and the room rebuilds exactly as it stood — the same
   events replayed into the same simulation, not an approximation of it. Any session on the machine,
   not just the one running now.
-- **Turn a session into a GIF you can post.** The Share button in the app, `--gif` on the command
-  line, or `/roundtable:gif` from inside Claude Code. One switch takes every word of your
-  transcripts out of the picture first.
+- **Turn a session into a GIF — or a card — you can post.** The Share button in the app, `--gif`
+  or `--card` on the command line, or `/roundtable:gif` from inside Claude Code. The card is the
+  run in numbers over a still of the room: subagents, how many at once, tokens, cost, verdicts. One
+  switch takes every word of your transcripts out of the picture first.
 - **Find out what your transcripts already say.** `--stats` reads every session you have and
   reports how much of your output subagents write and what a child costs before it starts — counted
   the way these files have to be counted. On the author's machine, adding up usage line by line
@@ -58,6 +59,7 @@ roundtable               # the office, on http://localhost:7411
 roundtable --demo        # a staged session, when nothing of yours is running
 roundtable --stats       # what every transcript you already have says, then exit
 roundtable --gif         # your latest session as a GIF, then exit
+roundtable --card        # the same session as one PNG card of its numbers, then exit
 roundtable --port 9000   # somewhere else (ROUNDTABLE_PORT sets the same thing)
 roundtable --root /path  # a different Claude directory
 roundtable --no-open     # print the address, do not open a browser
@@ -106,6 +108,17 @@ The page holds only the last few thousand events of a long session, so for the w
 `--gif`. It works on the [browser demo](https://kostakurta8.github.io/roundtable/) too.
 
 ![the Share dialog: a 20-second GIF of the session rendered in the tab, with its length, the stretch it plays, a switch that hides transcript text, and a note to look before posting](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-share.png)
+
+### Or a card
+
+**GIF | Card** at the top of the same dialog — or `roundtable --card` — makes one 1200×630 PNG:
+the session in numbers, over a still of the room at its busiest. The size link previews use, so it
+posts uncropped. Tokens and cost are the top bar's own figures, with the same `≥` when a model has no
+rate card; "at once" is read off the same replay the still is drawn from, so the number and the
+picture agree. "Copy image" puts it on the clipboard where the browser allows it. "Hide transcript
+text" works here too: no task, and agents numbered rather than named.
+
+![a session card: 24 subagents, 8 at once, 14.83M tokens, $28.08 estimated, 9:27, eight CONFIRMED and one REFUTED, the busiest agent, over a pixel-art still of the office and the session's task along the bottom](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/card-example.png)
 
 ### From the command line
 
