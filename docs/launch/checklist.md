@@ -28,7 +28,10 @@ rerun `--stats` for fresh numbers, change all the drafts at once.
    then change the README and the drafts to the short line.
 5. **Make the missing assets:** a terminal screenshot of your own `--stats` output; a 240×240
    thumbnail for Product Hunt; the trailer uploaded to YouTube (Product Hunt takes a link, not a
-   file). The Share dialog is `media/screenshot-share.png`, and `media/social-preview.png` now points
+   file). **Re-film the trailer first if you can:** `media/roundtable-trailer.mp4` predates the
+   current interface (no Share button, the room not filling its panel), and a launch video that does
+   not match the page people open next undercuts both. `scripts/promo/` is the harness; it needs
+   ffmpeg for the mp4. If there is no time, lead with `media/roundtable-demo.gif` instead. The Share dialog is `media/screenshot-share.png`, and `media/social-preview.png` now points
    at the browser demo — upload it under Settings → Social preview too, because GitHub does not
    read it from the repo.
 6. **Try Pixel Agents** (`npx pixel-agents`, or the VS Code extension). It is the pixel-office tool
