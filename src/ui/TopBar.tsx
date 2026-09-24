@@ -129,13 +129,13 @@ export function TopBar(props: TopBarProps) {
 
   return (
     <header className="topbar panel">
-      <span className="wordmark" title="Roundtable">
+      <h1 className="wordmark" title="Roundtable">
         <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
           <circle cx="7" cy="7" r="5.6" fill="none" stroke="var(--accent-2)" strokeWidth="1.6" />
           <circle cx="7" cy="7" r="2" fill="var(--accent-2)" />
         </svg>
         <span className="lbl">ROUNDTABLE</span>
-      </span>
+      </h1>
 
       <span className="sep" />
 
@@ -247,8 +247,8 @@ export function TopBar(props: TopBarProps) {
           className="btn icon share-open"
           onClick={props.shareWhyNot ? undefined : props.onShare}
           aria-disabled={props.shareWhyNot ? true : undefined}
-          title={props.shareWhyNot ? `share as GIF — ${props.shareWhyNot}` : 'share this session as a GIF (G)'}
-          aria-label={props.shareWhyNot ? `share as GIF: ${props.shareWhyNot}` : 'share this session as a GIF'}
+          title={props.shareWhyNot ? `share — ${props.shareWhyNot}` : 'share this session as a GIF or a card (G)'}
+          aria-label={props.shareWhyNot ? `share: ${props.shareWhyNot}` : 'share this session as a GIF or a card'}
         >
           <svg
             width="12"
