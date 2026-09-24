@@ -100,8 +100,9 @@ The clip at the top is a staged session. There are three ways to make one of you
 The **Share** button in the top bar — or `G`, or the ⌘K palette — renders the session you are
 looking at as a GIF, in the browser, with a live preview. Download it, or copy a caption to post
 with it. **Hide transcript text** draws the same run with none of your words in it. Nothing is
-uploaded: the GIF is made in the tab and saved by your browser, byte for byte the file `--gif`
-writes. It works on the [browser demo](https://kostakurta8.github.io/roundtable/) too.
+uploaded: the GIF is made in the tab, by the same renderer as `--gif`, and saved by your browser.
+The page holds only the last few thousand events of a long session, so for the whole of one, use
+`--gif`. It works on the [browser demo](https://kostakurta8.github.io/roundtable/) too.
 
 ![the Share dialog: a 20-second GIF of the session rendered in the tab, with its length, the stretch it plays, a switch that hides transcript text, and a note to look before posting](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-share.png)
 
