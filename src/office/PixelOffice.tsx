@@ -34,9 +34,11 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { evSession } from '../../shared/events';
 import { agentLook, type RtAgent } from '../store';
+import { modelInfo } from '../../shared/models';
 import { duration, money, tokens as fmtTokens, clip } from '../ui/format';
+import { agentInk, MiniHead } from '../ui/MiniHead';
 import type { EvSink } from '../ws';
-import { Engine, type ActorState } from './engine';
+import { Engine, podSeat, SCENE, WAYPOINTS, type ActorState } from './engine';
 import { mapEvent } from './mapping';
 import { Recorder, Replay } from './replay';
 import { PAL, PIX } from './pixel/art';
@@ -90,6 +92,15 @@ const DRAG_SLOP = 4;
 const SAY_ANNOUNCE_MS = 900;
 
 /**
+ * Where the hover card sits relative to the pointer: below and to the right, the way a tooltip
+ * does, far enough off the cursor that the sprite being pointed at stays in view.
+ */
+const PEEK_OFFSET = { x: 16, y: 18 } as const;
+
+/** What put a mark under the hover card: a pointer over it, or keyboard focus on it. */
+type HoverVia = 'pointer' | 'focus';
+
+/**
  * What a full whiteboard spend bar means, in dollars.
  *
  * A display reference, not a budget — nothing here knows what a session is *supposed* to cost, and
@@ -113,6 +124,110 @@ const SPEND_FULL_USD = 25;
  */
 const BOARD_BOX: Box = fixtureBox('whiteboard');
 const TABLE_BOX: Box = fixtureBox('roundtable');
+
+// ------------------------------------------------------------------ framing
+
+/**
+ * The column the room always reaches, whatever the session: the manager's desk, the door and the
+ * roundtable's rug all sit left of it, and the break corner holds the left edge down.
+ */
+const FRAME_MIN_RIGHT = 372;
+
+/**
+ * How far past its seat a pod desk's pixels reach — half the desk, its nameplate and a margin.
+ * Read off the rendered room: the right bank's inner desk spans 356…400 around a seat at 378.
+ */
+const DESK_REACH = 30;
+
+/**
+ * Within this many columns of the far wall, the frame simply takes the wall too. Cropping a room a
+ * dozen pixels short of its edge saves nothing a viewer can see and cuts a nameplate in half.
+ */
+const FRAME_SNAP = 16;
+
+/**
+ * The smallest a buffer pixel is allowed to be at rest, in CSS pixels, when the stage can afford
+ * it only by cropping the sides. A phone-width stage fits the whole 480 columns at 0.79px each,
+ * which draws every person ten pixels tall — a picture of an office, not one you can read. Past
+ * this the resting frame gives up the room's outer desks (still a drag away) for people you can see.
+ */
+const READABLE_PX = 1.3;
+
+/**
+ * How far right the session's room reaches, in buffer columns.
+ *
+ * The room draws desks up to the most it has ever needed (`desksFor` in the scene), so a small
+ * session is a small room with bare floor to its right — and fitting the whole 480-column plan to
+ * the stage spent a third of the picture on that floor. This is the same rule restated as a width:
+ * the widest desk the session has drawn, the fixtures that are always there, and nothing past them.
+ * Monotone in `highWater` for the same reason the scene's rule is: the frame only ever widens.
+ */
+export function frameCols(highWater: number): number {
+  const seats = Math.min(Math.max(0, highWater), WAYPOINTS.podSeats.length);
+  let right = FRAME_MIN_RIGHT;
+  for (let i = 0; i < seats; i++) right = Math.max(right, podSeat(i).x * (PIX.w / SCENE.w) + DESK_REACH);
+  return right >= PIX.w - FRAME_SNAP ? PIX.w : Math.ceil(right);
+}
+
+/**
+ * `clampCam`, plus the one bound the blit's headroom makes necessary.
+ *
+ * `clampCam` keeps the 16:9 *window* inside the buffer, but on a stage taller than 16:9 the window
+ * is not all that is visible: `headroomBlits` paints the buffer's rows above it too, and past row 0
+ * the ceiling. So a vertical pan that `clampCam` allows — a glance at somebody sitting in the top
+ * row, an arrow key, a drag — slid the window up, cut the floor's bottom edge off, and filled the
+ * top of the stage with ceiling: the band this frame exists to remove, brought back by a click on
+ * the roster. This holds the *visible* top at or below row 0 whenever there is room below to show
+ * instead, and pins the window to the floor when the stage already shows the whole height, where
+ * a vertical pan has nothing to reveal.
+ */
+export function clampView(cam: Cam, g: Geo): Cam {
+  const c = clampCam(cam);
+  const b = blitOf(c, g);
+  if (!(b.scale > 0)) return c;
+  const halfH = PIX.h / c.z / 2;
+  const yMax = PIX.h - halfH;
+  // The stage's height in buffer rows, window and headroom together, less half the window: the
+  // lowest centre at which the visible top is still the room's first row.
+  const yMin = (g.h * g.dpr) / b.scale - halfH;
+  return { ...c, y: Math.min(yMax, Math.max(c.y, yMin)) };
+}
+
+/**
+ * Where the camera rests: the session's room, wall to floor, as large as the stage allows.
+ *
+ * `blitOf` fits a 16:9 window of the buffer to the stage and bottom-aligns it, and every stage in
+ * this shell is taller than that window — the dock takes the right-hand third — so at the old
+ * resting zoom of 1 the room filled the width and left a band of ceiling over it, a third of the
+ * stage at 1440×900. Zooming in does not fill that band with ceiling: `headroomBlits` paints the
+ * buffer's own rows above the window first. So the zoom at which the room's full height exactly
+ * meets the stage's (`zFill`) shows the whole wall and the whole floor with no band at all, and the
+ * only question is whether the session's room is narrow enough to afford it (`zContent`).
+ *
+ * The result goes through `clampCam` like every other camera, so nothing here can show the void
+ * past the buffer; and it is recomputed every frame from the stage and the room's width, which is
+ * what lets the frame follow the room as it grows and the window as it resizes, eased by the same
+ * loop that eases every other camera move.
+ */
+export function homeCam(cols: number, g: Geo): Cam {
+  const usableW = Math.max(g.w * 0.55, g.w - g.insetLeft);
+  if (!(usableW > 0) || !(g.h > 0)) return { ...CAM_HOME };
+  const widthScale = usableW / PIX.w;
+  const zFill = g.h / PIX.h / widthScale;
+  const zContent = PIX.w / Math.max(1, Math.min(PIX.w, cols));
+  const zReadable = READABLE_PX / widthScale;
+  const want = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(zFill, Math.max(zContent, zReadable))));
+  // A whole number of rows in the window, rounding the zoom *out*. `blitOf` snaps the window's
+  // origin to a whole row, so a fractional height left the window half a row past the floor's
+  // bottom edge — a hairline of surround under the room — or, rounded the other way, half a row
+  // short of the wall. Out, because `zFill` is the most the stage's height can hold.
+  const rows = Math.ceil(PIX.h / want - 1e-9);
+  const z = PIX.h / rows;
+  // Centred on the room the session has, and resting on the floor's bottom edge: when the window
+  // is shorter than the buffer, the rows it leaves out are the ones `headroomBlits` puts back above
+  // it, so the wall is never what gets cropped.
+  return clampCam({ z, x: Math.min(PIX.w, cols) / 2, y: PIX.h - rows / 2 });
+}
 
 type Sim = {
   engine: Engine;
@@ -448,6 +563,12 @@ export type PixelOfficeProps = {
   onOpenSession?: () => void;
   /** Clicking the roundtable — the fixture the cross-talk between agents belongs to. */
   onFilterCrossTalk?: () => void;
+  /**
+   * Told how many buffer columns the session's room reaches, whenever that changes — a handful of
+   * times a session, as the room grows into its floor plan. The shell lays the roster out around
+   * the room's shape, and the room is the only thing that knows it.
+   */
+  onFrameCols?: (cols: number) => void;
 };
 
 export const PixelOffice = memo(function PixelOffice({
@@ -464,6 +585,7 @@ export const PixelOffice = memo(function PixelOffice({
   replayAt = null,
   onOpenSession,
   onFilterCrossTalk,
+  onFrameCols,
 }: PixelOfficeProps) {
   const wrap = useRef<HTMLDivElement | null>(null);
   const view = useRef<HTMLCanvasElement | null>(null);
@@ -497,9 +619,42 @@ export const PixelOffice = memo(function PixelOffice({
   const geo = useRef<Geo>({ w: 0, h: 0, dpr: 1, insetLeft });
   /** One frame's worth of "point the camera at this person", consumed and cleared. */
   const look = useRef<string | null>(null);
+  /**
+   * Whether the camera is resting on the room's own frame (`homeCam`) rather than where a viewer
+   * put it.
+   *
+   * While it is, the loop re-aims at the frame every tick, which is what lets the picture follow a
+   * room that grows as agents arrive and a stage that changes shape. The moment anybody pans, zooms,
+   * follows or double-clicks, it stops — a camera that drifted back to its own idea of the room
+   * while somebody was looking at a desk would be fighting them. Home, Escape, ⌂, a double-click on
+   * the floor and clearing the selection hand it back.
+   */
+  const framed = useRef(true);
+  /** Jump to the frame on the next tick instead of easing in: a first paint, or a different room. */
+  const snap = useRef(true);
+  /**
+   * The most pod desks this room has drawn — the scene's own high-water rule, mirrored from the
+   * same actor list the scene is handed, because the frame has to be exactly as wide as that room.
+   */
+  const highWater = useRef(0);
+
+  /**
+   * How the current hover came about, and where the pointer is over the room.
+   *
+   * The card used to hang over the hovered sprite's head, which is exactly where the sprite's speech
+   * and thought bubbles are drawn — pointing at somebody hid the thing they were saying. A pointer
+   * hover now puts the card beside the cursor instead; a keyboard focus has no cursor, so it keeps
+   * the sprite anchor. Refs, because the loop reads them and a pointer move must not re-render.
+   */
+  const hoverVia = useRef<HoverVia>('pointer');
+  const pointer = useRef<{ x: number; y: number } | null>(null);
 
   const [follow, setFollow] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
+  /** `framed`, for the readout: written when it flips, which is a handful of times a session. */
+  const [framedUi, setFramedUi] = useState(true);
+  /** The frame's zoom, for the readout's buttons — written only when it moves by a visible step. */
+  const [homeZ, setHomeZ] = useState(1);
   /**
    * The zoom, as the readout shows it.
    *
@@ -535,7 +690,32 @@ export const PixelOffice = memo(function PixelOffice({
    */
   useEffect(() => {
     scene.current?.reset();
+    // The frame is the room's, so a different room starts on its own — and cuts to it, because an
+    // ease from one session's frame to another's is a camera move through a room that is not there.
+    highWater.current = 0;
+    framed.current = true;
+    snap.current = true;
+    setFramedUi(true);
   }, [roomId]);
+
+  /**
+   * Takes the camera off the room's frame: somebody is steering it now. The readout's zoom is set to
+   * the frame's own at that moment — while framed it was never written, and a readout that jumped
+   * from "fit" to a stale 1.0× on the first arrow key would be reporting a zoom nobody chose.
+   */
+  const unframe = useCallback((): void => {
+    if (!framed.current) return;
+    framed.current = false;
+    setFramedUi(false);
+    setZoom(camWant.current.z);
+  }, []);
+
+  /** Hands the camera back to the room's frame. */
+  const reframe = useCallback((): void => {
+    look.current = null;
+    framed.current = true;
+    setFramedUi(true);
+  }, []);
 
   /** The selected agent's spawn tree. Everyone outside it is dimmed; `null` dims nobody. */
   const kin = useMemo(() => (selected === null ? null : subtreeOf(agents, selected)), [agents, selected]);
@@ -560,21 +740,26 @@ export const PixelOffice = memo(function PixelOffice({
   };
   const sync = useRef(office.sync);
   sync.current = office.sync;
+  const colsTo = useRef(onFrameCols);
+  colsTo.current = onFrameCols;
 
   // A selection is a request to look at someone; clearing it hands the room back.
   useEffect(() => {
     if (selected === null) {
       setFollow(false);
-      camWant.current = { ...CAM_HOME };
-      setZoom(1);
-      look.current = null;
+      reframe();
       return;
     }
     // Point the camera at them once, on the next frame — the scene knows where they are and this
-    // does not. At the default zoom the whole room is already in view and `clampCam` pins the
-    // camera to its centre, so this is a no-op until somebody has actually zoomed in.
+    // does not. When the frame already shows the whole room `clampCam` pins the camera and this is
+    // a no-op, and a no-op glance leaves the camera on its frame (see the loop).
     look.current = selected;
-  }, [selected]);
+  }, [selected, reframe]);
+
+  // Following is steering: the frame would otherwise pull the camera back off the person every tick.
+  useEffect(() => {
+    if (follow) unframe();
+  }, [follow, unframe]);
 
   useLayoutEffect(() => {
     const el = wrap.current;
@@ -619,9 +804,18 @@ export const PixelOffice = memo(function PixelOffice({
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       ctx.imageSmoothingEnabled = false;
+      // Resizing a canvas clears it, and a `ResizeObserver` callback runs after this frame's
+      // `requestAnimationFrame` and before its paint — so without this, every frame the stage
+      // changes size is a frame of bare canvas. The roster strip eases its height when the room
+      // grows, which resizes the stage for a third of a second at a time: a visible flicker, every
+      // frame of it. Re-presenting the last scene costs one blit and moves no simulation.
+      if (painted) present(0);
     };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
+    // Whether `present` has anything to show yet; the first `measure` below runs before the first
+    // scene has been drawn.
+    let painted = false;
     measure();
 
     const still =
@@ -651,6 +845,12 @@ export const PixelOffice = memo(function PixelOffice({
       age: Element | null;
       note: Element | null;
     } | null = null;
+
+    /** The cast the last `paint` drew, for a `present` that runs without one. */
+    let lastActors: ActorState[] = [];
+    /** What the shell and the readout were last told, so each hears only about a change. */
+    let colsSaid = -1;
+    let homeZSaid = -1;
 
     /** One frame: advance every simulation, repaint the visible one, blit it, move the DOM marks. */
     const paint = (dt: number): void => {
@@ -758,14 +958,68 @@ export const PixelOffice = memo(function PixelOffice({
         clockMs: cur.replayAt ?? Date.now(),
       });
 
+      // The scene's own high-water rule, read off the same actors it was just handed. Pod seats are
+      // the non-negative desk indices; the manager, the queue outside and the break corner are the
+      // negative sentinels and never widen the room.
+      for (const a of actors) {
+        if (a.deskIndex >= 0 && a.deskIndex + 1 > highWater.current) highWater.current = a.deskIndex + 1;
+      }
+      lastActors = actors;
+      painted = true;
+      present(dt);
+    };
+
+    /**
+     * The half of a frame that moves nothing but the camera: aim, blit, and lay the DOM over it.
+     *
+     * Split from `paint` so that a resize can put the last frame back on a canvas the browser has
+     * just cleared without advancing any simulation — ticking the engines from a layout callback
+     * would give them a second clock.
+     */
+    const present = (dt: number): void => {
+      const actors = lastActors;
+      const cur = live.current;
+
       // --- camera ---------------------------------------------------------------
+      const { w, h, dpr } = size;
+      const g = geo.current;
+      g.w = w;
+      g.h = h;
+      g.dpr = dpr;
+      g.insetLeft = cur.insetLeft;
+
+      const cols = frameCols(highWater.current);
+      if (cols !== colsSaid) {
+        colsSaid = cols;
+        colsTo.current?.(cols);
+      }
+      const rest = homeCam(cols, g);
+      if (Math.abs(rest.z - homeZSaid) > 0.02) {
+        homeZSaid = rest.z;
+        setHomeZ(rest.z);
+      }
+
       const want = camWant.current;
+      if (framed.current) {
+        want.x = rest.x;
+        want.y = rest.y;
+        want.z = rest.z;
+      }
       if (look.current !== null) {
-        // A one-shot glance, from a fresh selection or a double-click.
+        // A one-shot glance, from a fresh selection or a double-click. Only a glance that actually
+        // moves the camera takes it off the room's frame: when the frame already shows everybody,
+        // `clampCam` pins the camera where it is, and giving up the frame for a move that did not
+        // happen would leave the room refusing to re-fit itself as it grows, for no visible reason.
         const box = scene.current!.boxOf(look.current);
         if (box) {
-          want.x = box.x + box.w / 2;
-          want.y = box.y + box.h / 2;
+          const to = clampView({ ...want, x: box.x + box.w / 2, y: box.y + box.h / 2 }, g);
+          if (Math.abs(to.x - want.x) > 0.5 || Math.abs(to.y - want.y) > 0.5) {
+            framed.current = false;
+            setFramedUi(false);
+            setZoom(want.z);
+            want.x = to.x;
+            want.y = to.y;
+          }
         }
         look.current = null;
       } else if (cur.follow && cur.selected !== null) {
@@ -777,21 +1031,19 @@ export const PixelOffice = memo(function PixelOffice({
           want.y = box.y + box.h / 2;
         }
       }
+      if (snap.current && w > 1 && h > 1) {
+        cam.current = { ...want };
+        snap.current = false;
+      }
       const k = Math.min(1, dt / 220);
       const c = cam.current;
       c.x += (want.x - c.x) * k;
       c.y += (want.y - c.y) * k;
       c.z += (want.z - c.z) * k;
-      const cl = clampCam(c);
+      const cl = clampView(c, g);
       cam.current = cl;
 
       // --- blit ------------------------------------------------------------------
-      const { w, h, dpr } = size;
-      const g = geo.current;
-      g.w = w;
-      g.h = h;
-      g.dpr = dpr;
-      g.insetLeft = cur.insetLeft;
       const b = blitOf(cl, g);
 
       // The surround — the gutters either side of the room when the stage is *shorter* than 16:9 —
@@ -895,17 +1147,33 @@ export const PixelOffice = memo(function PixelOffice({
           scene.current!.boxOf(cur.hover) ??
           scene.current!.deskBoxOf(cur.hover) ??
           scene.current!.ghostBoxOf(cur.hover);
-        if (box) {
-          const cx = b.dx + (box.x + box.w / 2 - b.srcX) * b.px;
-          const top = b.dy + (box.y - b.srcY) * b.px;
-          const bottom = b.dy + (box.y + box.h - b.srcY) * b.px;
-          const half = cardNow.offsetWidth / 2 + 6;
-          const x = Math.round(Math.min(Math.max(cx, half), Math.max(half, w - half)));
-          const below = top - cardNow.offsetHeight < 8;
-          const y = Math.round(below ? bottom + 8 : top - 8);
-          const t = below
-            ? `translate(${x}px, ${y}px) translate(-50%, 0)`
-            : `translate(${x}px, ${y}px) translate(-50%, -100%)`;
+        const ptr = pointer.current;
+        if (box || (hoverVia.current === 'pointer' && ptr)) {
+          const cw = cardNow.offsetWidth;
+          const ch = cardNow.offsetHeight;
+          let t: string;
+          if (hoverVia.current === 'pointer' && ptr) {
+            // Beside the cursor, flipped to whichever side of it has room, and never off the stage.
+            let x = ptr.x + PEEK_OFFSET.x;
+            let y = ptr.y + PEEK_OFFSET.y;
+            if (x + cw > w - 6) x = ptr.x - PEEK_OFFSET.x - cw;
+            if (y + ch > h - 6) y = ptr.y - PEEK_OFFSET.y / 2 - ch;
+            x = Math.round(Math.min(Math.max(6, x), Math.max(6, w - cw - 6)));
+            y = Math.round(Math.min(Math.max(6, y), Math.max(6, h - ch - 6)));
+            t = `translate(${x}px, ${y}px)`;
+          } else {
+            const at = box!;
+            const cx = b.dx + (at.x + at.w / 2 - b.srcX) * b.px;
+            const top = b.dy + (at.y - b.srcY) * b.px;
+            const bottom = b.dy + (at.y + at.h - b.srcY) * b.px;
+            const half = cw / 2 + 6;
+            const x = Math.round(Math.min(Math.max(cx, half), Math.max(half, w - half)));
+            const below = top - ch < 8;
+            const y = Math.round(below ? bottom + 8 : top - 8);
+            t = below
+              ? `translate(${x}px, ${y}px) translate(-50%, 0)`
+              : `translate(${x}px, ${y}px) translate(-50%, -100%)`;
+          }
           const wr = wroteOf(cardNow);
           if (wr.t !== t) {
             cardNow.style.transform = t;
@@ -922,6 +1190,8 @@ export const PixelOffice = memo(function PixelOffice({
         const done = hovered ? hovered.done : meta?.phase === 'done';
         const end = done ? meta?.lastTs ?? 0 : Date.now();
         setText(card.act, hovered ? actLine(hovered) : done ? 'finished' : 'waiting for a desk');
+        const st = actState(hovered, done === true);
+        if (cardNow.dataset.state !== st) cardNow.dataset.state = st;
         setText(card.tok, `${fmtTokens(meta?.tokens ?? 0)} tokens`);
         setText(card.cost, money(meta?.cost));
         setText(card.age, meta && meta.firstTs > 0 ? duration(end - meta.firstTs) : '—');
@@ -955,18 +1225,26 @@ export const PixelOffice = memo(function PixelOffice({
 
   // ----------------------------------------------------------------- controls
 
-  /** Sends the camera somewhere, keeping the readout and the autopilot honest. */
-  const aim = useCallback((next: Cam, autopilot?: boolean): void => {
-    const cl = clampCam(next);
-    camWant.current = cl;
-    setZoom(cl.z);
-    if (autopilot === false) setFollow(false);
-  }, []);
+  /**
+   * Sends the camera somewhere, keeping the readout and the autopilot honest. Every caller is a
+   * viewer steering, so every call takes the camera off the room's frame.
+   */
+  const aim = useCallback(
+    (next: Cam, autopilot?: boolean): void => {
+      const cl = clampView(next, geo.current);
+      unframe();
+      camWant.current = cl;
+      setZoom(cl.z);
+      if (autopilot === false) setFollow(false);
+    },
+    [unframe],
+  );
 
+  /** Back to the room's own frame — which the loop keeps current, so there is no target to name. */
   const home = useCallback((): void => {
-    look.current = null;
-    aim({ ...CAM_HOME }, false);
-  }, [aim]);
+    setFollow(false);
+    reframe();
+  }, [reframe]);
 
   /**
    * Zooms, keeping the buffer pixel under `client` under `client`.
@@ -1038,6 +1316,8 @@ export const PixelOffice = memo(function PixelOffice({
   }, []);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
+    const r = wrap.current?.getBoundingClientRect();
+    if (r) pointer.current = { x: e.clientX - r.left, y: e.clientY - r.top };
     const d = drag.current;
     if (!d.on || e.pointerId !== d.id) return;
     const dx = e.clientX - d.x;
@@ -1047,6 +1327,7 @@ export const PixelOffice = memo(function PixelOffice({
       d.moved = true;
       look.current = null;
       setFollow(false);
+      unframe();
       wrap.current?.setAttribute('data-drag', 'on');
       try {
         wrap.current?.setPointerCapture(e.pointerId);
@@ -1056,13 +1337,13 @@ export const PixelOffice = memo(function PixelOffice({
       }
     }
     const px = blitOf(cam.current, geo.current).px || 1;
-    const next = clampCam({ ...camWant.current, x: d.cx - dx / px, y: d.cy - dy / px });
+    const next = clampView({ ...camWant.current, x: d.cx - dx / px, y: d.cy - dy / px }, geo.current);
     camWant.current = next;
     // A drag is direct manipulation: the room has to sit under the finger, not ease toward it.
     // A copy, not the same object — the loop eases `cam` toward `camWant` and aliasing the two
     // would quietly make the easing a no-op for every later move as well.
     cam.current = { ...next };
-  }, []);
+  }, [unframe]);
 
   const endDrag = useCallback((e: React.PointerEvent) => {
     const d = drag.current;
@@ -1151,6 +1432,9 @@ export const PixelOffice = memo(function PixelOffice({
         case 'F':
           setFollow((v) => !v);
           break;
+        case 'Home':
+          home();
+          break;
         case 'Escape':
           // Not stopped: the shell's own Escape clears the selection, and "home" means both.
           home();
@@ -1181,7 +1465,10 @@ export const PixelOffice = memo(function PixelOffice({
     else ghostMarks.current.delete(id);
   }, []);
 
-  const hoverAgent = useCallback((id: string | null) => setHover(id), []);
+  const hoverAgent = useCallback((id: string | null, via: HoverVia = 'pointer') => {
+    hoverVia.current = via;
+    setHover(id);
+  }, []);
 
   const hoveredName = hover === null ? '' : (agents[hover]?.label ?? hover);
   const hoveredModel = hover === null ? undefined : agents[hover]?.model;
@@ -1198,6 +1485,9 @@ export const PixelOffice = memo(function PixelOffice({
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onPointerLeave={() => {
+        pointer.current = null;
+      }}
       onClick={onClick}
       onKeyDown={onKeyDown}
       onDoubleClick={(e) => {
@@ -1311,14 +1601,29 @@ export const PixelOffice = memo(function PixelOffice({
       */}
       {hover !== null && (
         <div className="peek" ref={peek} role="note" aria-label={`${hoveredName} at a glance`}>
-          <span className="peek-name">{hoveredName}</span>
-          {hoveredModel && <span className="peek-model">{hoveredModel}</span>}
-          <span className="peek-act" />
+          <span className="peek-hd">
+            <MiniHead agentId={hover} />
+            <span className="peek-name agent-ink" style={agentInk(hover)}>
+              {hoveredName}
+            </span>
+            {hoveredModel && <span className="peek-model">{modelInfo(hoveredModel).short}</span>}
+          </span>
+          {/* The dot's colour is the loop's `data-state` on the card, written with the line beside
+              it, so the two cannot disagree about what the agent is doing. */}
+          <span className="peek-state">
+            <i className="peek-dot" aria-hidden="true" />
+            <span className="peek-act" />
+          </span>
           <span className="peek-note" />
           <span className="peek-nums">
             <span className="peek-tok" />
             <span className="peek-cost" />
             <span className="peek-age" />
+          </span>
+          {/* The room's verbs, said where the pointer already is: a canvas gives no other sign that
+              a person in it can be clicked at all. */}
+          <span className="peek-hint">
+            {cast.includes(hover) ? 'click for details · double-click to zoom' : 'click for details'}
           </span>
         </div>
       )}
@@ -1329,22 +1634,38 @@ export const PixelOffice = memo(function PixelOffice({
           type="button"
           className="cam-btn"
           aria-label="Zoom out"
-          disabled={zoom <= ZOOM_MIN}
+          disabled={(framedUi ? homeZ : zoom) <= ZOOM_MIN + 0.001}
           onClick={() => zoomBy(1 / KEY_STEP)}
         >
           −
         </button>
-        <span className="cam-z" aria-label={`zoom ${zoom.toFixed(1)} times`}>{`${zoom.toFixed(1)}×`}</span>
+        {/* `fit` while the camera rests on the room's frame: the number there is whatever the stage
+            and the session's size make it, and a viewer who has never touched the zoom should not
+            be told the room is at 1.4× as if somebody had set it. */}
+        <span
+          className="cam-z"
+          aria-label={framedUi ? 'zoom: fitted to the room' : `zoom ${zoom.toFixed(1)} times`}
+          title={framedUi ? 'fitted to the room — Home or ⌂ returns here' : undefined}
+        >
+          {framedUi ? 'fit' : `${zoom.toFixed(1)}×`}
+        </span>
         <button
           type="button"
           className="cam-btn"
           aria-label="Zoom in"
-          disabled={zoom >= ZOOM_MAX}
+          disabled={(framedUi ? homeZ : zoom) >= ZOOM_MAX - 0.001}
           onClick={() => zoomBy(KEY_STEP)}
         >
           +
         </button>
-        <button type="button" className="cam-btn" aria-label="Reset the camera" onClick={home}>
+        <button
+          type="button"
+          className="cam-btn"
+          aria-label="Fit the room"
+          title="fit the room (Home)"
+          aria-pressed={framedUi}
+          onClick={home}
+        >
           ⌂
         </button>
         <button
@@ -1375,6 +1696,20 @@ export function actLine(a: ActorState | undefined): string {
   if (a.tool) return clip(a.target ? `${a.tool} ${a.target}` : a.tool, 42);
   if (a.busy > 0) return 'working';
   return a.status ? clip(a.status, 42) : 'idle';
+}
+
+/**
+ * The hover card's status dot, as one word the stylesheet colours — the same reading `actLine`
+ * puts into words, in the same order of precedence, so the dot and the line cannot disagree.
+ */
+export function actState(a: ActorState | undefined, done: boolean): 'done' | 'waiting' | 'working' | 'thinking' | 'talking' | 'idle' {
+  if (!a) return done ? 'done' : 'waiting';
+  if (a.done) return 'done';
+  if (a.waiting > 0) return 'waiting';
+  if (a.tool || a.busy > 0) return 'working';
+  if (a.think !== undefined) return 'thinking';
+  if (a.say !== undefined) return 'talking';
+  return 'idle';
 }
 
 /** The second line, when there is one worth spending: what this agent has done to the repo. */
@@ -1412,7 +1747,7 @@ const ActorMark = memo(function ActorMark({
   dim: boolean;
   kin: boolean;
   hovered: boolean;
-  onHover: (id: string | null) => void;
+  onHover: (id: string | null, via?: HoverVia) => void;
   onPick: (id: string | null) => void;
   onZoomTo: (id: string) => void;
   register: (id: string, el: HTMLDivElement | null) => void;
@@ -1428,7 +1763,7 @@ const ActorMark = memo(function ActorMark({
       aria-label={name}
       onPointerEnter={() => onHover(id)}
       onPointerLeave={() => onHover(null)}
-      onFocus={() => onHover(id)}
+      onFocus={() => onHover(id, 'focus')}
       onBlur={() => onHover(null)}
       onClick={(e) => {
         // Selection lands on the click rather than on the press, so that a drag which started on
@@ -1481,7 +1816,7 @@ const GhostMark = memo(function GhostMark({
   name: string;
   status: string;
   hovered: boolean;
-  onHover: (id: string | null) => void;
+  onHover: (id: string | null, via?: HoverVia) => void;
   onPick: (id: string) => void;
   register: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1495,7 +1830,7 @@ const GhostMark = memo(function GhostMark({
       aria-label={status ? `${name} — waiting for a desk — ${status}` : `${name} — waiting for a desk`}
       onPointerEnter={() => onHover(id)}
       onPointerLeave={() => onHover(null)}
-      onFocus={() => onHover(id)}
+      onFocus={() => onHover(id, 'focus')}
       onBlur={() => onHover(null)}
       onClick={() => onPick(id)}
       onKeyDown={(e) => {
@@ -1522,7 +1857,7 @@ const DeskMark = memo(function DeskMark({
   dim: boolean;
   kin: boolean;
   hovered: boolean;
-  onHover: (id: string | null) => void;
+  onHover: (id: string | null, via?: HoverVia) => void;
   onPick: (id: string | null) => void;
   register: (id: string, el: HTMLDivElement | null) => void;
 }) {
