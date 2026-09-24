@@ -150,7 +150,7 @@ export function Help({ onClose, onGuide }: { onClose: () => void; onGuide?: () =
               <Key k="1 2 3" does="chat / agents / tools panel" />
               <Key k="B" does="show or hide the side panel" />
               <Key k="T" does="day → night → follow the system" />
-              <Key k="G" does="share this session as a GIF — rendered in this tab, saved by your browser" />
+              <Key k="G" does="share this session as a GIF or a card — made in this tab, saved by your browser" />
               <Key k="? " does="this overlay" />
               <Key k="arrows · + −" does="pan and zoom the room; Home re-centres; F follows the selection" />
               <Key k="Esc" does="close the top thing: menu, palette, this, a held seek, the selection" />

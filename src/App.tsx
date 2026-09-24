@@ -488,7 +488,7 @@ export default function App() {
       { id: 'help', label: 'Help: what am I looking at', hint: '?', run: () => setHelpOpen(true) },
       { id: 'guide', label: 'Help: show the room guide again', run: showGuide },
       ...(shareWhyNot === null
-        ? [{ id: 'share', label: 'Share as GIF — this session as a timelapse', hint: SHARE_KEY.toUpperCase(), run: openShare }]
+        ? [{ id: 'share', label: 'Share — this session as a GIF or a card', hint: SHARE_KEY.toUpperCase(), run: openShare }]
         : []),
       { id: 'dock', label: dockOpen ? 'Hide the side panel' : 'Show the side panel', hint: 'B', run: () => setDockOpen((v) => !v) },
       ...TABS.map((t) => ({ id: `tab-${t.key}`, label: `Panel: ${t.label.toLowerCase()}`, hint: 'panel', run: () => { setTab(t.key); setDockOpen(true); } })),

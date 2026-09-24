@@ -316,12 +316,13 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-/** The state every test starts from: the app up, the socket open, and the backlog fully folded. */
+/** The state every test starts from: the app up and the socket open. */
 async function openRoom(page: Page): Promise<void> {
   await page.goto('/');
-  // The pill reads LOADING while the backlog is still arriving, so waiting for LIVE is also
-  // waiting for the whole of history to have been folded — every count below is then a count of
-  // the finished room rather than of a room halfway through being replayed.
+  // LIVE means the socket is open, and nothing more. The pill reads LOADING only while a session
+  // replays after a `reset`; on the first connect `replaying` is never raised, so LIVE can show
+  // before the backlog has landed. A test that counts something waits for that count (or for the
+  // room's own `data-cam` / `data-framing`), not for this.
   await expect(page.locator('.topbar .pill-live')).toHaveText('LIVE');
 }
 

@@ -664,7 +664,7 @@ describe('the Share button', () => {
 
   it('is listed with its key in the help sheet', () => {
     const el = mount(<Help onClose={noop} />);
-    const row = byText(el, '.help-row', 'share this session as a GIF');
+    const row = byText(el, '.help-row', 'share this session as a GIF or a card');
     expect(row.querySelector('kbd')?.textContent).toBe('G');
   });
 });

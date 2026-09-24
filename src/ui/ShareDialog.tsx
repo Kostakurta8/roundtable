@@ -481,7 +481,7 @@ export function ShareDialog({
         tabIndex={-1}
         onKeyDown={onKeyDown}
       >
-        <header className="share-hd">
+        <div className="share-hd">
           <b id="share-title">SHARE</b>
           <span className="share-which" title={sessionName}>
             {sessionName}
@@ -490,7 +490,7 @@ export function ShareDialog({
           <button type="button" className="btn icon" aria-label="close" onClick={onClose}>
             ✕
           </button>
-        </header>
+        </div>
 
         {/* Said once per state, not once per frame: the bar carries its own value for anyone who
             goes looking, and a live region re-reading "drawing frame 41 of 262" every sixty
