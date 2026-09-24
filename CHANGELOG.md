@@ -9,7 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
-## [Unreleased]
+## [0.4.0] — 2026-09-24
 
 ### Added
 

@@ -1,7 +1,7 @@
 {
   "name": "roundtable",
   "displayName": "Roundtable",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Your subagents as a pixel-art office. /roundtable:gif renders the session you are in as a timelapse GIF, /roundtable:watch opens the live office with a timeline you can rewind, and /roundtable:stats reports what your transcripts say about your fan-out. Read-only and local.",
   "author": {
     "name": "Kostakurta8",
