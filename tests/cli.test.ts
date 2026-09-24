@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { appUrl, busyMessage, demoRoot, HELP, parseArgs, run } from '../server/cli';
-import { DEMO_SESSIONS } from '../scripts/promo/demoRoom';
+import { appUrl, busyMessage, HELP, parseArgs, run, type CliOptions, type Running } from '../server/cli';
+import { DEMO_SESSIONS, demoRootPrefix } from '../scripts/promo/demoRoom';
 import { DEFAULT_HUB_PORT } from '../shared/net';
 
 /**
@@ -32,6 +32,19 @@ describe('parseArgs', () => {
   it('lets the environment set the port, and the flag beat it', () => {
     expect(parseArgs([], { ROUNDTABLE_PORT: '8000' }).port).toBe(8000);
     expect(parseArgs(['--port', '9000'], { ROUNDTABLE_PORT: '8000' }).port).toBe(9000);
+  });
+
+  it('takes --card with the options it shares with --gif, and alongside it', () => {
+    expect(parseArgs(['--card', '--out', 'c.png', '--session', 'abc', '--bare'], {})).toMatchObject({
+      card: true,
+      gif: false,
+      out: 'c.png',
+      session: 'abc',
+      bare: true,
+      unknown: null,
+    });
+    expect(parseArgs(['--gif', '--card'], {})).toMatchObject({ card: true, gif: true });
+    expect(parseArgs([], {}).card).toBe(false);
   });
 
   it('falls back rather than binding a port nobody can dial', () => {
@@ -70,12 +83,14 @@ describe('parseArgs', () => {
   });
 
   it('points --demo at a directory of its own, whatever --root said', () => {
-    // The stage wipes the directory it is handed. The only directory it may ever be handed is the
-    // one this process names under the temp directory — never a path a person typed.
+    // The stage wipes the directory it is handed. With --demo, `root` is only the temp-directory
+    // prefix `run` makes a fresh directory from — never a path a person typed — and parsing creates
+    // nothing, so `--demo --help` leaves no directory behind.
     const opts = parseArgs(['--demo', '--root', '/home/someone/.claude'], { ROUNDTABLE_HOME: '/env/home' });
     expect(opts.demo).toBe(true);
-    expect(opts.root).toBe(demoRoot());
+    expect(opts.root).toBe(demoRootPrefix());
     expect(opts.root.startsWith(tmpdir())).toBe(true);
+    expect(existsSync(opts.root)).toBe(false);
     expect(parseArgs([], {}).demo).toBe(false);
   });
 });
@@ -97,27 +112,27 @@ describe('run --demo', () => {
     return dir;
   };
 
-  it('stages a room the roster names, and removes it again on stop', async () => {
-    // Not the shared demo root: a test must not wipe a demo somebody is watching right now.
-    const root = mkdtempSync(join(tmpdir(), 'rt-cli-demo-'));
-    dirs.push(root);
+  /**
+   * A demo on the first free port in 7480-7494, so the suite can run beside the app and beside
+   * itself. Its stop is queued for `afterEach` too; stopping twice is harmless.
+   */
+  const startDemo = async (over: Partial<CliOptions> = {}): Promise<Running & { port: number }> => {
     const base = parseArgs(['--demo', '--no-open'], {});
-    let stop: (() => Promise<void>) | undefined;
-    let port = 0;
-    for (let p = 7480; p < 7495; p++) {
+    for (let port = 7480; port < 7495; port++) {
       try {
-        stop = await run({ ...base, root, port: p }, fakeClient());
-        port = p;
-        break;
+        const running = await run({ ...base, ...over, port }, fakeClient());
+        stops.push(running.stop);
+        dirs.push(running.root);
+        return { ...running, port };
       } catch (err) {
         if ((err as { code?: string }).code !== 'EADDRINUSE') throw err;
       }
     }
-    if (!stop) throw new Error('no free port in 7480-7494');
-    stops.push(stop);
+    throw new Error('no free port in 7480-7494');
+  };
 
-    expect(existsSync(join(root, 'sessions'))).toBe(true);
-    const hello = await new Promise<{ sessions: { sessionId: string }[]; root: string }>((resolve, reject) => {
+  const hello = (port: number): Promise<{ sessions: { sessionId: string }[]; root: string }> =>
+    new Promise((resolve, reject) => {
       const sock = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: `http://localhost:${port}` });
       const timer = setTimeout(() => reject(new Error('no hello in 10s')), 10_000);
       sock.on('message', (data) => {
@@ -130,13 +145,56 @@ describe('run --demo', () => {
       });
       sock.on('error', reject);
     });
-    const ids = hello.sessions.map((s) => s.sessionId);
-    for (const id of DEMO_SESSIONS) expect(ids).toContain(id);
-    expect(hello.root).toBe(root);
 
-    await stops.pop()!();
-    // The staged root was this process's to create, so it is gone once the hub is.
-    expect(existsSync(root)).toBe(false);
+  it('stages a room the roster names, and removes it again on stop', async () => {
+    const demo = await startDemo();
+    expect(demo.root.startsWith(demoRootPrefix())).toBe(true);
+    expect(existsSync(join(demo.root, 'sessions'))).toBe(true);
+
+    const got = await hello(demo.port);
+    const ids = got.sessions.map((s) => s.sessionId);
+    for (const id of DEMO_SESSIONS) expect(ids).toContain(id);
+    expect(got.root).toBe(demo.root);
+
+    await demo.stop();
+    // The staged root was this run's to create, so it is gone once the hub is.
+    expect(existsSync(demo.root)).toBe(false);
+  });
+
+  it('gives two demos two directories, and stopping one leaves the other serving', async () => {
+    // What a shared fixed path did: the second demo's stage wiped the first one's room, and the
+    // first to exit deleted the directory the other hub was still watching.
+    const a = await startDemo();
+    const b = await startDemo();
+    expect(a.root).not.toBe(b.root);
+    for (const d of [a, b]) {
+      expect(d.root.startsWith(tmpdir())).toBe(true);
+      expect(existsSync(join(d.root, 'sessions'))).toBe(true);
+    }
+
+    await a.stop();
+    expect(existsSync(a.root)).toBe(false);
+    expect(existsSync(join(b.root, 'sessions'))).toBe(true);
+    const still = await hello(b.port);
+    expect(still.root).toBe(b.root);
+    for (const id of DEMO_SESSIONS) expect(still.sessions.map((s) => s.sessionId)).toContain(id);
+
+    await b.stop();
+    expect(existsSync(b.root)).toBe(false);
+  });
+
+  it('never stages into, or deletes, a root it was handed', async () => {
+    // `run` is exported, so the rule cannot live in `parseArgs` alone: a caller that builds its own
+    // options with `demo` set and a real directory in `root` still gets a directory made for it.
+    const mine = mkdtempSync(join(tmpdir(), 'rt-cli-mine-'));
+    dirs.push(mine);
+    writeFileSync(join(mine, 'keep.txt'), 'a file somebody cares about');
+    const demo = await startDemo({ root: mine });
+    expect(demo.root).not.toBe(mine);
+
+    await demo.stop();
+    expect(existsSync(join(mine, 'keep.txt'))).toBe(true);
+    expect(existsSync(join(mine, 'sessions'))).toBe(false);
   });
 });
 
@@ -155,7 +213,7 @@ describe('what the CLI prints', () => {
   it('documents every option it accepts', () => {
     // A help text that has drifted from the parser is worse than none: it is a wrong answer to
     // the only question the user thought to ask.
-    for (const flag of ['--port', '--root', '--demo', '--no-open', '--version', '--help', '--stats', '--gif', '--out', '--session', '--seconds', '--bare', '--full']) {
+    for (const flag of ['--port', '--root', '--demo', '--no-open', '--version', '--help', '--stats', '--gif', '--card', '--out', '--session', '--seconds', '--bare', '--full']) {
       expect(HELP, flag).toContain(flag);
     }
     expect(HELP).toContain('never writes');

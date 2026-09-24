@@ -236,43 +236,28 @@ const roundedX = async (page: Page, selector: string): Promise<number> => {
 };
 
 /**
- * How many consecutive samples have to agree before the camera counts as arrived.
- *
- * Two is not enough, and the reason is worth writing down because the failure looks like flake and
- * is not. The camera eases a fifth of the remaining distance per frame, so a 200ms sample closes
- * about 93% of what is left: two agreeing *rounded* samples only prove the last sample moved less
- * than half a pixel, which happens on the slow tail long before the ease has converged. That tail
- * is not harmless here, because this measures a sprite and a sprite's position carries the *zoom*
- * as well as the pan — and a zoom still 0.5% short of its target puts a fixture near the edge of
- * the room about four pixels out. `858 → 1074 → 862` was exactly that, and it failed a 2px
- * assertion that was doing its job.
- *
- * Three samples take the remaining error to a thousandth of the original, which is comfortably
- * sub-pixel. Widening the assertion instead would have deleted the only thing it checks.
- */
-const SETTLE_SAMPLES = 3;
-
-/**
- * Where something is once the camera has stopped moving.
+ * Where something is once the camera has arrived where it was sent.
  *
  * The camera eases toward what it was asked for, so a single measurement taken right after a key
- * press is a number from halfway through an animation and comparing two of them proves nothing.
+ * press is a number from halfway through an animation, and comparing two of them proves nothing.
+ *
+ * This used to be inferred from the picture: poll the sprite every 200ms until three rounded
+ * readings agreed. Two had already been found too few (`858 → 1074 → 862`: a zoom still 0.5% short
+ * on the slow tail puts a fixture near the room's edge four pixels out). Three failed too, one run
+ * in six on the native watcher in CI, as `834 → 1112 → 839` — and no count of samples could have
+ * been enough, for two reasons in the room rather than in the test. The camera never arrived: an
+ * exponential ease only approaches, and because the blit snaps to whole buffer pixels its last
+ * visible step, five screen pixels at 2×, came whenever the remainder crossed a rounding boundary,
+ * up to 2.4s later. And a still sprite is not a still camera: when a loaded runner stalls frames
+ * mid-move, every reading agrees on the stall.
+ *
+ * The camera now finishes its ease and says when it has, as `data-cam` on the room — written
+ * `moving` in the same handler that takes the key, so it cannot be read stale — and this waits for
+ * that and then reads once.
  */
-async function settledX(page: Page, selector: string): Promise<number> {
-  let last = Number.NaN;
-  let agreed = 0;
-  await expect
-    .poll(
-      async () => {
-        const now = await roundedX(page, selector);
-        agreed = Number.isFinite(now) && now === last ? agreed + 1 : 0;
-        last = now;
-        return agreed;
-      },
-      { intervals: [200], timeout: 15_000 },
-    )
-    .toBeGreaterThanOrEqual(SETTLE_SAMPLES - 1);
-  return last;
+async function arrivedX(page: Page, selector: string): Promise<number> {
+  await expect(page.locator('.office.pixel')).toHaveAttribute('data-cam', 'still', { timeout: 15_000 });
+  return roundedX(page, selector);
 }
 
 // --------------------------------------------------------------------- the crier
@@ -318,12 +303,26 @@ test.afterAll(async () => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 
-/** The state every test starts from: the app up, the socket open, and the backlog fully folded. */
+// Every test starts in a fresh browser context, which is a first visit — and a first visit gets the
+// room guide over the office's bottom-left corner, on top of whichever marks happen to be there.
+// These tests are about the room, not the guide, so each one arrives as a returning viewer.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('rt.guide', 'seen');
+    } catch {
+      // no storage in this context — the guide will show, and the tests that care will say so
+    }
+  });
+});
+
+/** The state every test starts from: the app up and the socket open. */
 async function openRoom(page: Page): Promise<void> {
   await page.goto('/');
-  // The pill reads LOADING while the backlog is still arriving, so waiting for LIVE is also
-  // waiting for the whole of history to have been folded — every count below is then a count of
-  // the finished room rather than of a room halfway through being replayed.
+  // LIVE means the socket is open, and nothing more. The pill reads LOADING only while a session
+  // replays after a `reset`; on the first connect `replaying` is never raised, so LIVE can show
+  // before the backlog has landed. A test that counts something waits for that count (or for the
+  // room's own `data-cam` / `data-framing`), not for this.
   await expect(page.locator('.topbar .pill-live')).toHaveText('LIVE');
 }
 
@@ -443,29 +442,40 @@ test('the camera answers the keyboard', async ({ page }) => {
   // a working camera.
   const table = '.fixture-table';
 
-  await expect(zoomLabel).toHaveText(/^1\.0/);
+  // At rest the camera frames the session's room rather than sitting at a fixed zoom, and the
+  // readout says so instead of printing whatever zoom that frame takes on this stage.
+  await expect(zoomLabel).toHaveText('fit');
+  // Shown, not still arriving: while a load's first frame settles the camera cuts rather than
+  // eases, and keys pressed then would test the cut — not the eased camera a viewer drives.
+  await expect(room).toHaveAttribute('data-framing', 'settled');
   await room.focus();
 
   // `=` rather than `+`, which is the same case in the room's handler and needs no shift.
   await page.keyboard.press('=');
   await page.keyboard.press('=');
   await page.keyboard.press('=');
-  // 1.25³ = 1.95. The readout is the camera's *target*, written the instant the key is pressed,
+  // 1.25³ = 1.95 times the resting zoom, which for this two-desk room on a 1600×900 window is a
+  // shade over 1. The readout is the camera's *target*, written the instant the key is pressed,
   // while the camera itself is still easing toward it.
-  await expect(zoomLabel).toHaveText(/^2\.0/);
+  await expect(zoomLabel).toHaveText(/^2\.[0-2]×$/);
 
-  const home = await settledX(page, table);
+  const home = await arrivedX(page, table);
 
   // Panning is only observable once the view is smaller than the room: at 1× `clampCam` pins the
   // camera to the room's own centre and an arrow key is correctly a no-op, which is why the zoom
   // above is a precondition and not a second assertion.
   for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowLeft');
-  const panned = await settledX(page, table);
+  const panned = await arrivedX(page, table);
   expect(panned - home, `the room did not move: ${home} → ${panned}`).toBeGreaterThan(40);
 
   for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
-  const back = await settledX(page, table);
+  const back = await arrivedX(page, table);
   expect(Math.abs(back - home), `the pan did not reverse: ${home} → ${panned} → ${back}`).toBeLessThanOrEqual(2);
+
+  // Home hands the camera back to the room's own frame — it was documented in the Help sheet for a
+  // release before the room had a handler for it.
+  await page.keyboard.press('Home');
+  await expect(zoomLabel).toHaveText('fit');
 });
 
 test('scrubbing the timeline and resuming live round-trips', async ({ page }) => {

@@ -9,6 +9,78 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
+## [0.4.0] — 2026-09-24
+
+### Added
+
+**A browser demo that needs no install.** `npm run build:pages` builds the real app against a
+recording of the real hub, and `.github/workflows/pages.yml` publishes it to
+`https://kostakurta8.github.io/roundtable/`. `scripts/recordDemo.ts` stages the same showcase session
+the README's timelapse shows — six scouts, eight builders, a verifier on every change, one refuted
+and fixed — reads it with the shipped hub over a socket, and deals the frames out again on a
+compressed clock (`src/demo/timelapse.ts`): each silence clamped to a beat, nine and a half minutes
+in seventy seconds, looping every ninety. A banner says it is a staged timelapse and carries the
+install command and a copy button, and the status pill reads `REPLAY`.
+The demo lives behind its own entry file, so the bundle people install contains none of it. The
+page has Open Graph and Twitter card tags, so a pasted link unfurls with the social card.
+
+**Share as GIF, from the app.** A Share button in the top bar, `G`, or the palette renders the
+session on screen as a GIF in a Web Worker, previews it, and lets the browser save it. It is the
+`--gif` renderer, moved to `src/clip/` so both halves import it: the same events make the same
+bytes. Length, busiest stretch or whole session, and "Hide transcript text" are options; nothing is
+uploaded. The encoder is also twice as fast, with identical output.
+
+**A session card, the second thing you can share.** The Share dialog's **GIF | Card** switch, or
+`roundtable --card`, renders one 1200×630 PNG: subagents, the most at once, tokens and estimated cost
+(the top bar's own figures, `≥` included), duration, verdicts and the busiest agent, over a still of
+the room at its busiest, with the same "Hide transcript text" switch. The dialog downloads it or
+copies it as an image; the CLI writes it with the renderer the page uses. A clip also no longer
+holds every frame whole before encoding — a 40-second GIF took 277 MB in the worker and now takes
+13 MB, with the same bytes out.
+
+**A first-visit guide.** A card over the room says what a person, a desk, a bubble, a walk and the
+door mean, and that the timeline rewinds. It does not block the room, collapses to a one-row legend
+on a short stage, is remembered once dismissed, and is back from the Help sheet or the palette.
+
+**Pointing at a person** shows a card beside the cursor: who it is, what it is doing, its tokens,
+cost and age.
+
+### Changed
+
+**The room fills its stage.** The camera rests on a frame computed from the desks the session has
+drawn, wall to floor, as large as the stage allows, and eases as the room grows; `Home`, ⌂, Escape
+and a double-click return to it. The roster becomes a strip under the room whenever that draws the
+room larger than a column beside it. At 1440×900 people went from 26×39 to 39×59 pixels on screen.
+
+**The feed reads as a conversation.** Runs of two or more system lines fold into one expandable
+line — "spawned 6 subagents · 6 prompts ▸" — with nothing dropped; search opens the folds.
+
+**Every agent's name is legible in both themes.** Names keep their hue and take their lightness
+from the theme; the worst contrast went from 1.24:1 to 6.45:1 at night, 3.90:1 to 4.93:1 by day.
+
+**A phone-width layout.** The room gets nearly half the height, session tabs scroll sideways, the
+top bar keeps the session's name, and the timeline takes two rows.
+
+**The activity strip fills its width** at any session length and names the second under the pointer.
+
+**The README** leads with the demo and the one install line; the screenshots and the social card
+show the app as it now is. `docs/launch/` holds launch drafts, and `.github/workflows/publish-npm.yml`
+publishes to npm on a release once an `NPM_TOKEN` secret exists — until then it skips, green.
+
+**The "whole app" GIF is the app as it now is**: the `--demo` session filmed at 960×640 through the
+current shell, with arrivals, a report and a verdict each way in nineteen seconds, at 1 MB instead of
+4.9. `npx tsx scripts/promo/demoGif.ts` re-films it with Playwright screenshots and the app's own
+GIF encoder, so it needs no ffmpeg.
+
+### Fixed
+
+**Two demos no longer delete each other.** `--demo`, `--gif --demo` and `npm run demo` each stage
+into a fresh directory under the temp directory, made for that run, instead of one fixed path. With
+the fixed path a second demo wiped the first one's room, and whichever exited first deleted the
+directory the other's hub was still serving. `--root` is still ignored with `--demo`, the hub still
+watches the staged directory by polling, and exiting — `Ctrl+C` and `SIGTERM` included — deletes
+that run's directory and nothing else.
+
 ## [0.3.1] — 2026-09-23
 
 ### Added
@@ -152,8 +224,9 @@ a token; the room is untouched.
 ### Added
 
 **`npx claude-roundtable`.** Installing was a clone, an `npm install` and an `npm start`, which is
-three more steps than anyone spends on a tool they have not tried yet. The package is now published,
-and one command serves the app and opens it. The hub serves the built client over its own port when
+three more steps than anyone spends on a tool they have not tried yet. The package is now packable
+and runnable with one command that serves the app and opens it. (This entry first said "published";
+it was not, and still is not on the npm registry — the one-command install is the release tarball.) The hub serves the built client over its own port when
 it is given one — `bin/roundtable.mjs` points it at the package's `dist/client` — so a packaged
 install runs one process instead of two, and needs no Vite.
 

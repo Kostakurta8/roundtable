@@ -11,10 +11,10 @@
  * out — the hub reads transcripts, and a program that reads transcripts should not be able to run
  * anything.
  */
-import { rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { stageDemoRoom } from '../scripts/promo/demoRoom';
+import { demoRootPrefix, newDemoRoot, stageDemoRoom } from '../scripts/promo/demoRoom';
 import { stageShowcase } from '../scripts/promo/showcase';
 import { DEFAULT_HUB_PORT, HUB_HOST, PORT_ENV, readPort } from '../shared/net';
 import { CLIP_DEFAULTS, CLIP_MAX_SECONDS, collectSession, renderClip } from './clip';
@@ -24,7 +24,10 @@ import { claudeRoot } from './sessions';
 export type CliOptions = {
   /** Where the hub listens, and therefore where the page is served. */
   port: number;
-  /** The `~/.claude` to observe. Overridable so a demo root can be watched instead. */
+  /**
+   * The `~/.claude` to observe. With `--demo` it is the prefix of the directory `run` creates, and
+   * not a directory at all until then — see `parseArgs`.
+   */
   root: string;
   /** Whether the launcher should open a browser. */
   open: boolean;
@@ -36,9 +39,9 @@ export type CliOptions = {
    * Observe a staged session instead of a real directory.
    *
    * The first run is the product's front door, and on a machine that has never run Claude Code
-   * it opens on an empty office. This writes a synthetic root under the OS temp directory — the
-   * same one `npm run demo` stages from a clone — and points the hub at that. It never reads
-   * `~/.claude`; `root` is overridden so nothing else can be pointed at, either.
+   * it opens on an empty office. This writes a synthetic root into a fresh directory under the OS
+   * temp directory — the same room `npm run demo` stages from a clone — and points the hub at that.
+   * It never reads `~/.claude`; `root` is overridden so nothing else can be pointed at, either.
    */
   demo: boolean;
   /**
@@ -56,6 +59,11 @@ export type CliOptions = {
    * does not print, and the file it was asked for is the only thing it writes.
    */
   gif: boolean;
+  /**
+   * Write one session as the share dialog's card — its numbers over a still of the office at its
+   * busiest — to a PNG, and exit. Reads the session as `--gif` does; see `server/card.ts`.
+   */
+  card: boolean;
   /** Where `--gif` writes. Absent means `roundtable-<session>.gif` in the working directory. */
   out: string | null;
   /** Which session `--gif` plays: an id or the start of one. Absent means the latest. */
@@ -81,8 +89,8 @@ Options
       --root <dir> The Claude directory to observe (default ~/.claude).
       --demo       Watch a staged session instead: agents arrive, work, argue and leave, so there
                    is something to see on a machine that has never run Claude Code. The
-                   transcripts are written under the temp directory and deleted on exit; nothing
-                   of yours is read. Overrides --root.
+                   transcripts are written to a fresh directory under the temp directory and
+                   deleted on exit; nothing of yours is read. Overrides --root.
       --stats      Print what every transcript under --root says about your own fan-out — how
                    much of your output is written inside subagents, what a child costs before it
                    starts, which of your hooks have ever fired — then exit. Starts no server.
@@ -95,13 +103,17 @@ Options
         --bare           No text from your transcripts in the picture: no task, no names,
                          no speech. The people and what they do are still all there.
         --full           The whole session, however long, instead of its busiest stretch.
+      --card       Write a session as one PNG card — its numbers over a still of the office at its
+                   busiest — and exit. Takes --session, --out, --bare and --demo as --gif does
+                   (default roundtable-<session>-card.png, here). With --gif, both are written,
+                   and --out names the GIF: the card goes beside it as <name>-card.png.
       --no-open    Do not open a browser; just print the address.
   -v, --version    Print the version.
   -h, --help       Print this.
 
 It reads the transcript files Claude Code already writes and never writes to them. Nothing leaves
-the machine: the server binds loopback only and makes no outbound connection of any kind. The one
-file it ever writes is the GIF you ask --gif for.`;
+the machine: the server binds loopback only and makes no outbound connection of any kind. The only
+files it ever writes are the GIF you ask --gif for and the card you ask --card for.`;
 
 /**
  * Arguments into options, with the environment underneath.
@@ -123,6 +135,7 @@ export function parseArgs(
     demo: false,
     stats: false,
     gif: false,
+    card: false,
     out: null,
     session: null,
     seconds: CLIP_DEFAULTS.seconds,
@@ -145,6 +158,7 @@ export function parseArgs(
     else if (flag === '--demo') opts.demo = true;
     else if (flag === '--stats') opts.stats = true;
     else if (flag === '--gif') opts.gif = true;
+    else if (flag === '--card') opts.card = true;
     else if (flag === '--bare') opts.bare = true;
     else if (flag === '--full') opts.full = true;
     else if (flag === '--out') {
@@ -165,18 +179,20 @@ export function parseArgs(
       if (value) opts.root = value;
     } else if (opts.unknown === null) opts.unknown = arg;
   }
-  // The demo root is decided here and nowhere else, and it wins over `--root` on purpose: the
-  // stage wipes and recreates whatever directory it is handed, and the one directory that is
-  // safe to wipe is the one this process names itself, under the temp directory.
-  if (opts.demo) opts.root = demoRoot();
+  // `--demo` wins over `--root` on purpose: the stage wipes and recreates whatever directory it is
+  // handed, and the only directory that is safe to wipe is one this process has just created
+  // itself — never a path a person typed, and never the one another demo is serving. So `root`
+  // becomes the temp-directory prefix `run` creates that directory from. Nothing is created here:
+  // parsing `--demo --help` must not leave a directory behind.
+  if (opts.demo) opts.root = demoRootPrefix();
   return opts;
 }
 
-/** Where `--demo` writes. Under the OS temp directory, so no path leads from it to a real transcript. */
-export const demoRoot = (): string => join(tmpdir(), 'roundtable-demo-root');
-
 /** The address to print, and to open. `localhost` because that is what a person recognises. */
 export const appUrl = (port: number): string => `http://localhost:${port}`;
+
+/** A started hub, and the directory it is observing — which for `--demo` only exists from `run` on. */
+export type Running = { stop: StopServer; root: string };
 
 /**
  * Start the hub with the built client attached.
@@ -185,12 +201,15 @@ export const appUrl = (port: number): string => `http://localhost:${port}`;
  * `dist/server/`, and a path guessed relative to a bundle is a path that breaks the first time the
  * layout changes. The launcher knows where it is installed, so the launcher says.
  */
-export async function run(opts: CliOptions, clientDir: string): Promise<StopServer> {
-  // Staged before the hub starts, so its first sweep already finds two sessions to attach.
-  const room = opts.demo ? stageDemoRoom(opts.root) : null;
+export async function run(opts: CliOptions, clientDir: string): Promise<Running> {
+  // `--demo` stages into a directory made here, for this run alone, whatever `opts.root` says — so
+  // no caller can hand the stage a real directory to wipe, and two demos on one machine never share
+  // one. Staged before the hub starts, so its first sweep already finds two sessions to attach.
+  const root = opts.demo ? newDemoRoot() : opts.root;
+  const room = opts.demo ? stageDemoRoom(root) : null;
   let stop: StopServer;
   try {
-    stop = await startServer(opts.root, opts.port, {
+    stop = await startServer(root, opts.port, {
       clientDir,
       // The demo writes in bursts a few seconds apart; polling at 200ms keeps every burst a beat
       // rather than a lump, on every platform. A real directory keeps the hub's own default.
@@ -201,21 +220,24 @@ export async function run(opts: CliOptions, clientDir: string): Promise<StopServ
     });
   } catch (err) {
     room?.stop();
-    if (room) rmSync(opts.root, { recursive: true, force: true });
+    if (room) rmSync(root, { recursive: true, force: true });
     throw err;
   }
-  if (!room) return stop;
-  // The staged root is this process's to create, so it is this process's to remove: the watcher
-  // is closed first, and the directory goes after it, exactly as `npm run demo` does on Ctrl+C.
-  return async () => {
-    room.stop();
-    await stop();
-    rmSync(opts.root, { recursive: true, force: true });
+  if (!room) return { stop, root };
+  // The staged root is this run's to create, so it is this run's to remove — that directory and no
+  // other: the watcher is closed first, and the directory goes after it, exactly as `npm run demo`
+  // does on Ctrl+C. A process killed outright cannot run this, and leaves a directory of synthetic
+  // transcripts for the OS to clear out of its temp directory; nothing else ever deletes it, since
+  // no other run knows its name.
+  return {
+    root,
+    stop: async () => {
+      room.stop();
+      await stop();
+      rmSync(root, { recursive: true, force: true });
+    },
   };
 }
-
-/** Where `--gif --demo` stages its session. Its own directory, never the live demo's. */
-export const showcaseRoot = (): string => join(tmpdir(), 'roundtable-showcase-root');
 
 const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
@@ -237,7 +259,9 @@ const tok = (n: number): string =>
  * file holds, what it does and does not show — is something a test can read.
  */
 export async function makeClip(opts: CliOptions, cwd: string = process.cwd()): Promise<string> {
-  const staged = opts.demo ? showcaseRoot() : null;
+  // `--gif --demo` stages its session in a directory of its own, made for this run, by the same rule
+  // as `--demo`: two clips rendering at once, or a clip beside a live demo, never share one.
+  const staged = opts.demo ? mkdtempSync(join(tmpdir(), 'roundtable-showcase-')) : null;
   if (staged) stageShowcase(staged);
   try {
     const root = staged ?? opts.root;
@@ -290,3 +314,4 @@ export { DEFAULT_HUB_PORT, HUB_HOST };
 // Re-exported through the CLI bundle on purpose: `dist/server/cli.mjs` is the one file the
 // launcher imports, and a second entry point would be a second thing to keep in step.
 export { collectStats, formatStats } from './stats';
+export { makeCard } from './card';

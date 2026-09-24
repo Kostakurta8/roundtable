@@ -11,8 +11,8 @@
  */
 import { memo, useMemo, useState, type CSSProperties } from 'react';
 import type { RtState, RtTool } from '../store';
-import { agentLook } from '../store';
 import { clockSec, duration, editLines, shortPath } from './format';
+import { agentInk } from './MiniHead';
 import { toolHistogram } from './roster';
 
 /** Newest first: a live stream is read from the top. */
@@ -92,7 +92,10 @@ function Row({
         onClick={onToggle}
       >
         <span className={`phase ${t.ok === undefined ? 'working' : 'idle'}`} aria-hidden="true" />
-        <span className="tool" style={{ color: t.ok === false ? undefined : agentLook(t.agentId).color }}>
+        <span
+          className={t.ok === false ? 'tool' : 'tool agent-ink'}
+          style={t.ok === false ? undefined : agentInk(t.agentId)}
+        >
           {t.tool}
         </span>
         {/* `bdi` keeps the RTL trick that truncates a path from its head from reordering the text.
