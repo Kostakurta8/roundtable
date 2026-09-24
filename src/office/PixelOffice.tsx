@@ -34,7 +34,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { evSession } from '../../shared/events';
 import { agentLook, type RtAgent } from '../store';
+import { modelInfo } from '../../shared/models';
 import { duration, money, tokens as fmtTokens, clip } from '../ui/format';
+import { agentInk, MiniHead } from '../ui/MiniHead';
 import type { EvSink } from '../ws';
 import { Engine, podSeat, SCENE, WAYPOINTS, type ActorState } from './engine';
 import { mapEvent } from './mapping';
@@ -88,6 +90,15 @@ const DRAG_SLOP = 4;
 
 /** How often the live region is allowed to speak, so a busy room does not become a stream. */
 const SAY_ANNOUNCE_MS = 900;
+
+/**
+ * Where the hover card sits relative to the pointer: below and to the right, the way a tooltip
+ * does, far enough off the cursor that the sprite being pointed at stays in view.
+ */
+const PEEK_OFFSET = { x: 16, y: 18 } as const;
+
+/** What put a mark under the hover card: a pointer over it, or keyboard focus on it. */
+type HoverVia = 'pointer' | 'focus';
 
 /**
  * What a full whiteboard spend bar means, in dollars.
@@ -603,6 +614,17 @@ export const PixelOffice = memo(function PixelOffice({
    */
   const highWater = useRef(0);
 
+  /**
+   * How the current hover came about, and where the pointer is over the room.
+   *
+   * The card used to hang over the hovered sprite's head, which is exactly where the sprite's speech
+   * and thought bubbles are drawn — pointing at somebody hid the thing they were saying. A pointer
+   * hover now puts the card beside the cursor instead; a keyboard focus has no cursor, so it keeps
+   * the sprite anchor. Refs, because the loop reads them and a pointer move must not re-render.
+   */
+  const hoverVia = useRef<HoverVia>('pointer');
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+
   const [follow, setFollow] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   /** `framed`, for the readout: written when it flips, which is a handful of times a session. */
@@ -1095,17 +1117,33 @@ export const PixelOffice = memo(function PixelOffice({
           scene.current!.boxOf(cur.hover) ??
           scene.current!.deskBoxOf(cur.hover) ??
           scene.current!.ghostBoxOf(cur.hover);
-        if (box) {
-          const cx = b.dx + (box.x + box.w / 2 - b.srcX) * b.px;
-          const top = b.dy + (box.y - b.srcY) * b.px;
-          const bottom = b.dy + (box.y + box.h - b.srcY) * b.px;
-          const half = cardNow.offsetWidth / 2 + 6;
-          const x = Math.round(Math.min(Math.max(cx, half), Math.max(half, w - half)));
-          const below = top - cardNow.offsetHeight < 8;
-          const y = Math.round(below ? bottom + 8 : top - 8);
-          const t = below
-            ? `translate(${x}px, ${y}px) translate(-50%, 0)`
-            : `translate(${x}px, ${y}px) translate(-50%, -100%)`;
+        const ptr = pointer.current;
+        if (box || (hoverVia.current === 'pointer' && ptr)) {
+          const cw = cardNow.offsetWidth;
+          const ch = cardNow.offsetHeight;
+          let t: string;
+          if (hoverVia.current === 'pointer' && ptr) {
+            // Beside the cursor, flipped to whichever side of it has room, and never off the stage.
+            let x = ptr.x + PEEK_OFFSET.x;
+            let y = ptr.y + PEEK_OFFSET.y;
+            if (x + cw > w - 6) x = ptr.x - PEEK_OFFSET.x - cw;
+            if (y + ch > h - 6) y = ptr.y - PEEK_OFFSET.y / 2 - ch;
+            x = Math.round(Math.min(Math.max(6, x), Math.max(6, w - cw - 6)));
+            y = Math.round(Math.min(Math.max(6, y), Math.max(6, h - ch - 6)));
+            t = `translate(${x}px, ${y}px)`;
+          } else {
+            const at = box!;
+            const cx = b.dx + (at.x + at.w / 2 - b.srcX) * b.px;
+            const top = b.dy + (at.y - b.srcY) * b.px;
+            const bottom = b.dy + (at.y + at.h - b.srcY) * b.px;
+            const half = cw / 2 + 6;
+            const x = Math.round(Math.min(Math.max(cx, half), Math.max(half, w - half)));
+            const below = top - ch < 8;
+            const y = Math.round(below ? bottom + 8 : top - 8);
+            t = below
+              ? `translate(${x}px, ${y}px) translate(-50%, 0)`
+              : `translate(${x}px, ${y}px) translate(-50%, -100%)`;
+          }
           const wr = wroteOf(cardNow);
           if (wr.t !== t) {
             cardNow.style.transform = t;
@@ -1122,6 +1160,8 @@ export const PixelOffice = memo(function PixelOffice({
         const done = hovered ? hovered.done : meta?.phase === 'done';
         const end = done ? meta?.lastTs ?? 0 : Date.now();
         setText(card.act, hovered ? actLine(hovered) : done ? 'finished' : 'waiting for a desk');
+        const st = actState(hovered, done === true);
+        if (cardNow.dataset.state !== st) cardNow.dataset.state = st;
         setText(card.tok, `${fmtTokens(meta?.tokens ?? 0)} tokens`);
         setText(card.cost, money(meta?.cost));
         setText(card.age, meta && meta.firstTs > 0 ? duration(end - meta.firstTs) : '—');
@@ -1246,6 +1286,8 @@ export const PixelOffice = memo(function PixelOffice({
   }, []);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
+    const r = wrap.current?.getBoundingClientRect();
+    if (r) pointer.current = { x: e.clientX - r.left, y: e.clientY - r.top };
     const d = drag.current;
     if (!d.on || e.pointerId !== d.id) return;
     const dx = e.clientX - d.x;
@@ -1393,7 +1435,10 @@ export const PixelOffice = memo(function PixelOffice({
     else ghostMarks.current.delete(id);
   }, []);
 
-  const hoverAgent = useCallback((id: string | null) => setHover(id), []);
+  const hoverAgent = useCallback((id: string | null, via: HoverVia = 'pointer') => {
+    hoverVia.current = via;
+    setHover(id);
+  }, []);
 
   const hoveredName = hover === null ? '' : (agents[hover]?.label ?? hover);
   const hoveredModel = hover === null ? undefined : agents[hover]?.model;
@@ -1410,6 +1455,9 @@ export const PixelOffice = memo(function PixelOffice({
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onPointerLeave={() => {
+        pointer.current = null;
+      }}
       onClick={onClick}
       onKeyDown={onKeyDown}
       onDoubleClick={(e) => {
@@ -1523,14 +1571,29 @@ export const PixelOffice = memo(function PixelOffice({
       */}
       {hover !== null && (
         <div className="peek" ref={peek} role="note" aria-label={`${hoveredName} at a glance`}>
-          <span className="peek-name">{hoveredName}</span>
-          {hoveredModel && <span className="peek-model">{hoveredModel}</span>}
-          <span className="peek-act" />
+          <span className="peek-hd">
+            <MiniHead agentId={hover} />
+            <span className="peek-name agent-ink" style={agentInk(hover)}>
+              {hoveredName}
+            </span>
+            {hoveredModel && <span className="peek-model">{modelInfo(hoveredModel).short}</span>}
+          </span>
+          {/* The dot's colour is the loop's `data-state` on the card, written with the line beside
+              it, so the two cannot disagree about what the agent is doing. */}
+          <span className="peek-state">
+            <i className="peek-dot" aria-hidden="true" />
+            <span className="peek-act" />
+          </span>
           <span className="peek-note" />
           <span className="peek-nums">
             <span className="peek-tok" />
             <span className="peek-cost" />
             <span className="peek-age" />
+          </span>
+          {/* The room's verbs, said where the pointer already is: a canvas gives no other sign that
+              a person in it can be clicked at all. */}
+          <span className="peek-hint">
+            {cast.includes(hover) ? 'click for details · double-click to zoom' : 'click for details'}
           </span>
         </div>
       )}
@@ -1605,6 +1668,20 @@ export function actLine(a: ActorState | undefined): string {
   return a.status ? clip(a.status, 42) : 'idle';
 }
 
+/**
+ * The hover card's status dot, as one word the stylesheet colours — the same reading `actLine`
+ * puts into words, in the same order of precedence, so the dot and the line cannot disagree.
+ */
+export function actState(a: ActorState | undefined, done: boolean): 'done' | 'waiting' | 'working' | 'thinking' | 'talking' | 'idle' {
+  if (!a) return done ? 'done' : 'waiting';
+  if (a.done) return 'done';
+  if (a.waiting > 0) return 'waiting';
+  if (a.tool || a.busy > 0) return 'working';
+  if (a.think !== undefined) return 'thinking';
+  if (a.say !== undefined) return 'talking';
+  return 'idle';
+}
+
 /** The second line, when there is one worth spending: what this agent has done to the repo. */
 export function noteLine(a: ActorState | undefined): string {
   if (!a) return '';
@@ -1640,7 +1717,7 @@ const ActorMark = memo(function ActorMark({
   dim: boolean;
   kin: boolean;
   hovered: boolean;
-  onHover: (id: string | null) => void;
+  onHover: (id: string | null, via?: HoverVia) => void;
   onPick: (id: string | null) => void;
   onZoomTo: (id: string) => void;
   register: (id: string, el: HTMLDivElement | null) => void;
@@ -1656,7 +1733,7 @@ const ActorMark = memo(function ActorMark({
       aria-label={name}
       onPointerEnter={() => onHover(id)}
       onPointerLeave={() => onHover(null)}
-      onFocus={() => onHover(id)}
+      onFocus={() => onHover(id, 'focus')}
       onBlur={() => onHover(null)}
       onClick={(e) => {
         // Selection lands on the click rather than on the press, so that a drag which started on
@@ -1709,7 +1786,7 @@ const GhostMark = memo(function GhostMark({
   name: string;
   status: string;
   hovered: boolean;
-  onHover: (id: string | null) => void;
+  onHover: (id: string | null, via?: HoverVia) => void;
   onPick: (id: string) => void;
   register: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1723,7 +1800,7 @@ const GhostMark = memo(function GhostMark({
       aria-label={status ? `${name} — waiting for a desk — ${status}` : `${name} — waiting for a desk`}
       onPointerEnter={() => onHover(id)}
       onPointerLeave={() => onHover(null)}
-      onFocus={() => onHover(id)}
+      onFocus={() => onHover(id, 'focus')}
       onBlur={() => onHover(null)}
       onClick={() => onPick(id)}
       onKeyDown={(e) => {
@@ -1750,7 +1827,7 @@ const DeskMark = memo(function DeskMark({
   dim: boolean;
   kin: boolean;
   hovered: boolean;
-  onHover: (id: string | null) => void;
+  onHover: (id: string | null, via?: HoverVia) => void;
   onPick: (id: string | null) => void;
   register: (id: string, el: HTMLDivElement | null) => void;
 }) {
