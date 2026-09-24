@@ -152,8 +152,9 @@ a token; the room is untouched.
 ### Added
 
 **`npx claude-roundtable`.** Installing was a clone, an `npm install` and an `npm start`, which is
-three more steps than anyone spends on a tool they have not tried yet. The package is now published,
-and one command serves the app and opens it. The hub serves the built client over its own port when
+three more steps than anyone spends on a tool they have not tried yet. The package is now packable
+and runnable with one command that serves the app and opens it. (This entry first said "published";
+it was not, and still is not on the npm registry — the one-command install is the release tarball.) The hub serves the built client over its own port when
 it is given one — `bin/roundtable.mjs` points it at the package's `dist/client` — so a packaged
 install runs one process instead of two, and needs no Vite.
 
