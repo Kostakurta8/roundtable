@@ -2,10 +2,11 @@
  * The hosted demo's transport: a recording of the hub, played back as though the hub were sending it.
  *
  * GitHub Pages serves files and nothing else, so the page there has no hub to open a socket to.
- * `scripts/recordDemo.ts` ran the real one against the staged demo room and wrote down every frame
- * it sent, with when it arrived; this hands those frames to the stream on the same schedule. Nothing
- * downstream is told the difference — the frames go through the same `onMsg` a socket's do, into the
- * same store and the same office — which is the whole point: the demo is the app, not a video of it.
+ * `scripts/recordDemo.ts` ran the real one against a staged session, kept every frame it sent, and
+ * cut them into a timelapse (`./timelapse.ts`) with the moment each one plays at; this hands those
+ * frames to the stream on that schedule. Nothing downstream is told the difference — the frames go
+ * through the same `onMsg` a socket's do, into the same store and the same office — which is the
+ * whole point: the demo is the app, not a video of it.
  *
  * Two things have to be rewritten on the way through, and only two.
  *
@@ -28,26 +29,31 @@ import type { ResetMsg } from '../../shared/protocol';
 /** One frame: when it arrived, in ms from the start of the recording, and what the hub sent. */
 export type Frame = readonly [at: number, msg: object];
 
+/** How a timelapse recording was cut: this much of a session, played in this long. */
+export type Timelapse = { realMs: number; playMs: number };
+
 export type Recording = {
   /** How long the take ran — at least as long as the last frame's `at`, usually a little longer. */
   span: number;
   /** In arrival order, which is the order the hub sent them — `at` never decreases. */
   frames: readonly Frame[];
+  /** Present when the recorder shortened the session's silences, which the banner has to say. */
+  timelapse?: Timelapse;
 };
 
 /** How long the last moment stays on screen before the replay starts over. */
 export const HOLD_MS = 5000;
 
 /**
- * How much faster than it was recorded the hosted demo plays.
+ * How much faster than its own frames say the hosted demo plays: not at all.
  *
- * The staged room keeps the hub's shipped timing, so the first agent walks out almost three minutes
- * in — long after somebody who arrived from a link has closed the tab. Playing it faster is the
- * honest fix: nothing is skipped or reordered, every gap shrinks by the same factor, and the banner
- * says the replay is sped up. Re-staging a busier room would have meant a second demo that `--demo`
- * does not show.
+ * This was 2.5, when the recording was the `--demo` room taken live at the hub's shipped timing and
+ * the first agent walked out almost three minutes in. The recording is a timelapse now, already cut
+ * to the length a visitor watches (`PLAY_MS` in `scripts/recordDemo.ts` is where that length is
+ * chosen), and any factor here would be a second speed-up the banner has to own up to as well. It is
+ * kept as a knob because changing it needs no re-record.
  */
-export const DEMO_SPEED = 2.5;
+export const DEMO_SPEED = 1;
 
 /**
  * The recording as the page receives it, which is as JSON: checked here, once, and typed after.
@@ -58,7 +64,7 @@ export const DEMO_SPEED = 2.5;
  * disagree with the first.
  */
 export function parseRecording(raw: unknown): Recording {
-  const r = raw && typeof raw === 'object' ? (raw as { v?: unknown; span?: unknown; frames?: unknown }) : {};
+  const r = raw && typeof raw === 'object' ? (raw as { v?: unknown; span?: unknown; frames?: unknown; timelapse?: unknown }) : {};
   if (r.v !== 1 || !Array.isArray(r.frames)) throw new Error('demo: not a version-1 recording');
   const frames: Frame[] = [];
   let at = 0;
@@ -74,7 +80,36 @@ export function parseRecording(raw: unknown): Recording {
   // The recorder stops a little after its last frame, so the last agent out has time to walk; a
   // span that claims to end before the frames do is not believed.
   const span = typeof r.span === 'number' && Number.isFinite(r.span) ? Math.max(at, r.span) : at;
+  const t = r.timelapse && typeof r.timelapse === 'object' ? (r.timelapse as { realMs?: unknown; playMs?: unknown }) : null;
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  // Half a claim is no claim: the banner either says both numbers or neither.
+  if (t && ok(t.realMs) && ok(t.playMs)) return { span, frames, timelapse: { realMs: t.realMs, playMs: t.playMs } };
   return { span, frames };
+}
+
+/** What the banner calls the replay's clock, and the sentence behind it. */
+export type Pace = { label: string; title: string };
+
+/**
+ * What the banner says about time, read off the recording rather than typed beside it, so a
+ * re-record that changes the length cannot leave the tooltip quoting the old one.
+ *
+ * The one thing it must never do is let a visitor believe they are watching real time. A timelapse
+ * says so in its label; the tooltip gives the numbers.
+ */
+export function paceOf(rec: Recording, speed = DEMO_SPEED): Pace {
+  const lapse = rec.timelapse;
+  if (!lapse) return { label: `${speed}×`, title: `played at ${speed}× the speed it was recorded` };
+  // To the half minute: "9½" is how long a session is to a person; "9.45" is a measurement.
+  const halves = Math.max(1, Math.round(lapse.realMs / 30_000));
+  const minutes = `${Math.floor(halves / 2) || ''}${halves % 2 ? '½' : ''}`;
+  const seconds = Math.round(lapse.playMs / speed / 1000);
+  return {
+    label: 'TIMELAPSE',
+    title:
+      `A staged session about ${minutes} minute${halves <= 2 ? '' : 's'} long, played in ${seconds} seconds. ` +
+      'The silences between its steps were shortened, so nothing here happens in real time.',
+  };
 }
 
 /** The highest `seq` in the recording: how far each pass moves the next one's numbers along. */
