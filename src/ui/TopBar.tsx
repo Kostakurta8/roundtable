@@ -15,6 +15,7 @@ import { useCallback, useState, type CSSProperties } from 'react';
 import type { SessionSummary } from '../../shared/protocol';
 import { useDismiss, useNow } from '../hooks';
 import type { ThemeApi } from '../theme';
+import { isRecorded } from '../ws';
 import { ago, clip, clockSec, money, sessionAbout, sessionName, tokens } from './format';
 import './share.css';
 
@@ -201,7 +202,7 @@ export function TopBar(props: TopBarProps) {
       ) : (
         <span className={connected ? 'pill pill-live' : 'pill'}>
           {connected && <span className="live-dot" />}
-          {connected ? (replaying ? 'LOADING' : 'LIVE') : 'OFFLINE'}
+          {connected ? (replaying ? 'LOADING' : isRecorded() ? 'REPLAY' : 'LIVE') : 'OFFLINE'}
         </span>
       )}
 

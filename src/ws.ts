@@ -84,6 +84,15 @@ export function feedFrom(source: StaticSource): void {
   staticSource = source;
 }
 
+/**
+ * Whether the page is playing a recording rather than following a hub. The status pill asks, because
+ * "LIVE" over a recording is false — and a pill restyled from CSS to *look* like it says otherwise
+ * still reads "LIVE" to a screen reader.
+ */
+export function isRecorded(): boolean {
+  return staticSource !== null;
+}
+
 /** A row of the hub's session roster. Same shape the hub publishes, by construction. */
 export type RtSession = SessionSummary;
 

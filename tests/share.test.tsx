@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ev } from '../shared/events';
 import type { ClipInfo, ClipReply, ClipRequest } from '../src/clip/worker';
 import { Help } from '../src/ui/Help';
-import { CAPTION, ShareDialog, type ClipWorker, type ShareDialogProps } from '../src/ui/ShareDialog';
+import { CAPTION, caption, ShareDialog, type ClipWorker, type ShareDialogProps } from '../src/ui/ShareDialog';
 import { TopBar, type TopBarProps } from '../src/ui/TopBar';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -274,6 +274,7 @@ describe('what is in the clip', () => {
 
 describe('the caption', () => {
   it('is the line to post, and the command that makes one', () => {
+    expect(caption()).toBe(CAPTION); // a hub, not a recording, is feeding this page
     expect(CAPTION).toContain('rendered with Roundtable');
     expect(CAPTION).toContain('npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --gif');
     const el = dialog();
@@ -397,6 +398,11 @@ describe('the Share button', () => {
     expect(btn.getAttribute('aria-label')).toContain('pick a session first');
     act(() => btn.click());
     expect(opened).toBe(0);
+  });
+
+  it('sits beside a status pill that says LIVE when a hub, not a recording, is feeding the page', () => {
+    const el = bar({});
+    expect(el.querySelector('.pill-live')?.textContent).toBe('LIVE');
   });
 
   it('opens the dialog when there is', () => {

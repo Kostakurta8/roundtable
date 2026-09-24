@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Ev } from '../../shared/events';
 import { CLIP_DEFAULTS, type ClipProgress } from '../clip/render';
 import type { ClipInfo, ClipReply, ClipRequest } from '../clip/worker';
+import { isRecorded } from '../ws';
 import { duration, shortId } from './format';
 import './share.css';
 
@@ -36,6 +37,18 @@ export const SHARE_KEY = 'g';
 export const CAPTION =
   'My Claude Code subagents at work 👀 — rendered with Roundtable: ' +
   'npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --gif';
+
+/**
+ * The same line for a clip of the hosted demo. "My subagents" would be false there — the session is
+ * staged, and nobody's — and a caption is posted under the poster's own name. So it says what the
+ * clip is, and points at the page it came from rather than at a command the viewer has not run.
+ */
+export const DEMO_CAPTION =
+  'Claude Code subagents at work, as a pixel-art office 👀 — a staged replay from Roundtable. ' +
+  'Watch it in your browser: https://kostakurta8.github.io/roundtable/';
+
+/** Which caption is true of the clip on screen. */
+export const caption = (): string => (isRecorded() ? DEMO_CAPTION : CAPTION);
 
 const LENGTHS = [10, 20, 40] as const;
 type Length = (typeof LENGTHS)[number];
@@ -216,7 +229,7 @@ export function ShareDialog({ sessionId, sessionName, events, missing, onClose, 
     try {
       // `navigator.clipboard` is absent outright in some embedded browsers and on any origin the
       // browser does not count as secure, so a missing object is a refusal like any other.
-      await navigator.clipboard.writeText(CAPTION);
+      await navigator.clipboard.writeText(caption());
       setCopied('ok');
     } catch {
       setCopied('refused');
@@ -429,7 +442,7 @@ export function ShareDialog({ sessionId, sessionName, events, missing, onClose, 
           <input
             className="share-caption"
             readOnly
-            value={CAPTION}
+            value={caption()}
             aria-label="caption to post with the GIF"
             onFocus={(e) => e.currentTarget.select()}
           />
