@@ -493,6 +493,13 @@ describe('the card', () => {
     expect(el.querySelector('#share-privacy')!.textContent).toContain('This card shows');
   });
 
+  it('says so when the page does not hold the whole session, and where the whole card comes from', () => {
+    const el = cardDialog({ missing: 600 });
+    toCard(el);
+    expect(el.textContent).toContain('counts from partway through');
+    expect(el.textContent).toContain('roundtable --card');
+  });
+
   it('has no Length or Plays: a card is one moment', () => {
     const el = cardDialog();
     toCard(el);
