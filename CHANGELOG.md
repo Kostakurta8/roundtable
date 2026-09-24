@@ -14,10 +14,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 **A browser demo that needs no install.** `npm run build:pages` builds the real app against a
-recording of the real hub — `scripts/recordDemo.ts` stages the `--demo` room, follows the shipped hub
-over a socket, and writes down every frame it sends — and `.github/workflows/pages.yml` publishes it
-to `https://kostakurta8.github.io/roundtable/`. It plays at 2.5× and loops; a banner says it is a
-staged replay, carries the install command and a copy button, and the status pill reads `REPLAY`.
+recording of the real hub, and `.github/workflows/pages.yml` publishes it to
+`https://kostakurta8.github.io/roundtable/`. `scripts/recordDemo.ts` stages the same showcase session
+the README's timelapse shows — six scouts, eight builders, a verifier on every change, one refuted
+and fixed — reads it with the shipped hub over a socket, and deals the frames out again on a
+compressed clock (`src/demo/timelapse.ts`): each silence clamped to a beat, nine and a half minutes
+in seventy seconds, looping every ninety. A banner says it is a staged timelapse and carries the
+install command and a copy button, and the status pill reads `REPLAY`.
 The demo lives behind its own entry file, so the bundle people install contains none of it. The
 page has Open Graph and Twitter card tags, so a pasted link unfurls with the social card.
 
