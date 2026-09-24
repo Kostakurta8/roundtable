@@ -73,6 +73,9 @@ const RENDER_WINDOW = 250;
  */
 const FRESH_BATCH_MAX = 8;
 
+/** How the shell titles a session that has an opening prompt; the header sets the word apart. */
+const TASK_PREFIX = 'TASK · ';
+
 const laneOf = (m: RtMsg): Lane =>
   m.agentId === SYSTEM ? 'system' : m.agentId === USER ? 'human' : 'agents';
 
@@ -214,47 +217,75 @@ export function Chat({
       return next;
     });
 
+  /**
+   * Whether the feed is scrolled under the header.
+   *
+   * The feed follows the live edge, so on load it is scrolled to the bottom and the opening turn —
+   * the human's prompt — sits cut off at the top of the scroller, directly under the filter row.
+   * Nothing overlapped it; it was clipped by the scroller's edge. But a hard edge with text sliced
+   * along it reads as one panel lying on top of another, and that is what people reported. With the
+   * header lifted off the feed by a shadow while anything is scrolled under it, the same pixels read
+   * as what they are: a list that continues upward. The prompt itself is the header's brief, whole,
+   * so nothing a newcomer needs is behind the scroll.
+   */
+  const [under, setUnder] = useState(false);
+  const scrolled = (): void => {
+    onScroll();
+    const now = (ref.current?.scrollTop ?? 0) > 2;
+    if (now !== under) setUnder(now);
+  };
+  const brief = title.startsWith(TASK_PREFIX) ? title.slice(TASK_PREFIX.length) : null;
+
   return (
     <>
-      <div className="chat-head">
-        <div className="l2" title={title}>
-          {title}
+      <div className={under ? 'chat-top under' : 'chat-top'}>
+        <div className="chat-head" title={title}>
+          {brief !== null ? (
+            <>
+              <span className="chat-k">TASK</span>
+              <p className="chat-brief">{brief}</p>
+            </>
+          ) : (
+            <p className="chat-brief">{title}</p>
+          )}
+        </div>
+
+        <div className="tab-tools">
+          <input
+            className="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="search this session…"
+            aria-label="search the feed"
+          />
+          <div className="chip-set" role="group" aria-label="show in the feed">
+            {LANES.map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                className={lanes.has(key) ? 'filter-chip on' : 'filter-chip'}
+                aria-pressed={lanes.has(key)}
+                onClick={() => toggle(key)}
+              >
+                {label}
+              </button>
+            ))}
+            {onCrossTalk && (
+              <button
+                type="button"
+                className={crossTalk ? 'filter-chip on' : 'filter-chip'}
+                aria-pressed={crossTalk}
+                title="only what the agents said to each other"
+                onClick={() => onCrossTalk(!crossTalk)}
+              >
+                verdicts
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="tab-tools">
-        <input
-          className="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="search this session…"
-          aria-label="search the feed"
-        />
-        {LANES.map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            className={lanes.has(key) ? 'filter-chip on' : 'filter-chip'}
-            aria-pressed={lanes.has(key)}
-            onClick={() => toggle(key)}
-          >
-            {label}
-          </button>
-        ))}
-        {onCrossTalk && (
-          <button
-            type="button"
-            className={crossTalk ? 'filter-chip on' : 'filter-chip'}
-            aria-pressed={crossTalk}
-            title="only what the agents said to each other"
-            onClick={() => onCrossTalk(!crossTalk)}
-          >
-            verdicts
-          </button>
-        )}
-      </div>
-
-      <div className="scroller" ref={ref} onScroll={onScroll}>
+      <div className="scroller" ref={ref} onScroll={scrolled}>
         {/* The gap is named rather than hidden: a feed that silently starts mid-conversation lies.
             Two separate counts because they are two different losses — events the hub could no
             longer replay, and messages this client's own cap pushed off the top. */}
