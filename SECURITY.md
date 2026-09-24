@@ -73,12 +73,26 @@ script and no external image, and its favicon is an inline `data:` URI. The two 
 dependencies are `chokidar` and `ws`; `react` and `react-dom` are build-time only, compiled into
 the bundle.
 
-**No processes are spawned by the observer.** There is no `child_process` import, and no `exec`,
-`execSync`, `spawn` or `spawnSync` call, in `server/`, `src/` or `shared/`. The one exception in
-the project is the launcher, `bin/roundtable.mjs`, which spawns the operating system's own opener
-(`cmd /c start`, `open`, `xdg-open`) on the local address it just printed, with no shell and
-nothing interpolated. `--no-open` skips it. It is kept out of `server/` deliberately: the hub reads
-private transcripts, and a program that reads transcripts should not also be one that runs things.
+**The observer spawns one process, on Windows only, and nothing anywhere else.** To name a session
+the way you named its Windows Terminal tab, `server/termtabs.ts` runs `powershell.exe` through
+`execFile` — no shell, and nothing interpolated into the command — with a fixed script:
+`-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script>`. The execution-policy flag
+applies to that one process, not to the machine. The script uses UI Automation to read two things
+from the Windows Terminal window, and only from a window of that class: the **active tab's title**
+and the **last 6,000 characters of text on its pane**. The hub matches that text against the
+transcripts it already has in memory, keeps the title only when exactly one session matches, and
+stores and sends the pane text nowhere. It runs on the roster tick, a few seconds apart, one at a
+time, and is abandoned after 4 seconds. On macOS and Linux, `readActiveTab` returns before anything
+is spawned. This was added after this section was first written and it said "no processes" for a
+while after that; it was not true on Windows in that time.
+
+Beyond that there is no `child_process` import, and no `exec`, `execSync`, `spawn` or `spawnSync`
+call, in `server/`, `src/` or `shared/`. The launcher, `bin/roundtable.mjs`, spawns the operating
+system's own opener (`cmd /c start`, `open`, `xdg-open`) on the local address it just printed, with
+no shell and nothing interpolated; `--no-open` skips it. It is kept out of `server/` deliberately:
+the hub reads private transcripts, and a program that reads transcripts should run as little as
+possible. The terminal probe is the one thing that breaks that rule, because it has to run for as
+long as the hub does.
 
 **The observed root is opened read-only.** `server/sessions.ts` imports exactly three things from
 `node:fs` — `readdirSync`, `readFileSync`, `statSync` — plus `homedir` and `join`. There is no
