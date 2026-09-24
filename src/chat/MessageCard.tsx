@@ -1,9 +1,9 @@
 /** One line of the feed: a human turn, an agent's card, or a system note. */
 import { memo, useState } from 'react';
 import { modelInfo } from '../../shared/models';
-import { agentLook, SYSTEM, USER, type RtAgent, type RtMsg, type RtTool } from '../store';
+import { SYSTEM, USER, type RtAgent, type RtMsg, type RtTool } from '../store';
 import { clock, duration, editLines, isoOrUndefined } from '../ui/format';
-import { MiniHead } from '../ui/MiniHead';
+import { agentInk, MiniHead } from '../ui/MiniHead';
 
 const NAME_MAX = 16;
 
@@ -253,7 +253,6 @@ export const MessageCard = memo(function MessageCard({
   const machine = isUser && msg.source !== undefined && msg.source !== 'human';
   const who = isUser ? (machine ? msg.source : 'you') : displayName(msg, agent);
   const folded = machine && msg.text.length > FOLD_OVER;
-  const color = isUser ? 'var(--ink-2)' : agentLook(msg.agentId).color;
   const model = agent?.model ? modelInfo(agent.model).short : undefined;
 
   const cls = [isUser ? 'msg msg-user' : 'msg', machine ? 'machine' : '', focus ? 'focus' : '', fresh ? 'fresh' : '']
@@ -265,7 +264,11 @@ export const MessageCard = memo(function MessageCard({
       {!isUser && <MiniHead agentId={msg.agentId} />}
       <div className={`msg-card${msg.verdict ? ` verdict-${msg.verdict}` : ''}`}>
         <div className="msg-head">
-          <span className="who" style={{ color }} title={agent?.model ?? msg.agentId}>
+          <span
+            className={isUser ? 'who' : 'who agent-ink'}
+            style={isUser ? { color: 'var(--ink-2)' } : agentInk(msg.agentId)}
+            title={agent?.model ?? msg.agentId}
+          >
             {who}
           </span>
           {model && <span className="model">{model}</span>}
