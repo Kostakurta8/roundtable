@@ -79,6 +79,26 @@ describe('evLog', () => {
     expect(log.lost('s1')).toBe(0);
   });
 
+  it('holds one budget across sessions, trimming the least recently active first', () => {
+    const log = evLog(() => recorder(), 5);
+    for (const t of ['a1', 'a2', 'a3']) log.sink.ev(said('idle', t));
+    for (const t of ['b1', 'b2', 'b3']) log.sink.ev(said('busy', t));
+    // Six events against a budget of five: the idle session gives up its oldest, the busy one
+    // keeps all of its own.
+    expect(log.events('idle').map((e) => (e as Ev & { text: string }).text)).toEqual(['a2', 'a3']);
+    expect(log.lost('idle')).toBe(1);
+    expect(log.events('busy')).toHaveLength(3);
+    // The idle session writes again and becomes the recent one; now the other pays.
+    log.sink.ev(said('idle', 'a4'));
+    expect(log.events('busy').map((e) => (e as Ev & { text: string }).text)).toEqual(['b2', 'b3']);
+    expect(log.lost('busy')).toBe(1);
+    // A reset hands its events back to the budget rather than leaking the count.
+    log.sink.reset('busy');
+    for (const t of ['a5', 'a6']) log.sink.ev(said('idle', t));
+    expect(log.events('idle')).toHaveLength(5);
+    expect(log.lost('idle')).toBe(1);
+  });
+
   it('reads the wrapped sink at each event, so the shell may hand it a new one', () => {
     let inner = recorder();
     const log = evLog(() => inner);
