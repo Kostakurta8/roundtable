@@ -2513,3 +2513,142 @@ kbd {
     display: none;
   }
 }
+
+/*
+ * Phone width. The stacked layout above was designed down to ~740px and simply continued below it,
+ * so at 390px the room was a 378×213 strip under a band of ceiling, the session tabs were offset by
+ * a rail that was not on screen and ran off the right edge, and the bar truncated the session's own
+ * name to "pathfin…" to make room for its directory.
+ *
+ * - The room gets a share of the height it can use: `homeCam` crops the sides of the office rather
+ *   than draw its people ten pixels tall, and the stage is sized so the crop still shows most of it.
+ * - The bar keeps every control but gives up the words beside them: the directory (it is in the
+ *   picker's own rows) and the pill's LIVE (its dot says it; the text stays in the accessibility
+ *   tree, because `font-size: 0` hides it from the eye only).
+ * - The strip becomes two rows: ELAPSED beside the bars, and the caption that says how much of the
+ *   session the bars cover under them. The legend goes — the Help sheet names the four colours.
+ */
+@media (max-width: 560px) {
+  :root {
+    --top-h: 42px;
+    --time-h: 62px;
+    --gap: 5px;
+    --dock-row: minmax(0, 52fr);
+  }
+  .app {
+    grid-template-rows: var(--top-h) minmax(0, 48fr) var(--dock-row) var(--time-h);
+  }
+  .topbar {
+    gap: 5px;
+    padding: 0 6px 0 9px;
+  }
+  .session-menu {
+    min-width: 0;
+  }
+  .session-pick {
+    max-width: none;
+    gap: 5px;
+    padding: 4px 7px;
+  }
+  .session-pick .slug {
+    display: none;
+  }
+  .topbar .pill-live {
+    font-size: 0;
+    gap: 0;
+    padding: 5px;
+  }
+  .topbar .btn.icon {
+    padding: 4px 6px;
+    min-width: 26px;
+    min-height: 26px;
+    justify-content: center;
+  }
+  .stage.has-tabs {
+    --strip-h: 36px;
+  }
+  .session-tab {
+    padding: 3px 9px;
+  }
+  .session-tab .slug {
+    max-width: 96px;
+  }
+  /* Fingers, not a cursor: the camera's buttons grow to a size a thumb can hit. */
+  .cam-btn {
+    min-width: 28px;
+    height: 28px;
+  }
+  .cam-ctl {
+    right: 8px;
+    bottom: 8px;
+  }
+  .tabs .tab {
+    padding: 8px 9px 7px;
+  }
+  .timeline {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: 12px;
+    row-gap: 3px;
+    padding: 6px 10px 5px;
+  }
+  .timeline > .tl-side:first-child {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+  .tl-plot {
+    height: 32px;
+  }
+  .tl-meta {
+    grid-column: 2;
+    align-items: flex-start;
+  }
+  .tl-legend {
+    display: none;
+  }
+  .dock-foot {
+    padding: 5px 12px;
+  }
+  /* The guide as a one-row legend — picture over caption. As sentences it covered the phone's room. */
+  .guide {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-width: none;
+    padding: 9px 11px 10px;
+    font-size: 10.5px;
+    line-height: 1.3;
+  }
+  .guide-lede,
+  .guide-long {
+    display: none;
+  }
+  .guide-list {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .guide-list li {
+    grid-template-columns: none;
+    justify-items: center;
+    align-content: start;
+    gap: 5px;
+  }
+  .guide-short {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 1.25;
+    text-align: center;
+    color: var(--ink-2);
+  }
+  .guide-ico {
+    width: auto;
+    height: 20px;
+  }
+  .guide-ft {
+    margin-top: 8px;
+    padding-top: 8px;
+  }
+}
