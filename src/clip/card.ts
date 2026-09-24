@@ -231,7 +231,8 @@ function measure(evs: readonly Ev[], opts: CardOptions): Measured {
  * still swinging, how long a bubble has been up — and a scene that has seen only one frame thinks
  * everybody in it has just come through the door. Two seconds at the GIF's own frame step is enough
  * for all of that to settle. Those frames are drawn into a canvas that keeps nothing, because the
- * scene's memory is the only part of them anybody needs, and painting them cost ten times as much.
+ * scene's memory is the only part of them anybody needs: painted, at the eleven milliseconds a clip
+ * frame takes, their twenty-five frames would be four times the whole card.
  */
 const WARM_MS = 2000;
 const FRAME_MS = 80;
