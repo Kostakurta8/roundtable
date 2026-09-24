@@ -159,11 +159,11 @@ subagents less mysterious.
 
 ## The whole app
 
-![agents arriving, reporting to each other, and one verdict going each way](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
+![the whole app on the staged demo session, a minute of it in nineteen seconds: agents walk in and take desks as they are spawned, one crosses the floor to report, then one says REFUTED and another CONFIRMED — in speech bubbles in the room and as red and green cards in the feed beside it — while the roster strip under the room and the token count fill in](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
 
-The room is one panel of the app. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
-shows the rest: the timeline rewinding the room to an earlier second, two sessions in tabs, and the
-per-agent token and cost breakdown. No narration; captions are burned in, and
+The clip stays on one live session. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
+shows what it does not: the timeline rewinding the room to an earlier second, two sessions in tabs,
+and the per-agent token and cost breakdown. No narration; captions are burned in, and
 `media/roundtable-trailer.srt` has them as text.
 
 Every frame of both clips is the real application driven by real events — only the *content* of the
