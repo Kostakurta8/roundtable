@@ -50,9 +50,10 @@ size.
 4. **A screenshot of `--stats` output** in a terminal, cropped to the first block and the usage
    line. *To make: run it on your machine; use your numbers, not the README's.*
 5. **`media/screenshot-night.png`**: the same room at night.
-6. **`media/social-preview.png`**: the summary card. Note it shows the `npx github:` install line,
-   which is the slow path (a minute or two); consider re-exporting it with the release tarball
-   line before launch.
+6. **`media/social-preview.png`**: the summary card, with the browser demo's address as its call
+   to action.
+7. **`media/screenshot-share.png`**: the Share dialog — a session rendered to a GIF in the tab,
+   with the "hide transcript text" switch and the look-before-you-post note.
 
 **Video:** Product Hunt takes a YouTube link, not a file. Upload `media/roundtable-trailer.mp4`
 (52 s, captions burned in) to YouTube and paste the link.
