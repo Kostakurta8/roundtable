@@ -46,8 +46,10 @@ in-process hub on 7411. Stop the app by **port**, not by killing the `npm` wrapp
 servers outlive it.
 
 CI (`.github/workflows/ci.yml`) runs the typecheck, the unit tests and `npx vite build` on Ubuntu,
-macOS and Windows, on Node 22 and 24. The e2e job is manual-only and has never been observed to
-pass on a runner; the workflow says so in a comment.
+macOS and Windows, on Node 22 and 24, and the e2e suite on Linux twice — once with the polling
+watcher and once with `fs.watch`, the only place the latter is exercised. The e2e job was
+manual-only until it first passed on a runner (run 31331751587); it gates every push and pull
+request now.
 
 All three must be green before a PR is reviewed. `main` should never be red — if you find it that
 way, say so in an issue rather than building on top of it.
