@@ -30,6 +30,14 @@ session on screen as a GIF in a Web Worker, previews it, and lets the browser sa
 bytes. Length, busiest stretch or whole session, and "Hide transcript text" are options; nothing is
 uploaded. The encoder is also twice as fast, with identical output.
 
+**A session card, the second thing you can share.** The Share dialog's **GIF | Card** switch, or
+`roundtable --card`, renders one 1200×630 PNG: subagents, the most at once, tokens and estimated cost
+(the top bar's own figures, `≥` included), duration, verdicts and the busiest agent, over a still of
+the room at its busiest, with the same "Hide transcript text" switch. The dialog downloads it or
+copies it as an image; the CLI writes it with the renderer the page uses. A clip also no longer
+holds every frame whole before encoding — a 40-second GIF took 277 MB in the worker and now takes
+13 MB, with the same bytes out.
+
 **A first-visit guide.** A card over the room says what a person, a desk, a bubble, a walk and the
 door mean, and that the timeline rewinds. It does not block the room, collapses to a one-row legend
 on a short stage, is remembered once dismissed, and is back from the Help sheet or the palette.
