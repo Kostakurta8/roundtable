@@ -1839,6 +1839,70 @@ details.monologue[open] summary::before {
   color: var(--ink-3);
   margin-bottom: 8px;
 }
+.sheet-grab {
+  display: none;
+}
+
+/*
+ * The inspector at phone width: a sheet over the dock, not a card over the room.
+ *
+ * As a card it covered 220×285 of a 380×307 room — the person just tapped was under the panel about
+ * them. Here it is a grid item placed in the dock's cell (which `App` keeps open while it shows),
+ * pinned to the bottom and as tall as its content up to the whole cell, so the room above stays in
+ * full view and the chat is what gets covered — it is one tap away again. Its header is the handle a
+ * thumb pulls it down by (`Inspector`), so the header does not scroll the page under the thumb.
+ */
+.app > .inspector.sheet {
+  grid-area: dock;
+  position: relative;
+  top: auto;
+  right: auto;
+  z-index: 45;
+  align-self: end;
+  width: auto;
+  /* Short of the dock's tab row, which stays in view: the plainest "outside" to tap, and it says
+     where the tap goes back to. */
+  max-height: calc(100% - 38px);
+  padding: 2px 14px 14px;
+  border-radius: 12px 12px var(--radius) var(--radius);
+  font-size: 10.5px;
+  animation: sheet-in 0.22s var(--ease);
+}
+.inspector.sheet .sheet-grab {
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin: 7px auto 9px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.inspector.sheet .sheet-grab,
+.inspector.sheet h3,
+.inspector.sheet .sub {
+  touch-action: none;
+  cursor: grab;
+}
+.inspector.sheet .close {
+  top: 12px;
+  right: 10px;
+  min-width: 30px;
+  min-height: 30px;
+  justify-content: center;
+}
+.inspector.sheet h3 {
+  font-size: 12px;
+  margin-right: 40px;
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 
 /* ============================================================== guide ==== */
 
