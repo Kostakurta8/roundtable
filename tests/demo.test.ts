@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evSession, isEv, type Ev } from '../shared/events';
 import type { HelloMsg, RosterMsg, ServerMsg } from '../shared/protocol';
-import { HOLD_MS, parseRecording, play, seqSpan, sessionsOf, shift, type Recording } from '../src/demo/playback';
+import { HOLD_MS, paceOf, parseRecording, play, seqSpan, sessionsOf, shift, type Recording } from '../src/demo/playback';
 import { compressedClock, cut, type Cut, type CutOptions, type Take } from '../src/demo/timelapse';
 import { initialState, MAIN, reduce, roster, type RtState } from '../src/store';
 
@@ -79,6 +79,37 @@ describe('parseRecording', () => {
     expect(recording([[500, text('a', 500, 1)]], 900).span).toBe(900);
     expect(recording([[500, text('a', 500, 1)]], 100).span).toBe(500);
     expect(recording([[500, text('a', 500, 1)]]).span).toBe(500);
+  });
+
+  it('reads how a timelapse was cut, and believes both numbers or neither', () => {
+    const base = { v: 1, frames: [[0, hello(0)]] };
+    expect(parseRecording({ ...base, timelapse: { realMs: 540_000, playMs: 70_000 } }).timelapse).toEqual({ realMs: 540_000, playMs: 70_000 });
+    expect(parseRecording({ ...base, timelapse: { realMs: 540_000 } }).timelapse).toBeUndefined();
+    expect(parseRecording({ ...base, timelapse: { realMs: '9m', playMs: 70_000 } }).timelapse).toBeUndefined();
+    expect(parseRecording({ ...base, timelapse: { realMs: 540_000, playMs: -1 } }).timelapse).toBeUndefined();
+    expect(parseRecording(base).timelapse).toBeUndefined();
+  });
+});
+
+describe('paceOf', () => {
+  const lapse = (realMs: number, playMs: number): Recording => ({ span: playMs, frames: [], timelapse: { realMs, playMs } });
+
+  /** The banner is the only thing on the page that can say this is not happening in real time. */
+  it('calls a timelapse a timelapse, and says the silences were shortened', () => {
+    const { label, title } = paceOf(lapse(566_894, 70_000), 1);
+    expect(label).toBe('TIMELAPSE');
+    expect(title).toContain('about 9½ minutes long, played in 70 seconds');
+    expect(title).toMatch(/silences .* shortened/);
+    expect(title).toContain('nothing here happens in real time');
+  });
+
+  it('counts a speed-up on top of the cut in what it says the replay lasts', () => {
+    expect(paceOf(lapse(600_000, 70_000), 2).title).toContain('about 10 minutes long, played in 35 seconds');
+    expect(paceOf(lapse(60_000, 20_000), 1).title).toContain('about 1 minute long');
+  });
+
+  it('says how much faster a recording that was not cut plays', () => {
+    expect(paceOf({ span: 1000, frames: [] }, 2.5)).toEqual({ label: '2.5×', title: 'played at 2.5× the speed it was recorded' });
   });
 });
 

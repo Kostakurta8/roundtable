@@ -28,11 +28,16 @@ import type { ResetMsg } from '../../shared/protocol';
 /** One frame: when it arrived, in ms from the start of the recording, and what the hub sent. */
 export type Frame = readonly [at: number, msg: object];
 
+/** How a timelapse recording was cut: this much of a session, played in this long. */
+export type Timelapse = { realMs: number; playMs: number };
+
 export type Recording = {
   /** How long the take ran — at least as long as the last frame's `at`, usually a little longer. */
   span: number;
   /** In arrival order, which is the order the hub sent them — `at` never decreases. */
   frames: readonly Frame[];
+  /** Present when the recorder shortened the session's silences, which the banner has to say. */
+  timelapse?: Timelapse;
 };
 
 /** How long the last moment stays on screen before the replay starts over. */
@@ -58,7 +63,7 @@ export const DEMO_SPEED = 2.5;
  * disagree with the first.
  */
 export function parseRecording(raw: unknown): Recording {
-  const r = raw && typeof raw === 'object' ? (raw as { v?: unknown; span?: unknown; frames?: unknown }) : {};
+  const r = raw && typeof raw === 'object' ? (raw as { v?: unknown; span?: unknown; frames?: unknown; timelapse?: unknown }) : {};
   if (r.v !== 1 || !Array.isArray(r.frames)) throw new Error('demo: not a version-1 recording');
   const frames: Frame[] = [];
   let at = 0;
@@ -74,7 +79,36 @@ export function parseRecording(raw: unknown): Recording {
   // The recorder stops a little after its last frame, so the last agent out has time to walk; a
   // span that claims to end before the frames do is not believed.
   const span = typeof r.span === 'number' && Number.isFinite(r.span) ? Math.max(at, r.span) : at;
+  const t = r.timelapse && typeof r.timelapse === 'object' ? (r.timelapse as { realMs?: unknown; playMs?: unknown }) : null;
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  // Half a claim is no claim: the banner either says both numbers or neither.
+  if (t && ok(t.realMs) && ok(t.playMs)) return { span, frames, timelapse: { realMs: t.realMs, playMs: t.playMs } };
   return { span, frames };
+}
+
+/** What the banner calls the replay's clock, and the sentence behind it. */
+export type Pace = { label: string; title: string };
+
+/**
+ * What the banner says about time, read off the recording rather than typed beside it, so a
+ * re-record that changes the length cannot leave the tooltip quoting the old one.
+ *
+ * The one thing it must never do is let a visitor believe they are watching real time. A timelapse
+ * says so in its label; the tooltip gives the numbers.
+ */
+export function paceOf(rec: Recording, speed = DEMO_SPEED): Pace {
+  const lapse = rec.timelapse;
+  if (!lapse) return { label: `${speed}×`, title: `played at ${speed}× the speed it was recorded` };
+  // To the half minute: "9½" is how long a session is to a person; "9.45" is a measurement.
+  const halves = Math.max(1, Math.round(lapse.realMs / 30_000));
+  const minutes = `${Math.floor(halves / 2) || ''}${halves % 2 ? '½' : ''}`;
+  const seconds = Math.round(lapse.playMs / speed / 1000);
+  return {
+    label: 'TIMELAPSE',
+    title:
+      `A staged session about ${minutes} minute${halves <= 2 ? '' : 's'} long, played in ${seconds} seconds. ` +
+      'The silences between its steps were shortened, so nothing here happens in real time.',
+  };
 }
 
 /** The highest `seq` in the recording: how far each pass moves the next one's numbers along. */
