@@ -56,6 +56,7 @@
     "dev": "concurrently -k -n hub,web -c cyan,magenta \"tsx server/index.ts\" \"vite\"",
     "demo": "concurrently -k -n demo,web -c cyan,magenta \"tsx scripts/demo.ts\" \"vite --open\"",
     "build": "node scripts/build.mjs",
+    "build:pages": "vite build --mode pages",
     "serve": "node bin/roundtable.mjs",
     "smoke": "node scripts/smoke-npx.mjs",
     "test": "vitest run",

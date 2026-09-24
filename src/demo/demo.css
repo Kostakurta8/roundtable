@@ -1,0 +1,247 @@
+/*
+ * The hosted demo's own additions, and nothing else. Loaded only by `main.tsx` in this directory,
+ * after `index.css`, so it can lean on the shell's tokens — a strip that named its own colours would
+ * be the one surface on the page that did not follow the theme toggle.
+ */
+
+/* ============================================================== layout ==== */
+
+/*
+ * The strip takes real space rather than floating over the room. Floating was the cheaper layout
+ * and the wrong one: at 390px wide the room is a letterboxed band barely taller than the strip, and
+ * anything laid over it covers the agents the demo is there to show. `.app` sizes itself to 100% of
+ * `#root`, and a grid row is a definite height for that percentage to resolve against.
+ */
+.rt-demo #root {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* ============================================================= the strip ==== */
+
+.demo-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  /* The shell pads itself by `--gap`, so the space under the strip is already there. */
+  margin: var(--gap) var(--gap) 0;
+  padding: 4px 5px 4px 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.demo-what {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* The shell's pill, in the accent rather than the status green: this is a label, not a health check. */
+.demo-tag {
+  flex: none;
+  padding: 2px 9px;
+  border: 1px solid var(--accent-2);
+  border-radius: 20px;
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+/* Squeezed below 390px the sentence gives way to an ellipsis rather than running under the button. */
+.demo-what > :not(.demo-tag) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.demo-short {
+  display: none;
+}
+
+/* The command and its button read as one control: a field with a button set into its end. */
+.demo-install {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.demo-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  /* One click takes the whole line, for the browsers where the copy button cannot. */
+  user-select: all;
+}
+/* A prompt, and not part of the selection: pasting `$ npx …` into a shell is its own small bug. */
+.demo-cmd::before {
+  content: '$ ';
+  color: var(--ink-3);
+  user-select: none;
+}
+
+.demo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background 0.14s var(--ease),
+    color 0.14s var(--ease),
+    border-color 0.14s var(--ease);
+}
+.demo-btn:hover {
+  background: var(--panel-3);
+  color: var(--ink);
+}
+.demo-btn:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+}
+
+.demo-copy {
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+.demo-copy:focus-visible {
+  outline-offset: -2px;
+}
+
+.demo-star {
+  color: var(--ink);
+}
+.demo-star [aria-hidden] {
+  color: var(--warn);
+}
+
+.demo-toggle {
+  padding: 1px 7px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Shrunk: one slim row, the label on the left and everything else on the right. */
+.demo-bar.compact {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.demo-bar.compact .demo-copy {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  margin-left: auto;
+}
+.demo-bar.compact .demo-toggle {
+  font-size: 11px;
+}
+
+/*
+ * Narrower: the sentence shortens before the command does, because the command is the thing to
+ * take away and the tag already says what the sentence says.
+ */
+@media (max-width: 1100px) {
+  .demo-what .demo-long {
+    display: none;
+  }
+  .demo-what .demo-short {
+    display: inline;
+  }
+}
+
+/*
+ * A phone: two rows. What this is and the way to close it on top; the command, and the star, under
+ * it — the command keeps the width it needs to be recognizable as a command at all.
+ */
+@media (max-width: 640px) {
+  .demo-bar .demo-long {
+    display: none;
+  }
+  .demo-bar:not(.compact) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'what    close'
+      'install star';
+    column-gap: 8px;
+    row-gap: 5px;
+    padding: 5px 5px 5px 7px;
+  }
+  .demo-what {
+    grid-area: what;
+  }
+  .demo-toggle {
+    grid-area: close;
+  }
+  .demo-install {
+    grid-area: install;
+  }
+  .demo-star {
+    grid-area: star;
+  }
+  .demo-bar.compact {
+    gap: 6px;
+  }
+}
+
+/* ======================================================== the top bar ==== */
+
+/*
+ * The top bar's pill reports the socket, and says LIVE whenever it is up — which is honest of the
+ * app and a lie about this page, where the "socket" is a recording. `TopBar` is not the demo's to
+ * change, so the word is replaced here: the original text is collapsed to nothing and the pill
+ * speaks through its `::after` instead, in the accent rather than the green that means healthy and
+ * live, with a dot that holds still rather than blinking like a recording light.
+ */
+.rt-demo .topbar .pill-live {
+  gap: 0;
+  font-size: 0;
+  color: var(--accent);
+  border-color: var(--accent-2);
+  background: var(--accent-wash);
+}
+.rt-demo .topbar .pill-live::after {
+  content: 'REPLAY';
+  margin-left: 5px;
+  font-size: 10px;
+}
+.rt-demo .topbar .pill-live .live-dot {
+  animation: none;
+}
