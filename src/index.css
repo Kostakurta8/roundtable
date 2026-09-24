@@ -284,6 +284,9 @@ body {
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--stage-bg);
+  /* A size container, so what floats over the room can respond to the room's height (the guide). The
+     stage is a grid cell sized by the shell, never by its contents, so containment costs nothing. */
+  container: stage / size;
   /*
    * The session strip's band. It used to float over the top of the room, which was harmless only
    * because the room never reached the top of the stage — there was always a band of ceiling for it
@@ -853,7 +856,7 @@ details.monologue summary:focus-visible,
   height: var(--roster-h);
   flex-direction: row;
   gap: 12px;
-  padding: 9px 10px 9px 14px;
+  padding: 7px 10px 7px 14px;
   border-width: 1px 0 0;
 }
 .stage.roster-below .rail-hd {
@@ -1942,6 +1945,52 @@ details.monologue[open] summary::before {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+/*
+ * On a short stage the guide is a one-row legend — each picture over a one-word caption — because
+ * as six sentences it stood 370px tall, which at 1024×700 is the whole height of the room it is
+ * meant to be a note about. Keyed on the stage's own height, not the window's: the room's height
+ * is what the card has to fit beside, and the dock and the strip take different shares of the
+ * window at every breakpoint.
+ */
+@container stage (max-height: 620px) {
+  .guide {
+    width: 440px;
+    padding: 9px 12px 10px;
+    font-size: 11px;
+    line-height: 1.3;
+  }
+  .guide-lede,
+  .guide-long {
+    display: none;
+  }
+  .guide-list {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .guide-list li {
+    grid-template-columns: none;
+    justify-items: center;
+    align-content: start;
+    gap: 5px;
+  }
+  .guide-short {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 1.25;
+    text-align: center;
+    color: var(--ink-2);
+  }
+  .guide-ico {
+    width: auto;
+    height: 20px;
+  }
+  .guide-ft {
+    margin-top: 8px;
+    padding-top: 8px;
+  }
+}
 @keyframes guide-in {
   from {
     opacity: 0;
@@ -2602,10 +2651,14 @@ kbd {
   .session-tab .slug {
     max-width: 96px;
   }
-  /* Fingers, not a cursor: the camera's buttons grow to a size a thumb can hit. */
+  /* Fingers, not a cursor: the camera's buttons grow to a size a thumb can hit, and the readout
+     between them goes — at this width it was a sixth of the room's width spent on the word fit. */
   .cam-btn {
     min-width: 28px;
     height: 28px;
+  }
+  .cam-z {
+    display: none;
   }
   .cam-ctl {
     right: 8px;
@@ -2638,7 +2691,7 @@ kbd {
   .dock-foot {
     padding: 5px 12px;
   }
-  /* The guide as a one-row legend — picture over caption. As sentences it covered the phone's room. */
+  /* The guide spans the room's width here; the short stage has already made it a legend. */
   .guide {
     left: 8px;
     right: 8px;
@@ -2648,36 +2701,5 @@ kbd {
     padding: 9px 11px 10px;
     font-size: 10.5px;
     line-height: 1.3;
-  }
-  .guide-lede,
-  .guide-long {
-    display: none;
-  }
-  .guide-list {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 4px;
-    margin-top: 8px;
-  }
-  .guide-list li {
-    grid-template-columns: none;
-    justify-items: center;
-    align-content: start;
-    gap: 5px;
-  }
-  .guide-short {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 9px;
-    line-height: 1.25;
-    text-align: center;
-    color: var(--ink-2);
-  }
-  .guide-ico {
-    width: auto;
-    height: 20px;
-  }
-  .guide-ft {
-    margin-top: 8px;
-    padding-top: 8px;
   }
 }
