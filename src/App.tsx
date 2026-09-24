@@ -159,6 +159,11 @@ function Nothing({ connected, sessions, root }: { connected: boolean; sessions: 
 const ROSTER_MIN = 64;
 /** The most of the stage the strip may take, however much the room leaves over. */
 const ROSTER_MAX_SHARE = 0.4;
+/**
+ * The narrowest the roster column may become so the room beside it can fill the stage's height:
+ * the strip's own chip width (176px) plus the column's padding, so a row still reads as one.
+ */
+const RAIL_MIN = 192;
 
 /**
  * Where the roster goes, and how much of the stage it takes from the room.
@@ -211,20 +216,28 @@ function useRoomLayout(
         // measured off the rail's box: on the frame the mode flips, that box is still the strip.
         const railW = Number.parseFloat(getComputedStyle(host).getPropertyValue('--rail-w')) || 0;
         const room = Math.max(1, cols);
+        // The column gives up width, down to `RAIL_MIN`, until the room beside it fills the
+        // stage's height. At its full width it could leave the room width-limited with a band of
+        // ceiling over the wall — 60px at 1440×900 with the dock hidden — for want of 107px.
+        const railFit = Math.min(railW, Math.max(Math.min(RAIL_MIN, railW), w - (h * room) / PIX.h));
         // Whichever mode draws the bigger room. Deciding on "is there a row's worth of height
         // under a full-width room" alone flipped to the column at 1920×1080 with 61px of slack
         // against a 64px row — and the column then took 240px of width from a width-limited
         // room, which put 200px of empty ceiling above it: a far worse room than a strip three
         // pixels shorter than it would like.
         const belowScale = Math.min(w / room, (h - ROSTER_MIN) / PIX.h);
-        const sideScale = Math.min((w - railW) / room, h / PIX.h);
-        if (h > ROSTER_MIN && belowScale >= sideScale) {
+        const sideScale = Math.min((w - railFit) / room, h / PIX.h);
+        // …unless the column, even at its narrowest, still leaves ceiling over the wall. The strip
+        // never does on a stage like that (it grows into the height the room leaves), and the room
+        // it costs is at most the row the strip takes: about 30px of height at 1440×900.
+        const sideBand = h - PIX.h * sideScale;
+        if (h > ROSTER_MIN && (belowScale >= sideScale || sideBand > 1)) {
           const slack = Math.max(h - (w * PIX.h) / PIX.w, ROSTER_MIN);
           const want = h - (w * PIX.h) / room;
           const rosterH = Math.round(Math.min(Math.max(want, ROSTER_MIN), slack, h * ROSTER_MAX_SHARE));
           next = { mode: 'below', insetLeft: 0, rosterH };
         } else {
-          next = { mode: 'side', insetLeft: Math.round(railW), rosterH: 0 };
+          next = { mode: 'side', insetLeft: Math.round(railFit), rosterH: 0 };
         }
       }
       setLayout((prev) =>
@@ -534,7 +547,13 @@ export default function App() {
         ]
           .filter(Boolean)
           .join(' ')}
-        style={{ '--roster-h': `${layout.rosterH}px` } as CSSProperties}
+        style={
+          {
+            '--roster-h': `${layout.rosterH}px`,
+            // The column's width as the layout fitted it, which can be narrower than `--rail-w`.
+            '--rail-fit': layout.mode === 'side' ? `${layout.insetLeft}px` : undefined,
+          } as CSSProperties
+        }
         ref={stageRef}
       >
         {/* Over the room rather than in the shell's grid: the strip is not always there, and a
