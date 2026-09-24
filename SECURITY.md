@@ -73,12 +73,26 @@ script and no external image, and its favicon is an inline `data:` URI. The two 
 dependencies are `chokidar` and `ws`; `react` and `react-dom` are build-time only, compiled into
 the bundle.
 
-**No processes are spawned by the observer.** There is no `child_process` import, and no `exec`,
-`execSync`, `spawn` or `spawnSync` call, in `server/`, `src/` or `shared/`. The one exception in
-the project is the launcher, `bin/roundtable.mjs`, which spawns the operating system's own opener
-(`cmd /c start`, `open`, `xdg-open`) on the local address it just printed, with no shell and
-nothing interpolated. `--no-open` skips it. It is kept out of `server/` deliberately: the hub reads
-private transcripts, and a program that reads transcripts should not also be one that runs things.
+**The observer spawns one process, on Windows only, and nothing anywhere else.** To name a session
+the way you named its Windows Terminal tab, `server/termtabs.ts` runs `powershell.exe` through
+`execFile` — no shell, and nothing interpolated into the command — with a fixed script:
+`-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script>`. The execution-policy flag
+applies to that one process, not to the machine. The script uses UI Automation to read two things
+from the Windows Terminal window, and only from a window of that class: the **active tab's title**
+and the **last 6,000 characters of text on its pane**. The hub matches that text against the
+transcripts it already has in memory, keeps the title only when exactly one session matches, and
+stores and sends the pane text nowhere. It runs on the roster tick, a few seconds apart, one at a
+time, and is abandoned after 4 seconds. On macOS and Linux, `readActiveTab` returns before anything
+is spawned. This was added after this section was first written and it said "no processes" for a
+while after that; it was not true on Windows in that time.
+
+Beyond that there is no `child_process` import, and no `exec`, `execSync`, `spawn` or `spawnSync`
+call, in `server/`, `src/` or `shared/`. The launcher, `bin/roundtable.mjs`, spawns the operating
+system's own opener (`cmd /c start`, `open`, `xdg-open`) on the local address it just printed, with
+no shell and nothing interpolated; `--no-open` skips it. It is kept out of `server/` deliberately:
+the hub reads private transcripts, and a program that reads transcripts should run as little as
+possible. The terminal probe is the one thing that breaks that rule, because it has to run for as
+long as the hub does.
 
 **The observed root is opened read-only.** `server/sessions.ts` imports exactly three things from
 `node:fs` — `readdirSync`, `readFileSync`, `statSync` — plus `homedir` and `join`. There is no
@@ -92,23 +106,29 @@ The root is `~/.claude`, or `$ROUNDTABLE_HOME` when that is set — `claudeRoot(
 the whole app from a synthetic tree without ever touching your real sessions.
 
 **`--demo` is the one mode in which the process writes files, and it never writes to a directory
-you named.** It stages a synthetic session for the observer to watch. The path is fixed by
-`demoRoot()` in `server/cli.ts` to `roundtable-demo-root` under the operating system's temp
-directory; `--root` and `$ROUNDTABLE_HOME` are overridden when `--demo` is given, so the stage —
-which wipes and recreates the directory it is handed — can never be pointed at a real one. The
-writer is `scripts/promo/stage.ts`, bundled into `dist/server/cli.mjs` for the installed binary;
-the three files that read your transcripts (`server/sessions.ts`, `server/tail.ts`,
-`server/hub.ts`) still import no write API, and that is asserted by the paragraphs above rather
-than changed by this one. The staged root is deleted when the process exits. Nothing under
-`~/.claude` is read in this mode: the hub is handed the staged directory and only that.
+you named.** It stages a synthetic session for the observer to watch, in a fresh directory under
+the operating system's temp directory: `run` in `server/cli.ts` creates it with `mkdtempSync`
+(`newDemoRoot()` in `scripts/promo/demoRoom.ts`, a `roundtable-demo-` name with a random suffix)
+immediately before staging into it. `--root` and `$ROUNDTABLE_HOME` are overridden when `--demo` is
+given, and `run` ignores whatever root it was handed in this mode, so the stage — which wipes and
+recreates the directory it is handed — is only ever handed a directory this process has just
+created: never a real one, and never another demo's. The writer is `scripts/promo/stage.ts`,
+bundled into `dist/server/cli.mjs` for the installed binary; the three files that read your
+transcripts (`server/sessions.ts`, `server/tail.ts`, `server/hub.ts`) still import no write API,
+and that is asserted by the paragraphs above rather than changed by this one. The staged directory
+is deleted when the process exits, including on `Ctrl+C` and `SIGTERM`, and only that directory: a
+second demo running beside it keeps its own. A process killed outright cannot clean up, and leaves
+its synthetic transcripts in the temp directory. Nothing under `~/.claude` is read in this mode: the
+hub is handed the staged directory and only that.
 
 **`--gif` writes exactly one file: the GIF, where `--out` says or as `roundtable-<session>.gif` in
 the working directory.** The write is one `writeFileSync` in `makeClip` (`server/cli.ts`); the
 reading is done by the same hub as always (`server/clip.ts` starts it with `startServer`), so the
 transcripts are read by the code the paragraphs above describe and by nothing else. That hub binds
 `127.0.0.1` on a port the operating system picks, is followed by one socket from the same process,
-and is stopped before the command returns. `--gif --demo` stages its session in its own directory
-under the temp directory (`showcaseRoot()`, the same rule as `--demo`) and deletes it afterwards.
+and is stopped before the command returns. `--gif --demo` stages its session in a fresh directory
+under the temp directory (`mkdtempSync` in `makeClip`, the same rule as `--demo`) and deletes it
+afterwards.
 
 The GIF is the one artefact this project produces that is *meant* to be shared, so what it contains
 is stated rather than implied: by default it draws what the session drew — the opening prompt on the
@@ -121,6 +141,32 @@ agents are numbered in order of arrival, and every speech and thought bubble is 
 The caption strip under the room carries only the elapsed time, the agent count, the token total and
 the project's address. The command prints a reminder to look before posting whenever the clip is not
 `--bare`.
+
+**`--card` writes exactly one file too: a PNG, where `--out` says or as
+`roundtable-<session>-card.png` in the working directory** (with `--gif`, both files: `--out` names
+the GIF, and the card goes beside it as `<name>-card.png`). `--card --demo` stages its session in a
+directory of its own under the temp directory and deletes it afterwards. It reads the session through the same in-process hub `--gif` starts, renders with
+the page's own card renderer (`src/clip/card.ts`), and encodes with the project's own PNG writer
+(`scripts/pixpreview.ts`, `node:zlib`). What the card shows is on the card and nowhere else: the
+figures, a still of the room drawn with the same redaction as a clip, and — unless it is hidden —
+the session's task along the bottom. "Hide transcript text" (`--bare`) removes the task, numbers the
+agents instead of naming them, and blanks the board.
+
+**The Share dialog in the page makes the same GIF, and writes nothing itself.** It renders in a Web
+Worker the bundle ships (`src/clip/worker.ts`, served by the hub as one more fingerprinted asset),
+from the events the page has already received — `src/ui/evlog.ts` keeps a bounded copy of them —
+with the same renderer and the same redaction as `--gif`, and "Hide transcript text" is `--bare`.
+The result becomes a `blob:` URL in the tab; the browser saves it when you click Download, to
+wherever the browser saves things. "Copy caption" writes one fixed line of text to the clipboard,
+and only when clicked. Nothing is uploaded, and the dialog links nowhere.
+
+**The hosted demo is a static page, and reads nothing from your machine.** The page at
+`https://kostakurta8.github.io/roundtable/` is built by `npm run build:pages` from its own entry
+(`src/demo/main.tsx`), which the installed package does not contain. It plays a recording of a
+*staged* session committed to this repository (`src/demo/recording.json`, made by
+`scripts/recordDemo.ts` against a synthetic root, with the root's path scrubbed and the output
+refused if the path appears anywhere), and opens no socket at all. Unlike the local app, it does
+link out — to this repository — because being found is its purpose.
 
 **A client cannot name a path.** The only command that takes an argument is
 `{"cmd":"follow","sessionId":"…"}`. Before anything happens, the id is looked up with

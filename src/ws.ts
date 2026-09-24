@@ -62,6 +62,37 @@ export const WS_URL =
   servedUrl ??
   hubWsUrl(readPort(typeof VITE_PORT === 'string' ? VITE_PORT : undefined, DEFAULT_HUB_PORT));
 
+/**
+ * Something that plays the part of the hub, for a page that has none.
+ *
+ * Handed a `deliver` that takes exactly what a socket frame parses to, and returns the way to stop.
+ * The only caller is the hosted demo (`src/demo/main.tsx`, the entry `npm run build:pages` builds
+ * from): GitHub Pages serves files, so there is no hub to dial, and it plays back a recording of one
+ * instead. Everything past `deliver` is the path a real frame takes — the demo swaps the transport
+ * and nothing else, so what it shows is what the app does.
+ *
+ * A setter rather than a build flag read in here, so that the local build does not merely skip the
+ * demo but never contains it: nothing outside `src/demo/` imports that directory, and `index.html`
+ * only points at it in the pages build.
+ */
+export type StaticSource = (deliver: (msg: unknown) => void) => () => void;
+
+let staticSource: StaticSource | null = null;
+
+/** Feed every stream opened from now on from `source` instead of a socket. */
+export function feedFrom(source: StaticSource): void {
+  staticSource = source;
+}
+
+/**
+ * Whether the page is playing a recording rather than following a hub. The status pill asks, because
+ * "LIVE" over a recording is false — and a pill restyled from CSS to *look* like it says otherwise
+ * still reads "LIVE" to a screen reader.
+ */
+export function isRecorded(): boolean {
+  return staticSource !== null;
+}
+
 /** A row of the hub's session roster. Same shape the hub publishes, by construction. */
 export type RtSession = SessionSummary;
 
@@ -223,6 +254,10 @@ export function useRtStream(pinned: string | null, sink?: EvSink): RtStream {
       } catch {
         return; // not JSON — the hub never sends that, so there is nothing to salvage
       }
+      onMsg(parsed);
+    };
+
+    const onMsg = (parsed: unknown): void => {
       if (isEv(parsed)) {
         queue(parsed);
         return;
@@ -293,23 +328,37 @@ export function useRtStream(pinned: string | null, sink?: EvSink): RtStream {
       // Any other kind is ignored on purpose: this client must survive a newer hub.
     };
 
+    /** A fresh stream: whatever is on the other end is about to replay everything it has. */
+    const begin = (): void => {
+      attempt = 0;
+      setConnected(true);
+      // The hub replays every session's whole backlog to a new connection, so the fold restarts
+      // from empty here — otherwise a reconnect would count all of that history a second time.
+      dispatch({ kind: 'resetAll' });
+      sinkRef.current?.reset(null);
+      setDropped({});
+      setNotices({});
+      setReplaying({});
+      pendingDropped = 0;
+    };
+
+    let stopStatic: (() => void) | null = null;
+
     const open = (): void => {
       if (stopped) return;
       dropBuffer(); // nothing from the previous socket may reach the state this one rebuilds
+      if (staticSource) {
+        // No socket, so nothing to follow, rescan or reconnect: `sockRef` stays null, which is
+        // what already turns each of those into a no-op.
+        begin();
+        stopStatic = staticSource(onMsg);
+        return;
+      }
       const s = new WebSocket(WS_URL);
       sockRef.current = s;
 
       s.onopen = () => {
-        attempt = 0;
-        setConnected(true);
-        // The hub replays every session's whole backlog to a new connection, so the fold restarts
-        // from empty here — otherwise a reconnect would count all of that history a second time.
-        dispatch({ kind: 'resetAll' });
-        sinkRef.current?.reset(null);
-        setDropped({});
-        setNotices({});
-        setReplaying({});
-        pendingDropped = 0;
+        begin();
         const id = pinRef.current;
         if (!id) return; // connected for the roster and whatever is running; nothing pinned yet
         const follow: FollowCmd = { cmd: 'follow', sessionId: id }; // typed, so a typo fails the build
@@ -339,6 +388,7 @@ export function useRtStream(pinned: string | null, sink?: EvSink): RtStream {
       stopped = true;
       if (retry !== NO_TIMER) clearTimeout(retry);
       dropBuffer();
+      stopStatic?.();
       const s = sockRef.current;
       sockRef.current = null;
       if (!s) return;

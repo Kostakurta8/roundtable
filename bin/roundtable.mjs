@@ -29,7 +29,7 @@ if (major < 22 || (major === 22 && minor < 12)) {
 
 // The URL, not the path: on Windows `import()` of `C:\…` fails with ERR_UNSUPPORTED_ESM_URL_SCHEME
 // because the drive letter parses as a protocol. `fileURLToPath` is for the filesystem calls below.
-const { parseArgs, run, appUrl, busyMessage, HELP, collectStats, formatStats, makeClip } = await import(
+const { parseArgs, run, appUrl, busyMessage, HELP, collectStats, formatStats, makeClip, makeCard } = await import(
   new URL('../dist/server/cli.mjs', import.meta.url).href
 );
 
@@ -53,6 +53,18 @@ if (opts.stats) {
   // somewhere.
   console.log(formatStats(collectStats(opts.root), opts.root));
   process.exit(0);
+}
+
+if (opts.card) {
+  // The share dialog's card, from a session read the way --gif reads one. With --gif as well, the
+  // clip is written next rather than skipped.
+  try {
+    console.log(await makeCard(opts));
+    if (!opts.gif) process.exit(0);
+  } catch (err) {
+    console.error(`[roundtable] --card: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
 }
 
 if (opts.gif) {
@@ -84,9 +96,10 @@ function openBrowser(url) {
 }
 
 try {
-  const stop = await run(opts, here('../dist/client'));
+  // `root` from `run`, not `opts.root`: a demo's directory is made by `run`, fresh for this process.
+  const { stop, root } = await run(opts, here('../dist/client'));
   const url = appUrl(opts.port);
-  console.log(`[roundtable] observing ${opts.root}`);
+  console.log(`[roundtable] observing ${root}`);
   if (opts.demo) console.log('[roundtable] --demo: a staged session under the temp directory; nothing of yours is read');
   console.log(`[roundtable] ${url}`);
   if (opts.open) openBrowser(url);

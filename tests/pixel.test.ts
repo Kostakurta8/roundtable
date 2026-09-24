@@ -6,7 +6,7 @@
  * pixel by pixel. That is worth far more here than asserting on the calls made: a sprite that
  * draws the right rectangles in the wrong order is still wrong, and only the buffer knows.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { asCtx, SoftCtx } from '../scripts/pixpreview';
 import type { ActorState } from '../src/office/engine';
 import { MANAGER_DESK_INDEX, podSeat, SCENE, WAYPOINTS } from '../src/office/engine';
@@ -437,8 +437,18 @@ describe('the scene', () => {
  * buffer, so every sheet in `.preview/` was blind to it right up until it had its own shot.
  */
 describe('the ceiling strip', () => {
-  /** The strip and the room, painted the same way `Scene` paints them, at a given light level. */
+  /**
+   * The strip and the room, painted the same way `Scene` paints them, at a given light level.
+   *
+   * Painted once per level and shared: every test here only reads the pixels, and each paint is two
+   * hundred frames of the whole room. Re-painting per test made this block about nine seconds of
+   * CPU, and its heaviest test — two paints, three seconds alone — timed out at vitest's five on a
+   * Windows runner once more render-heavy suites were running beside it.
+   */
+  const painted = new Map<number, { ceil: SoftCtx; room: SoftCtx }>();
   const both = (night: number): { ceil: SoftCtx; room: SoftCtx } => {
+    const hit = painted.get(night);
+    if (hit) return hit;
     const ceil = new SoftCtx(PIX.w, CEILING_H);
     const roomCtx = new SoftCtx(PIX.w, PIX.h);
     const scene = new Scene();
@@ -447,8 +457,16 @@ describe('the ceiling strip', () => {
     // comparing two different times of day.
     for (let i = 0; i < 200; i++) scene.draw(asCtx(roomCtx), input([actor('main', MANAGER_DESK_INDEX)], { night }));
     scene.paintCeiling(asCtx(ceil));
-    return { ceil, room: roomCtx };
+    const out = { ceil, room: roomCtx };
+    painted.set(night, out);
+    return out;
   };
+  // Both paints up front, in a hook with a budget of its own, so the cost is counted once and
+  // against a limit set for it rather than against whichever test happens to ask first.
+  beforeAll(() => {
+    both(0);
+    both(1);
+  }, 30_000);
 
   const luma = (c: SoftCtx, x: number, y: number): number => {
     const i = (y * c.width + x) * 4;

@@ -1,15 +1,46 @@
 # Roundtable
 
-**Watch your Claude Code subagents work — then rewind to any second of it.**
+**Watch your Claude Code subagents work. Rewind any second. Turn any session into a GIF.**
 
 [![CI](https://github.com/Kostakurta8/roundtable/actions/workflows/ci.yml/badge.svg)](https://github.com/Kostakurta8/roundtable/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Kostakurta8/roundtable/blob/main/LICENSE)
+[![Node ≥ 22.12](https://img.shields.io/badge/node-%E2%89%A5%2022.12-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](#from-inside-claude-code)
 
 ![a nine-minute Claude Code session with 24 subagents — six scouts, eight builders, a verifier on every change, one of them refuted and fixed — played as a 25-second timelapse of the office](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-timelapse.gif)
+
+**[▶ Try it in your browser: no install](https://kostakurta8.github.io/roundtable/)**, the real app replaying a staged session.
+Or run it on your own sessions:
+
+```
+npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz
+```
 
 Every agent in a Claude Code run is a person in this office. They walk in when they are spawned,
 work at a desk while a tool runs, walk over to hand back what they found, tell each other
 `CONFIRMED` or `REFUTED`, and leave through the door when they are done. It reads the transcripts
 Claude Code already writes under `~/.claude` — read-only, entirely local, and it never calls an API.
+
+## Why you'd want it
+
+- **See who is working, who is waiting, and who is burning the tokens.** Every subagent is a
+  person at a desk, and every one carries its own token total, cache included, and a cost estimate.
+- **Rewind to any second.** Click the timeline and the room rebuilds exactly as it stood — the same
+  events replayed into the same simulation, not an approximation of it. Any session on the machine,
+  not just the one running now.
+- **Turn a session into a GIF — or a card — you can post.** The Share button in the app, `--gif`
+  or `--card` on the command line, or `/roundtable:gif` from inside Claude Code. The card is the
+  run in numbers over a still of the room: subagents, how many at once, tokens, cost, verdicts. One
+  switch takes every word of your transcripts out of the picture first.
+- **Find out what your transcripts already say.** `--stats` reads every session you have and
+  reports how much of your output subagents write and what a child costs before it starts — counted
+  the way these files have to be counted. On the author's machine, adding up usage line by line
+  would have over-reported output tokens by 94%.
+- **Nothing to trust but a file reader.** It never writes to `~/.claude`, installs no hooks, calls
+  no API and opens no outbound connection. [`SECURITY.md`](SECURITY.md) names the file and the
+  mechanism behind each of those, and the residual risks they do not cover.
+
+## Quick start
 
 ```
 npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz
@@ -21,9 +52,75 @@ running. Node 22.12 or newer. The link is the packed build attached to the lates
 `npx github:Kostakurta8/roundtable` runs the same thing built from source, which takes a minute or
 two the first time.
 
+To use it more than once, install it — `npm i -g https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz` — and it is `roundtable`:
+
+```
+roundtable               # the office, on http://localhost:7411
+roundtable --demo        # a staged session, when nothing of yours is running
+roundtable --stats       # what every transcript you already have says, then exit
+roundtable --gif         # your latest session as a GIF, then exit
+roundtable --card        # the same session as one PNG card of its numbers, then exit
+roundtable --port 9000   # somewhere else (ROUNDTABLE_PORT sets the same thing)
+roundtable --root /path  # a different Claude directory
+roundtable --no-open     # print the address, do not open a browser
+```
+
+`claude-roundtable` is the name it will have on npm, which will shorten all of this to
+`npx claude-roundtable`. It is not published yet.
+
+Written and used on Windows. macOS and Linux pass CI, which is not the same thing as somebody
+having watched the office draw itself there — [Platforms](#platforms) says exactly what has and has
+not been checked.
+
+### If you don't have Claude Code, or nothing is running
+
+```
+npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --demo
+```
+
+An office with nobody in it is what an idle machine honestly looks like, and it is a poor way to
+find out what this does. `--demo` writes a synthetic `~/.claude` root into a fresh directory under
+your temp directory and points the observer at that instead: agents arrive, work, report to each
+other, hand down verdicts, fill the desks past the point where there are chairs, and go home — and
+then it keeps going, so the room is still moving when you come back to it.
+
+Nothing about it is faked except the transcripts. The lines go to disk and come back through the
+same watcher, parser, normalizer, socket and store as a real session, and the hub's timing is left
+at its shipped defaults. It never reads your own `~/.claude`, so no prompt, path or project name of
+yours can appear in it, and `--root` is ignored with it, so it cannot be pointed at a real
+directory. `Ctrl+C` deletes the staged root on the way out — that one directory, so two demos can
+run side by side.
+
+Without it, the first screen tells you where the observer is looking — the directory, in full —
+and that the first Claude Code session to start on this machine will appear there on its own.
+
 ## Turn any session into a GIF
 
-The clip above is one command, run on a staged session. Run it on one of yours:
+The clip at the top is a staged session. There are three ways to make one of yours.
+
+### In the app
+
+The **Share** button in the top bar — or `G`, or the ⌘K palette — renders the session you are
+looking at as a GIF, in the browser, with a live preview. Download it, or copy a caption to post
+with it. **Hide transcript text** draws the same run with none of your words in it. Nothing is
+uploaded: the GIF is made in the tab, by the same renderer as `--gif`, and saved by your browser.
+The page holds only the last few thousand events of a long session, so for the whole of one, use
+`--gif`. It works on the [browser demo](https://kostakurta8.github.io/roundtable/) too.
+
+![the Share dialog: a 20-second GIF of the session rendered in the tab, with its length, the stretch it plays, a switch that hides transcript text, and a note to look before posting](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-share.png)
+
+### Or a card
+
+**GIF | Card** at the top of the same dialog — or `roundtable --card` — makes one 1200×630 PNG:
+the session in numbers, over a still of the room at its busiest. The size link previews use, so it
+posts uncropped. Tokens and cost are the top bar's own figures, with the same `≥` when a model has no
+rate card; "at once" is read off the same replay the still is drawn from, so the number and the
+picture agree. "Copy image" puts it on the clipboard where the browser allows it. "Hide transcript
+text" works here too: no task, and agents numbered rather than named.
+
+![a session card: 24 subagents, 8 at once, 14.83M tokens, $28.08 estimated, 9:27, eight CONFIRMED and one REFUTED, the busiest agent, over a pixel-art still of the office and the session's task along the bottom](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/card-example.png)
+
+### From the command line
 
 ```
 npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --gif
@@ -34,18 +131,15 @@ beat and the rest sped up to about twenty seconds. A session too long for that b
 stretch — the part where the agents actually arrive — and the clock on the office wall keeps the real
 time, so you can see where it jumped. It takes a few seconds and starts nothing that outlives it.
 
-To use it more than once, install it — `npm i -g https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz` — and it is `roundtable`:
-
 ```
 roundtable --gif --session 3043f946   # a particular session: the first few characters of its id
 roundtable --gif --bare               # no task, names or speech from your transcripts in it
 roundtable --gif --full --seconds 40  # the whole session, however long, in forty seconds
+roundtable --gif --out run.gif        # somewhere other than roundtable-<session>.gif
 roundtable --gif --demo               # the clip above, on a machine with no sessions at all
 ```
 
-**Look at it before you post it.** By default the clip shows what the session showed — the task on
-the whiteboard, what each agent was asked to do, what they said. `--bare` draws the same run with
-none of that text in it: the people, their desks and their walks are all still there.
+`--seconds` goes up to 60.
 
 ### From inside Claude Code
 
@@ -65,52 +159,39 @@ Roundtable is also a Claude Code plugin, so the session you are in can render it
 Each one runs the same packed release as the lines above, with the session's own id, so a GIF made
 from inside a session is always that session and not whichever one wrote last.
 
-## What it does that a session viewer usually does not
+### Look at it before you post it
 
-- **Deterministic replay.** Click any second on the timeline and the room rebuilds exactly as it
-  stood — the same events replayed into the same simulation, not an approximation of it. `--gif` is
-  the same replay, played into a file.
-- **Per-agent token and cost accounting.** Every agent carries its own token total, cache included,
-  and a cost estimate from published list prices.
-- **Strictly read-only.** It never writes to `~/.claude`, never calls an API, and opens no outbound
-  connection at all. `SECURITY.md` names the file and the mechanism behind each of those — and the
-  residual risks they do not cover.
+By default a clip shows what the session showed — the task on the whiteboard, what each agent was
+asked to do, what they said. `--bare`, or **Hide transcript text** in the app, draws the same run
+with none of that text in it: the people, their desks and their walks are all still there.
+[`SECURITY.md`](SECURITY.md) lists exactly what a clip can contain.
 
-It is for anyone who runs Claude Code with subagents and wants to see what the fan-out is actually
-doing: who is working, who is waiting, and who is spending the tokens.
+**Share yours:** post it with `#roundtable` and tag
+[the repo](https://github.com/Kostakurta8/roundtable) — and a ⭐ is welcome if this made your
+subagents less mysterious.
 
-```
-roundtable --port 9000   # somewhere else
-roundtable --root /path  # a different Claude directory
-roundtable --stats       # what every transcript you already have says
-roundtable --demo        # a staged session, when nothing of yours is running
-roundtable --no-open     # print the address, do not open a browser
-```
+## The whole app
 
-The registry name `claude-roundtable` is reserved for the same thing published to npm, which will
-shorten all of this to `npx claude-roundtable`. It is not published yet.
+![the whole app on the staged demo session, a minute of it in nineteen seconds: agents walk in and take desks as they are spawned, one crosses the floor to report, then one says REFUTED and another CONFIRMED — in speech bubbles in the room and as red and green cards in the feed beside it — while the roster strip under the room and the token count fill in](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
 
-Written and used on Windows — see [Platforms](#platforms) before you assume anything about the
-other two.
-
-From a clone, for hacking on it, `npm install && npm start` runs the hub and Vite together on
-<http://localhost:5173>; `npm run demo` does the same against a staged session so there is
-something to watch on a machine that has never run Claude Code.
-
-### The whole app
-
-![agents arriving, reporting to each other, and one verdict going each way](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
-
-The room is one panel of the app. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
-shows the rest: the timeline rewinding the room to an earlier second, two sessions in tabs, and the
-per-agent token and cost breakdown. No narration; captions are burned in, and
-`media/roundtable-trailer.srt` has them as text.
+The clip stays on one live session. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
+shows what it does not: the timeline rewinding the room to an earlier second, two sessions in tabs,
+and the per-agent token and cost breakdown. No narration; captions are burned in, and
+`media/roundtable-trailer.srt` has them as text. It was filmed on an earlier version of the
+interface — the room did not yet fill its panel and there was no Share button — so it shows what
+the app does, not quite how it now looks.
 
 Every frame of both clips is the real application driven by real events — only the *content* of the
 transcripts is synthetic, so that no private session appears in either. `scripts/promo/` is the
 harness that filmed them.
 
 ![the office, in daylight](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/screenshot-day.png)
+
+How it works, in two sentences: it tails the JSONL transcripts Claude Code writes — the main
+session's and every subagent's — and turns each line into a typed event, which feeds a
+deterministic simulation that paints the office into a 480×270 pixel buffer. Because the simulation
+is deterministic, rewinding is the same events replayed into the same simulation, and `--gif` is
+that same replay, played into a file.
 
 ## What your own machine already knows
 
@@ -151,8 +232,8 @@ roundtable --stats   ~/.claude
   Nothing was written and nothing left this machine.
 ```
 
-That is this machine on 2026-09-18, and three of those lines are there because they cost the author
-something to learn:
+That is the author's machine on 2026-09-18, and three of those lines are there because they cost
+the author something to learn:
 
 - **Children write most of the output.** The main transcript you watch live is under half of what a
   fan-out run produces, so "I barely use my quota" often just means "I do not spawn subagents".
@@ -168,79 +249,12 @@ something to learn:
 
 Run it on your own machine and the numbers will not match these. That is the point of running it.
 
-## If you don't have Claude Code, or nothing is running
-
-```
-npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --demo
-```
-
-An office with nobody in it is what an idle machine honestly looks like, and it is a poor way to
-find out what this does. `--demo` writes a synthetic `~/.claude` root under your temp directory and
-points the observer at that instead: agents arrive, work, report to each other, hand down verdicts,
-fill the desks past the point where there are chairs, and go home — and then it keeps going, so the
-room is still moving when you come back to it.
-
-Nothing about it is faked except the transcripts. The lines go to disk and come back through the
-same watcher, parser, normalizer, socket and store as a real session, and the hub's timing is left
-at its shipped defaults. It never reads your own `~/.claude`, so no prompt, path or project name of
-yours can appear in it, and `--root` is ignored with it, so it cannot be pointed at a real
-directory. `Ctrl+C` deletes the staged root on the way out. From a clone, `npm run demo` is the same
-room beside the Vite dev server.
-
-Without it, the first screen tells you where the observer is looking — the directory, in full —
-and that the first Claude Code session to start on this machine will appear there on its own.
-
-## Platforms
-
-Node **22.12 or newer**. Beyond that, the honest position:
-
-| | |
-|---|---|
-| **Windows** | where it was written and where it has actually been used |
-| **macOS**, **Linux** | CI runs the type check, the unit suite and the production build on both, on Node 22 and 24. Nobody has reported opening the room on either. |
-
-Those are different claims and the difference matters. A green CI badge says the code compiles and
-the suite passes on all three; it is not a report from somebody who watched the office draw itself.
-Two things in `server/hub.ts` branch on the platform — path comparison is case-insensitive on
-Windows, and the file watcher polls there by default, because `fs.watch` is least reliable across
-Windows drive types. Every unit test forces polling on, so the `fs.watch` path that macOS and Linux
-use by default is precisely the thing the matrix does *not* exercise.
-
-If you run it on macOS or Linux, an issue saying what happened is genuinely useful — working or
-not. That is the gap.
-
-### The desktop icon — Windows only
-
-```
-npm run desktop
-```
-
-Puts a **Claude Agents** shortcut on the Desktop. Clicking it starts the observer if it is not
-already up, opens the room in your browser, brings Claude Code up to date, and hands the window over
-to a Claude session — so one click gets you both halves of what you were going to open anyway.
-
-This one is Windows-only and not portable in principle: it writes a `.lnk` through the
-`WScript.Shell` COM object and points it at `pwsh` through the WindowsApps execution alias. There is
-no macOS or Linux equivalent, and nothing else needs one — `npm start` is the way in on every
-platform.
-
-Clicking it twice is safe: the servers are only started when nothing is listening on their ports, so
-a second click just opens another tab and another session. The servers get their own minimized
-window called *Roundtable servers*, which is where to look if something does not come up and what to
-close when you are finished.
-
-The session starts in your home directory, because that is where sessions normally run and so it is
-the one the observer opens on. `$StartIn` at the top of `desktop\claude-agents.ps1` changes that.
-`desktop\claude-agents.ps1 -SkipClaude` does everything except open the session, which is how to
-check the shortcut without spending one.
-
-The icon is drawn by `scripts/desktopIcon.mjs` rather than checked in as an opaque binary — edit the
-geometry there and re-run `npm run desktop`. If you move or rename the project, re-run it too: the
-shortcut points into the checkout.
-
 ---
 
-## What you are looking at
+## Reference
+
+<details>
+<summary><b>What you are looking at</b></summary>
 
 ```
 ┌──────────────────────────────────────────────────────────┬──────────────┐
@@ -284,9 +298,14 @@ keys — and the whole room rewinds to that moment and stops. The office is dete
 rebuilds the room as it actually stood, not an approximation. Press `Escape` or the `RESUME LIVE`
 button in the top bar to come back to now.
 
----
+Clicking a person focuses them: the feed filters to their turns and everyone outside their spawn
+tree dims. Clicking the **whiteboard** opens the session's feed; clicking the **roundtable** filters
+the feed to just the verdicts agents gave each other.
 
-## More than one session at a time
+</details>
+
+<details>
+<summary><b>More than one session at a time</b></summary>
 
 When two or more sessions are **running**, a strip of tabs appears over the room, one per session.
 Clicking a tab shows that session's room, roster, feed and totals. Nothing is thrown away when you
@@ -305,27 +324,27 @@ working.
 To watch a session that is *not* running — anything you have ever run on this machine — use the
 session picker in the top bar, or press `⌘K` and start typing its name.
 
----
+</details>
 
-## Keys
+<details>
+<summary><b>Keys</b></summary>
 
 | | |
 |---|---|
 | `⌘K` / `Ctrl+K` | command palette — every action, plus every agent and session by name |
+| `G` | share: the session you are looking at, as a GIF |
 | `1` `2` `3` | chat / agents / tools panel |
 | `B` | show or hide the side panel |
 | `T` | day → night → follow the system |
+| `?` | what am I looking at |
 | `Escape` | close the palette, then resume live, then clear the selection |
-| arrows | pan the room; `+` / `-` zoom; `Home` re-centres |
+| arrows | pan the room; `+` / `-` zoom; `Home` re-centres; `F` follows the selection |
 | arrows on the timeline | move along it; `Enter` rewinds the room to that second |
 
-Clicking a person focuses them: the feed filters to their turns and everyone outside their spawn
-tree dims. Clicking the **whiteboard** opens the session's feed; clicking the **roundtable** filters
-the feed to just the verdicts agents gave each other.
+</details>
 
----
-
-## If something looks wrong
+<details>
+<summary><b>If something looks wrong</b></summary>
 
 **`OFFLINE` in the top bar.** The hub is not running — the terminal that ran
 `roundtable` or `npm start` was closed, or the machine slept. A note above the
@@ -334,7 +353,8 @@ its own, and what it shows meanwhile is the session as it stood when the connect
 clone, if you started only Vite, the page has nothing to connect to.
 
 **"port 7411 is already in use".** Roundtable is already running in another terminal. Open
-`http://localhost:5173` instead of starting a second copy.
+<http://localhost:7411> — or `http://localhost:5173`, if the other copy is `npm start` from a
+clone — instead of starting a second copy, or start this one elsewhere with `--port`.
 
 **Vite refuses to start because 5173 is busy.** That is deliberate. The hub only accepts WebSocket
 connections from `localhost:5173` and `:4173` — that check is the only thing stopping any other page
@@ -346,9 +366,68 @@ glitches: a transcript line over 1 MiB cannot be parsed and is stepped over (any
 on such a line will never show a result), and a very large transcript is still being read. The feed
 says so rather than quietly showing you less than there is.
 
----
+</details>
+
+## Platforms
+
+Node **22.12 or newer**. Beyond that, the honest position:
+
+| | |
+|---|---|
+| **Windows** | where it was written and where it has actually been used |
+| **macOS**, **Linux** | CI runs the type check, the unit suite, the production build and the package smoke test on both, on Node 22 and 24, and the Playwright suite in headless Chromium on Linux. Nobody has reported opening the room on either. |
+
+Those are different claims and the difference matters. A green CI badge says the code compiles and
+the suite passes on all three; it is not a report from somebody who watched the office draw itself.
+Two things in `server/hub.ts` branch on the platform — path comparison is case-insensitive on
+Windows, and the file watcher polls there by default, because `fs.watch` is least reliable across
+Windows drive types. Every unit test forces polling on, so the `fs.watch` path that macOS and Linux
+use by default is precisely the thing the matrix does *not* exercise; the one place it is under test
+is the Playwright job's `native` leg, on Linux.
+
+If you run it on macOS or Linux, an issue saying what happened is genuinely useful — working or
+not. That is the gap.
+
+<details>
+<summary><b>The desktop icon — Windows only</b></summary>
+
+```
+npm run desktop
+```
+
+Puts a **Claude Agents** shortcut on the Desktop. Clicking it starts the observer if it is not
+already up, opens the room in your browser, brings Claude Code up to date, and hands the window over
+to a Claude session — so one click gets you both halves of what you were going to open anyway.
+
+This one is Windows-only and not portable in principle: it writes a `.lnk` through the
+`WScript.Shell` COM object and points it at `pwsh` through the WindowsApps execution alias. There is
+no macOS or Linux equivalent, and nothing else needs one — `npm start` is the way in on every
+platform.
+
+Clicking it twice is safe: the servers are only started when nothing is listening on their ports, so
+a second click just opens another tab and another session. The servers get their own minimized
+window called *Roundtable servers*, which is where to look if something does not come up and what to
+close when you are finished.
+
+The session starts in your home directory, because that is where sessions normally run and so it is
+the one the observer opens on. `$StartIn` at the top of `desktop\claude-agents.ps1` changes that.
+`desktop\claude-agents.ps1 -SkipClaude` does everything except open the session, which is how to
+check the shortcut without spending one.
+
+The icon is drawn by `scripts/desktopIcon.mjs` rather than checked in as an opaque binary — edit the
+geometry there and re-run `npm run desktop`. If you move or rename the project, re-run it too: the
+shortcut points into the checkout.
+
+</details>
 
 ## Development
+
+<details>
+<summary><b>From a clone: running it, the checks, and CI</b></summary>
+
+`npm install && npm start` runs the hub and Vite together on <http://localhost:5173>;
+`npm run demo` does the same against a staged session so there is something to watch on a machine
+that has never run Claude Code.
 
 ```
 npm run dev          # same as start, without opening a browser
@@ -369,12 +448,19 @@ at the PNGs before you bless them** — a hash can tell you the room changed, ne
 right, and blessing without looking turns a regression into the baseline. `CONTRIBUTING.md` has the
 rest of the loop, and `docs/pixel-contract.md` is binding for anything under `src/office/pixel/`.
 
-CI (`.github/workflows/ci.yml`) runs the typecheck, the unit tests and the build on Ubuntu, macOS
-and Windows × Node 22 and 24 for every push to `main` and every pull request. The Playwright job is
-manual-only and has never been observed to pass on a runner; the workflow says so where it is
-defined rather than leaving you to find out.
+CI (`.github/workflows/ci.yml`) runs the typecheck, the unit tests, the build and the package smoke
+test on Ubuntu, macOS and Windows × Node 22 and 24 for every push to `main` and every pull request.
+The Playwright job runs beside it on Linux in two legs — the watcher polling, and the watcher left
+at its platform default. It first passed on a runner on 2026-08-09 and has gated pushes and pull
+requests since; before that it had only ever run on Windows with a human watching. The workflow says
+what a green run there does and does not prove, where the job is defined.
 
-Architecture, in one paragraph: `server/tail.ts` tails each JSONL file by byte offset →
+</details>
+
+<details>
+<summary><b>Architecture, in one paragraph</b></summary>
+
+`server/tail.ts` tails each JSONL file by byte offset →
 `server/parse.ts` tolerantly parses a line → `server/normalize.ts` turns it into typed events →
 `server/hub.ts` watches the filesystem, derives cross-file events like "that subagent finished", and
 broadcasts over a loopback WebSocket gated on `Origin` → `src/ws.ts` batches frames → `src/store.ts`
@@ -383,7 +469,7 @@ turns the same events into commands for the deterministic simulation in `src/off
 which `src/office/pixel/scene.ts` paints into a 480×270 buffer. `shared/` holds the wire types and
 is the only thing both halves import.
 
----
+</details>
 
 ## The rest of it
 
@@ -391,6 +477,6 @@ is the only thing both halves import.
 |---|---|
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | how to run it, the checks, the visual-regression loop, and what will get a PR sent back |
 | [`SECURITY.md`](SECURITY.md) | what "read-only" is enforced by, file and mechanism — and the residual risks, including the one the `Origin` gate deliberately leaves open |
-| [`CHANGELOG.md`](CHANGELOG.md) | everything so far, as one unreleased `0.1.0` |
+| [`CHANGELOG.md`](CHANGELOG.md) | every release so far, written from `git log` |
 | [`docs/pixel-contract.md`](https://github.com/Kostakurta8/roundtable/blob/main/docs/pixel-contract.md) | binding for anything under `src/office/pixel/` |
 | [`LICENSE`](LICENSE) | MIT |

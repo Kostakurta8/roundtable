@@ -13,20 +13,24 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Chat } from './chat/Chat';
 import { useKeys, useNow } from './hooks';
 import { PixelOffice, useOffice } from './office/PixelOffice';
+import { PIX } from './office/pixel/art';
 import { initialState, roster as rosterOf, turnCount, workingAgents } from './store';
 import { OfflineNote } from './ui/OfflineNote';
 import { useTheme } from './theme';
 import { AgentsTab } from './ui/AgentsTab';
 import { boardText, clashingNames, clip, clockSec, hasChosenName, sessionAbout, sessionName, shortId } from './ui/format';
+import { Guide, guideSeen, rememberGuide } from './ui/Guide';
 import { Help } from './ui/Help';
-import { Inspector } from './ui/Inspector';
+import { Inspector, useSheet } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
 import { Rail } from './ui/Rail';
 import { rosterTree } from './ui/roster';
+import { SHARE_KEY, ShareDialog } from './ui/ShareDialog';
+import { useEvLog } from './ui/evlog';
 import { Timeline } from './ui/Timeline';
 import { TopBar } from './ui/TopBar';
 import { ToolsTab } from './ui/ToolsTab';
-import { useRtStream, WS_URL, type RtSession } from './ws';
+import { useRtStream, WS_URL, type EvSink, type RtSession } from './ws';
 
 const TITLE_MAX = 110;
 /**
@@ -36,21 +40,6 @@ const TITLE_MAX = 110;
  */
 const TAB_ABOUT_MAX = 90;
 
-/**
- * The clamp on a tab's second line.
- *
- * Inline because `index.css` is not this session's to edit and `.session-tab .slug` has no rule of
- * its own — without a ceiling a session whose opening prompt is a sentence would push every other
- * tab out of the strip. `.session-tabs` already scrolls, so nothing is lost; this is what keeps the
- * scrolling from being needed on two tabs.
- */
-const TAB_ABOUT: CSSProperties = {
-  maxWidth: 168,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  color: 'var(--ink-3)',
-};
 
 /**
  * Whether the distinguishing line says anything the name has not already said.
@@ -166,36 +155,94 @@ function Nothing({ connected, sessions, root }: { connected: boolean; sessions: 
   );
 }
 
+/** The least a roster strip under the room is worth: one row of agents and its padding. */
+const ROSTER_MIN = 64;
+/** The most of the stage the strip may take, however much the room leaves over. */
+const ROSTER_MAX_SHARE = 0.4;
 /**
- * How much of the stage's left edge the roster rail covers — measured, never asserted.
- *
- * `--rail-w` is 244px until `index.css` drops it to 210 at ≤1180px, and the rail is `display: none`
- * altogether at ≤900px. A constant here was wrong at both of those widths, and wrong in the
- * direction that hurts: the room was fitted around a rail that was not on screen. An observer on
- * the element itself is right at every breakpoint, including the one where it has no box at all.
- *
- * The gutter to the right of the rail is not a second constant either — it mirrors the rail's own
- * offset from the stage's left edge, so the room is balanced against whatever the stylesheet gives
- * it rather than against a number that exists only in this file.
+ * The narrowest the roster column may become so the room beside it can fill the stage's height:
+ * the strip's own chip width (176px) plus the column's padding, so a row still reads as one.
  */
-function useRailInset(stage: React.RefObject<HTMLElement>, present: boolean): number {
-  const [inset, setInset] = useState(0);
+const RAIL_MIN = 192;
+
+/**
+ * Where the roster goes, and how much of the stage it takes from the room.
+ *
+ * The roster used to be a column down the stage's left edge, always. That is the right place on a
+ * stage wider than the room, where the column sits in what would otherwise be letterbox — but the
+ * dock takes the right third of the window, so the stage is nearly always *taller* than 16:9, and
+ * at 1440×900 the column took a quarter of the width from a room that was already width-limited:
+ * the office came out 776px wide under 330px of empty ceiling, its people ten pixels tall. A roster
+ * is a list. It does not need the stage's height; the room does.
+ *
+ * So the stage's own shape decides: whichever of the two draws the room larger. On a stage taller
+ * than the room, that is a strip under it (`below`), and the room gets the whole width. On a wide,
+ * short one it is the column (`side`), sitting in what would be letterbox, as before.
+ * At ≤900px the stylesheet hides the rail altogether and the Agents tab carries it (`none`).
+ *
+ * The strip is sized from the room the session actually has — `cols`, from `PixelOffice`. A small
+ * session draws a narrow room that wants to be taller than 16:9, so it keeps the height and the
+ * strip gets one row; as agents arrive the room widens and the strip grows into the slack it
+ * leaves, which is also when the roster has more rows to show. Every length here is measured off
+ * the live stage and the stylesheet's own `--rail-w`: a constant for the rail's width was once
+ * wrong at both of its breakpoints, in the direction that fitted the room around a rail that was
+ * not on screen.
+ */
+type RoomLayout = { mode: 'side' | 'below' | 'none'; insetLeft: number; rosterH: number };
+
+const NO_LAYOUT: RoomLayout = { mode: 'none', insetLeft: 0, rosterH: 0 };
+
+function useRoomLayout(
+  stage: React.RefObject<HTMLElement>,
+  present: boolean,
+  cols: number,
+  tabsUp: boolean,
+): RoomLayout {
+  const [layout, setLayout] = useState<RoomLayout>(NO_LAYOUT);
 
   useLayoutEffect(() => {
     const host = stage.current;
-    const rail = present ? host?.querySelector('.rail') : null;
-    if (!host || !rail) {
-      setInset(0);
-      return;
-    }
+    if (!host) return;
 
     const measure = (): void => {
-      const r = rail.getBoundingClientRect();
-      const h = host.getBoundingClientRect();
-      // A `display: none` element has no box, so every edge reads 0 — which is exactly the answer
-      // the room needs: no rail, no inset.
-      const next = r.width === 0 ? 0 : Math.max(0, Math.round(r.right - h.left + (r.left - h.left)));
-      setInset((prev) => (prev === next ? prev : next));
+      const rail = present ? host.querySelector('.rail') : null;
+      let next = NO_LAYOUT;
+      // A `display: none` rail is the ≤900px layout: no rail, no inset, the room has the stage.
+      if (rail && getComputedStyle(rail).display !== 'none') {
+        const tabs = host.querySelector('.session-tabs');
+        const w = host.clientWidth;
+        const h = host.clientHeight - (tabs ? tabs.getBoundingClientRect().height : 0);
+        // The column's width as the stylesheet has it at this breakpoint. Read rather than
+        // measured off the rail's box: on the frame the mode flips, that box is still the strip.
+        const railW = Number.parseFloat(getComputedStyle(host).getPropertyValue('--rail-w')) || 0;
+        const room = Math.max(1, cols);
+        // The column gives up width, down to `RAIL_MIN`, until the room beside it fills the
+        // stage's height. At its full width it could leave the room width-limited with a band of
+        // ceiling over the wall — 60px at 1440×900 with the dock hidden — for want of 107px.
+        const railFit = Math.min(railW, Math.max(Math.min(RAIL_MIN, railW), w - (h * room) / PIX.h));
+        // Whichever mode draws the bigger room. Deciding on "is there a row's worth of height
+        // under a full-width room" alone flipped to the column at 1920×1080 with 61px of slack
+        // against a 64px row — and the column then took 240px of width from a width-limited
+        // room, which put 200px of empty ceiling above it: a far worse room than a strip three
+        // pixels shorter than it would like.
+        const belowScale = Math.min(w / room, (h - ROSTER_MIN) / PIX.h);
+        const sideScale = Math.min((w - railFit) / room, h / PIX.h);
+        // …unless the column, even at its narrowest, still leaves ceiling over the wall. The strip
+        // never does on a stage like that (it grows into the height the room leaves), and the room
+        // it costs is at most the row the strip takes: about 30px of height at 1440×900.
+        const sideBand = h - PIX.h * sideScale;
+        if (h > ROSTER_MIN && (belowScale >= sideScale || sideBand > 1)) {
+          const slack = Math.max(h - (w * PIX.h) / PIX.w, ROSTER_MIN);
+          const want = h - (w * PIX.h) / room;
+          const rosterH = Math.round(Math.min(Math.max(want, ROSTER_MIN), slack, h * ROSTER_MAX_SHARE));
+          next = { mode: 'below', insetLeft: 0, rosterH };
+        } else {
+          next = { mode: 'side', insetLeft: Math.round(railFit), rosterH: 0 };
+        }
+      }
+      setLayout((prev) =>
+        prev.mode === next.mode && prev.insetLeft === next.insetLeft && prev.rosterH === next.rosterH ? prev : next,
+      );
     };
 
     measure();
@@ -203,15 +250,13 @@ function useRailInset(stage: React.RefObject<HTMLElement>, present: boolean): nu
     // than a crash on a constructor that is not there.
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
-    ro.observe(rail);
-    // The rail's own box covers the token change at ≤1180px; the stage covers the case a browser
-    // may not report — an element being hidden is a box that stopped existing, not one that resized
-    // — and both breakpoints resize the stage on the way past.
+    // The stage covers the window, the dock toggle and both breakpoints: hiding the rail at ≤900px
+    // restacks the shell, which resizes the stage on the way past.
     ro.observe(host);
     return () => ro.disconnect();
-  }, [stage, present]);
+  }, [stage, present, cols, tabsUp]);
 
-  return inset;
+  return layout;
 }
 
 export default function App() {
@@ -221,6 +266,17 @@ export default function App() {
   const [dockOpen, setDockOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  /** The first-visit guide over the room: up until this browser has dismissed it once. */
+  const [guideOpen, setGuideOpen] = useState(() => !guideSeen());
+  const closeGuide = useCallback(() => {
+    setGuideOpen(false);
+    rememberGuide();
+  }, []);
+  const showGuide = useCallback(() => {
+    setGuideOpen(true);
+    setHelpOpen(false);
+  }, []);
   const [seekTs, setSeekTs] = useState<number | null>(null);
   /** The roundtable's filter: only what the agents said to each other. */
   const [crossTalk, setCrossTalk] = useState(false);
@@ -229,7 +285,29 @@ export default function App() {
   const now = useNow(5000);
   const office = useOffice();
   const { feed } = office;
-  const { states, sessions, dropped, replaying, notices, connected, root, rescan } = useRtStream(sessionId, feed);
+  // The share dialog renders from raw events, which neither the store nor the office keeps.
+  const evlog = useEvLog(feed);
+  /**
+   * A seek points into one reading of a session's history. When the hub replaces that history — a
+   * rewound transcript, a reconnect, the hosted demo starting its next pass on a new clock — a held
+   * seek points at nothing that exists any more: the room froze on the first moment of the new pass,
+   * the wall clock kept the stale time and the playhead vanished. The hub's `reset` is the one
+   * signal that says so; comparing timestamps is not, because the strip seeks to whole seconds that
+   * can fall before the first event, and a new pass's backlog can start before an old seek.
+   */
+  const pinnedRef = useRef(sessionId);
+  pinnedRef.current = sessionId;
+  const sink = useMemo<EvSink>(
+    () => ({
+      ev: (ev) => evlog.sink.ev(ev),
+      reset: (id) => {
+        if (id === null || id === pinnedRef.current) setSeekTs(null);
+        evlog.sink.reset(id);
+      },
+    }),
+    [evlog],
+  );
+  const { states, sessions, dropped, replaying, notices, connected, root, rescan } = useRtStream(sessionId, sink);
 
   /**
    * The session on screen. One selection drives everything: the picker sets it, a tab sets it, and
@@ -306,9 +384,32 @@ export default function App() {
    */
   const turns = turnCount(state);
 
+  /**
+   * The inspector, placed by width: a card over the room, or at phone width a sheet over the dock —
+   * a child of the shell's grid rather than of the stage, which clips and contains everything in it.
+   * Rendered straight after the stage either way, so Tab goes from the room into it.
+   */
+  const sheet = useSheet();
+  const inspector =
+    selected && state.agents[selected] ? (
+      <Inspector state={state} agentId={selected} now={now} sheet={sheet} onClose={() => setSelected(null)} />
+    ) : null;
+
   const stageRef = useRef<HTMLElement>(null);
-  // `Rail` renders nothing without rows, so this is also the question "is there a rail to measure".
-  const railInset = useRailInset(stageRef, rows.length > 0);
+  /** How wide the session's room is, in buffer columns — reported by the room, `null` until then. */
+  const [frameCols, setFrameCols] = useState<number | null>(null);
+  // `Rail` renders nothing without rows, so this is also the question "is there a rail to lay out".
+  const layout = useRoomLayout(stageRef, rows.length > 0, frameCols ?? PIX.w, tabs.length > 0);
+  /**
+   * Whether the strip may ease between heights. Not on the first frames: the room reports its width
+   * once the backlog has been folded in, and a strip that visibly shrank and regrew while the page
+   * loaded would be animating the loading, not the room.
+   */
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(true), 800);
+    return () => clearTimeout(id);
+  }, []);
 
   const task = state.task;
   /**
@@ -359,6 +460,15 @@ export default function App() {
     setCrossTalk((on) => !on);
   }, []);
 
+  /** Why there is no clip to make yet, or `null`. One answer for the button, the palette and `G`. */
+  const shareWhyNot =
+    sessionId === null ? 'pick a session first' : state.lastSeq === 0 ? 'this session has no events yet' : null;
+  const openShare = useCallback(() => {
+    setShareOpen(true);
+    setPaletteOpen(false);
+    setHelpOpen(false);
+  }, []);
+
   const commands = useMemo((): Command[] => {
     const base: Command[] = [
       // First, and only while it means something: a user who has lost the room in the past is
@@ -376,6 +486,10 @@ export default function App() {
       { id: 'theme-night', label: 'Theme: night', run: () => theme.set('night') },
       { id: 'theme-auto', label: 'Theme: follow the system', run: () => theme.set('auto') },
       { id: 'help', label: 'Help: what am I looking at', hint: '?', run: () => setHelpOpen(true) },
+      { id: 'guide', label: 'Help: show the room guide again', run: showGuide },
+      ...(shareWhyNot === null
+        ? [{ id: 'share', label: 'Share — this session as a GIF or a card', hint: SHARE_KEY.toUpperCase(), run: openShare }]
+        : []),
       { id: 'dock', label: dockOpen ? 'Hide the side panel' : 'Show the side panel', hint: 'B', run: () => setDockOpen((v) => !v) },
       ...TABS.map((t) => ({ id: `tab-${t.key}`, label: `Panel: ${t.label.toLowerCase()}`, hint: 'panel', run: () => { setTab(t.key); setDockOpen(true); } })),
       { id: 'clear', label: 'Clear the agent selection', hint: 'Esc', run: () => setSelected(null) },
@@ -401,25 +515,30 @@ export default function App() {
       };
     });
     return [...base, ...agents, ...list];
-  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession]);
+  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession, showGuide, shareWhyNot, openShare]);
 
   useKeys({
     // The two overlays are exclusive on purpose: they share a z-index, so opening one over the
     // other stacked an invisible dialog under a visible one — ⌘K over the help put focus in a
     // palette nobody could see, and keystrokes ran commands off the screen.
-    'mod+k': () => { setPaletteOpen(true); setHelpOpen(false); },
+    'mod+k': () => { setPaletteOpen(true); setHelpOpen(false); setShareOpen(false); },
     t: theme.cycle,
     b: () => setDockOpen((v) => !v),
-    '?': () => { setHelpOpen(true); setPaletteOpen(false); },
+    '?': () => { setHelpOpen(true); setPaletteOpen(false); setShareOpen(false); },
     '1': () => { setTab('chat'); setDockOpen(true); },
     '2': () => { setTab('agents'); setDockOpen(true); },
     '3': () => { setTab('tools'); setDockOpen(true); },
+    [SHARE_KEY]: () => { if (shareWhyNot === null) openShare(); },
     // Newest thing first, so each press undoes the most recent one: the overlays are on top of the
     // room, a seek is a state the whole room is held in, and a selection is the quietest of them
     // all. Escape that only ever cleared the selection left the seek with no keyboard exit.
     // (An open top-bar menu is closed before any of these by `useDismiss`, in the capture phase.)
+    // The share dialog handles its own Escape while focus is inside it; this is for when a click on
+    // its preview or its text has dropped focus to the page, where the shell used to clear the
+    // seek *behind* the dialog and leave the dialog up.
     Escape: () => {
-      if (paletteOpen) setPaletteOpen(false);
+      if (shareOpen) setShareOpen(false);
+      else if (paletteOpen) setPaletteOpen(false);
       else if (helpOpen) setHelpOpen(false);
       else if (seekTs !== null) setSeekTs(null);
       else setSelected(null);
@@ -427,7 +546,9 @@ export default function App() {
   });
 
   return (
-    <div className={`app${dockOpen ? '' : ' dock-hidden'}`}>
+    // A sheet brings the dock's row back while it is open: with the dock hidden a phone's stage is
+    // the whole height, the room sits at its foot, and a sheet over the stage covered exactly that.
+    <div className={`app${dockOpen || (sheet && inspector !== null) ? '' : ' dock-hidden'}`}>
       <TopBar
         sessions={sessions}
         sessionId={sessionId}
@@ -446,15 +567,30 @@ export default function App() {
         seekTs={seekTs}
         onResumeLive={resumeLive}
         onRescan={rescan}
+        onShare={openShare}
+        shareWhyNot={shareWhyNot}
       />
 
-      {/* `has-tabs` reserves headroom for the strip: the inspector floats over the same corner of
-          the room and used to grow straight under it. `has-rail` says the roster column is up, so
-          the strip can centre on the room beside it rather than on the whole stage. */}
+      {/* `has-tabs` gives the session strip a band of its own above the room, which the rail and
+          the inspector start below. `roster-*` is where `useRoomLayout` put the roster, and
+          `--roster-h` how much height a strip under the room takes from it. */}
       <main
-        className={['stage', tabs.length > 0 ? 'has-tabs' : '', rows.length > 0 ? 'has-rail' : '']
+        className={[
+          'stage',
+          tabs.length > 0 ? 'has-tabs' : '',
+          rows.length > 0 ? 'has-rail' : '',
+          `roster-${layout.mode}`,
+          settled ? 'settled' : '',
+        ]
           .filter(Boolean)
           .join(' ')}
+        style={
+          {
+            '--roster-h': `${layout.rosterH}px`,
+            // The column's width as the layout fitted it, which can be narrower than `--rail-w`.
+            '--rail-fit': layout.mode === 'side' ? `${layout.insetLeft}px` : undefined,
+          } as CSSProperties
+        }
         ref={stageRef}
       >
         {/* Over the room rather than in the shell's grid: the strip is not always there, and a
@@ -522,9 +658,7 @@ export default function App() {
                   <span className={s.live ? 'dot live' : 'dot'} />
                   <b>{name}</b>
                   {says && (
-                    <span className="slug" style={TAB_ABOUT}>
-                      {says}
-                    </span>
+                    <span className="slug">{says}</span>
                   )}
                   {/* Only when there is something to count. A tab is now raised by a session merely
                       running, so a badge reading `0` would be on most of them most of the time —
@@ -547,7 +681,8 @@ export default function App() {
           turns={turns}
           selected={selected}
           onSelect={select}
-          insetLeft={railInset}
+          insetLeft={layout.insetLeft}
+          onFrameCols={setFrameCols}
           // The room re-lights itself rather than swapping a stylesheet: the same office after
           // hours, lit by its desk lamps instead of by its windows.
           night={theme.resolved === 'dark' ? 1 : 0}
@@ -563,10 +698,12 @@ export default function App() {
           onFilterCrossTalk={filterCrossTalk}
         />
         <Rail rows={rows} selected={selected} now={now} onSelect={select} />
-        {selected && state.agents[selected] && (
-          <Inspector state={state} agentId={selected} now={now} onClose={() => setSelected(null)} />
-        )}
+        {!sheet && inspector}
+        {/* Only over a room that exists: a guide to the people in an office that has no session in
+            it would be explaining pictures nobody can see. */}
+        {guideOpen && sessionId !== null && <Guide onClose={closeGuide} />}
       </main>
+      {sheet && inspector}
 
       <aside className="dock panel" aria-label="session detail">
         <nav className="tabs" role="tablist">
@@ -590,7 +727,9 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="dock-body" role="tabpanel">
+        {/* Keyed on the tab so a switch remounts the panel and plays its entrance — each tab already
+            mounts its own content fresh, so the key costs nothing it was not already paying. */}
+        <div className="dock-body" role="tabpanel" key={tab}>
           {/* The socket is down and a session is on screen: the pill says OFFLINE, this says what
               that means and what to do. Above every tab, because the question is the same on each. */}
           {!connected && title !== null && <OfflineNote url={WS_URL} />}
@@ -653,7 +792,19 @@ export default function App() {
       />
 
       {paletteOpen && <Palette commands={commands} onClose={() => setPaletteOpen(false)} />}
-      {helpOpen && <Help onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <Help onClose={() => setHelpOpen(false)} onGuide={showGuide} />}
+      {shareOpen && sessionId !== null && (
+        <ShareDialog
+          // A dialog belongs to the session it was opened on. Keyed, a switch behind it starts a
+          // new one, instead of labelling the old session's render with the new session's name.
+          key={sessionId}
+          sessionId={sessionId}
+          sessionName={current ? sessionName(current) : `session ${shortId(sessionId)}`}
+          events={() => evlog.events(sessionId)}
+          missing={droppedHere + evlog.lost(sessionId)}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -46,8 +46,10 @@ in-process hub on 7411. Stop the app by **port**, not by killing the `npm` wrapp
 servers outlive it.
 
 CI (`.github/workflows/ci.yml`) runs the typecheck, the unit tests and `npx vite build` on Ubuntu,
-macOS and Windows, on Node 22 and 24. The e2e job is manual-only and has never been observed to
-pass on a runner; the workflow says so in a comment.
+macOS and Windows, on Node 22 and 24, and the e2e suite on Linux twice — once with the polling
+watcher and once with `fs.watch`, the only place the latter is exercised. The e2e job was
+manual-only until it first passed on a runner (run 31331751587); it gates every push and pull
+request now.
 
 All three must be green before a PR is reviewed. `main` should never be red — if you find it that
 way, say so in an issue rather than building on top of it.
@@ -93,8 +95,9 @@ a habit, it is a property people are asked to trust: `server/sessions.ts` import
 `server/tail.ts` opens files with mode `'r'`. If you have a reason to change that, say so in the PR
 description in as many words, because it changes what `SECURITY.md` can claim.
 
-**Anything outbound.** No `fetch`, no HTTP client, no telemetry, no update check, no `child_process`.
-Same reason.
+**Anything outbound.** No `fetch`, no HTTP client, no telemetry, no update check, no `child_process`
+(the one exception, the Windows terminal-tab probe in `server/termtabs.ts`, is described in
+`SECURITY.md` — a second one needs the same). Same reason.
 
 **Breaking replay.** Rewinding the timeline rebuilds the room by replaying the same events into the
 same simulation, so it is exact rather than approximate. Anything in `src/office/` that reads the

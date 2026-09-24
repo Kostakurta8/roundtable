@@ -39,7 +39,7 @@ function Key({ k, does }: { k: string; does: string }) {
   );
 }
 
-export function Help({ onClose }: { onClose: () => void }) {
+export function Help({ onClose, onGuide }: { onClose: () => void; onGuide?: () => void }) {
   const dialog = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -93,6 +93,17 @@ export function Help({ onClose }: { onClose: () => void }) {
         <div className="help-body" tabIndex={0} role="region" aria-label="help contents">
           <section aria-label="the room">
             <h3>THE ROOM</h3>
+            {/* The picture guide that greets a first visit, for whoever dismissed it too quickly. In
+                the body rather than the header, so the close button stays the focus the dialog
+                opens on. */}
+            {onGuide && (
+              <p className="help-guide">
+                The same, in pictures, over the room:{' '}
+                <button type="button" className="btn" onClick={onGuide}>
+                  show the room guide
+                </button>
+              </p>
+            )}
             <dl>
               <Row term="a person at a desk, typing">that agent is running tools right now</Row>
               <Row term="a thought cloud">a real thinking block from the transcript, as it lands</Row>
@@ -139,6 +150,7 @@ export function Help({ onClose }: { onClose: () => void }) {
               <Key k="1 2 3" does="chat / agents / tools panel" />
               <Key k="B" does="show or hide the side panel" />
               <Key k="T" does="day → night → follow the system" />
+              <Key k="G" does="share this session as a GIF or a card — made in this tab, saved by your browser" />
               <Key k="? " does="this overlay" />
               <Key k="arrows · + −" does="pan and zoom the room; Home re-centres; F follows the selection" />
               <Key k="Esc" does="close the top thing: menu, palette, this, a held seek, the selection" />

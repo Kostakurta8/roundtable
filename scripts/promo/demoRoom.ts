@@ -9,7 +9,7 @@
  * It reuses `./stage`, the movie set built for the trailer. Nothing here reads or copies anything
  * from the machine it runs on — every line is written by that file, so no prompt, path, project
  * name or session id from a real session can appear in the demo. Every write lands under the root
- * it is handed, and the callers hand it a directory under the OS temp directory.
+ * it is handed, and the callers hand it a fresh one from `newDemoRoot`, under the OS temp directory.
  *
  * What it is *not* is a simulation. The lines go to disk and are picked up by the watcher, parsed,
  * normalized, broadcast over the same WebSocket and folded by the same store as a real session's.
@@ -21,6 +21,9 @@
  * `AGENT_QUIET_MS` before it gives up its chair, because a demo that lies about the timing is a
  * demo of a different program.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { MODEL, MODEL_ALT, Stage, say, task, thinking, toolUse } from './stage';
 
 /** The two staged sessions, so a test can ask the roster for them by name. */
@@ -59,6 +62,24 @@ const CHATTER: readonly (readonly [string, string])[] = [
   ['tool', 'src/scheduler/queue.ts'],
 ];
 
+/**
+ * What every demo directory's name starts with. Not a directory itself: `newDemoRoot` has
+ * `mkdtempSync` finish the name, and `parseArgs` leaves this in `root` for `--demo`, so nothing
+ * reached through `root` in that mode is ever a directory a person named.
+ */
+export const demoRootPrefix = (): string => join(tmpdir(), 'roundtable-demo-');
+
+/**
+ * A new, empty directory under the OS temp directory, for one demo and nobody else.
+ *
+ * It used to be one fixed path, `roundtable-demo-root`, and every demo on the machine shared it: a
+ * second demo's stage wiped the first one's room, and whichever exited first deleted the directory
+ * the other's hub was still serving — which is what two agents checking their own changes side by
+ * side did to each other, repeatedly. `mkdtempSync` picks a name nobody has and creates it in one
+ * step, so the directory a run wipes and deletes is only ever the one that run made.
+ */
+export const newDemoRoot = (): string => mkdtempSync(demoRootPrefix());
+
 export type DemoRoom = {
   /** Where the transcripts are being written. */
   root: string;
@@ -71,7 +92,8 @@ export type DemoRoom = {
  * two sessions on its first sweep, then plays the rest out over the next couple of minutes and
  * keeps the room moving for as long as it is left running.
  *
- * `root` is wiped and recreated by `Stage`, so callers pass a directory that is theirs to wipe.
+ * `root` is wiped and recreated by `Stage`, so callers pass a directory that is theirs to wipe —
+ * in practice one `newDemoRoot` has just made.
  */
 export function stageDemoRoom(root: string, log: (line: string) => void = () => {}): DemoRoom {
   const stage = new Stage(root);

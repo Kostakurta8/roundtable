@@ -1,0 +1,124 @@
+name: Publish to npm
+
+# The shortest install line this project could have is `npx claude-roundtable`, and it does not work
+# yet: the name is free on the registry and nothing has been published under it. This workflow is
+# how it starts working, and it does nothing at all until the owner decides it should.
+#
+# The switch is one repository secret, `NPM_TOKEN` (an npm automation or granular token with publish
+# rights). Without it the `gate` job says so in a notice and `publish` is skipped, so a release on a
+# repository that has not opted in is green rather than red — a workflow that failed on every
+# release would teach everyone to stop reading the release checks, including the one that matters,
+# `release-asset.yml`. With it, a published release is checked against its tag, tested, installed
+# from its own tarball the way a stranger would, and published with provenance: the registry page
+# then links the package to the commit and the run that built it, which is the one thing about a
+# package somebody is about to `npx` that they can check rather than believe.
+#
+# npm's trusted publishing (OIDC, no stored token) would make the secret unnecessary; this uses a
+# token because a secret is a switch the owner can flip, and see flipped, from the repository alone.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (its package.json version must match)
+        required: true
+
+# Two publishes of the same version race to the same irreversible write. Queue them instead; the
+# second finds the version already there and says so.
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # `--provenance` signs the publish with this run's OIDC identity. Nothing else here needs it.
+  id-token: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      ready: ${{ steps.token.outputs.ready }}
+    steps:
+      # `secrets` cannot be read in a job-level `if:`, so whether the token exists is decided here,
+      # as a step, and handed to `publish` as an output. The value never leaves this step.
+      - id: token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=npm publish skipped::No NPM_TOKEN secret is set, so nothing was published. Add one under Settings → Secrets and variables → Actions to publish claude-roundtable on the next release."
+          fi
+
+  publish:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          # Writes an `.npmrc` that reads the token from NODE_AUTH_TOKEN, so it is never on a
+          # command line.
+          registry-url: 'https://registry.npmjs.org'
+
+      # A version on npm can never be published twice and is hard to take back, so the cheapest
+      # mistake to rule out goes first: a release tagged `v0.4.0` whose package.json still says
+      # 0.3.1 would publish the wrong code under the old number — or fail after every test passed.
+      - name: Version matches the tag
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "::error::Tag $TAG does not match package.json version $version."
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The same step CI and `release-asset.yml` run: pack, install the tarball into an empty
+      # directory, run the installed binary. What gets published is what this installed.
+      - name: Package smoke
+        run: npm run smoke
+
+      # A re-run after a successful publish, or a manual dispatch for a version that is already out,
+      # is reported and left alone rather than failing on the registry's refusal. A pre-release
+      # goes out under `next`, so `npx claude-roundtable` keeps meaning the latest real release.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PRERELEASE: ${{ github.event.release.prerelease || false }}
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if [ "$(npm view "$name@$version" version 2>/dev/null || true)" = "$version" ]; then
+            echo "::notice title=Already published::$name@$version is already on npm; nothing to do."
+            exit 0
+          fi
+          tag=latest
+          if [ "$PRERELEASE" = "true" ]; then tag=next; fi
+          npm publish --provenance --access public --tag "$tag"
+          echo "::notice title=Published::$name@$version is on npm under '$tag'."

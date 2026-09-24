@@ -18,6 +18,13 @@ on:
       tag:
         description: Release tag to attach the tarball to
         required: true
+      create:
+        description: Create the release first, at the head of the branch this runs on, with the tag's CHANGELOG section as its notes
+        type: boolean
+        default: false
+      title:
+        description: The release's title, when creating it (default is the tag)
+        required: false
 
 permissions:
   contents: write
@@ -29,7 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          # A release being created has no tag yet: it is made from the branch this was run on.
+          ref: ${{ github.event.release.tag_name || (inputs.create && github.sha) || inputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -38,6 +46,25 @@ jobs:
       # `npm pack` runs `prepack`, which builds `dist/`; the smoke test then installs that exact
       # tarball into an empty directory and runs it, so a broken pack never reaches the release.
       - run: npm run smoke
+      # After the smoke test, so a build that cannot be installed never gets a release to sit on.
+      # The notes are the tag's own section of CHANGELOG.md, which is written from `git log` and is
+      # the release note every earlier release carried. `gh release create` makes the tag as well.
+      # Only on a dispatch that asks for it: a published release already exists by definition.
+      - name: Create the release
+        if: github.event_name == 'workflow_dispatch' && inputs.create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::$TAG already exists; attaching to it"
+          else
+            v="${TAG#v}"
+            awk -v head="## [$v]" 'index($0, head) == 1 { f = 1; next } /^## \[/ { if (f) exit } f' CHANGELOG.md > notes.md
+            if [ ! -s notes.md ]; then echo "::error::CHANGELOG.md has no section for $v"; exit 1; fi
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "${TITLE:-$TAG}" --notes-file notes.md
+          fi
       - name: Pack and attach
         env:
           GH_TOKEN: ${{ github.token }}

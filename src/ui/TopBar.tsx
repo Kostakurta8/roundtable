@@ -15,7 +15,9 @@ import { useCallback, useState, type CSSProperties } from 'react';
 import type { SessionSummary } from '../../shared/protocol';
 import { useDismiss, useNow } from '../hooks';
 import type { ThemeApi } from '../theme';
+import { isRecorded } from '../ws';
 import { ago, clip, clockSec, money, sessionAbout, sessionName, tokens } from './format';
+import './share.css';
 
 const THEME_LABEL: Record<ThemeApi['choice'], { glyph: string; word: string }> = {
   auto: { glyph: '◐', word: 'auto' },
@@ -43,6 +45,10 @@ export type TopBarProps = {
   onResumeLive: () => void;
   /** Ask the hub to look for newly started sessions right now, instead of on its own schedule. */
   onRescan: () => void;
+  /** Open the share dialog. Absent, the bar has no Share button. */
+  onShare?: () => void;
+  /** Why there is nothing to share yet, or `null` when there is. */
+  shareWhyNot?: string | null;
 };
 
 /**
@@ -123,13 +129,13 @@ export function TopBar(props: TopBarProps) {
 
   return (
     <header className="topbar panel">
-      <span className="wordmark" title="Roundtable">
+      <h1 className="wordmark" title="Roundtable">
         <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
           <circle cx="7" cy="7" r="5.6" fill="none" stroke="var(--accent-2)" strokeWidth="1.6" />
           <circle cx="7" cy="7" r="2" fill="var(--accent-2)" />
         </svg>
         <span className="lbl">ROUNDTABLE</span>
-      </span>
+      </h1>
 
       <span className="sep" />
 
@@ -196,7 +202,7 @@ export function TopBar(props: TopBarProps) {
       ) : (
         <span className={connected ? 'pill pill-live' : 'pill'}>
           {connected && <span className="live-dot" />}
-          {connected ? (replaying ? 'LOADING' : 'LIVE') : 'OFFLINE'}
+          {connected ? (replaying ? 'LOADING' : isRecorded() ? 'REPLAY' : 'LIVE') : 'OFFLINE'}
         </span>
       )}
 
@@ -231,6 +237,36 @@ export function TopBar(props: TopBarProps) {
       )}
 
       <span className="sep" />
+
+      {/* The clip `--gif` writes, one click from the room it is a clip of. Kept focusable while
+          there is nothing to share, so the reason — in the tooltip and the name — is reachable by
+          keyboard too, instead of a greyed-out control nobody can ask about. */}
+      {props.onShare && (
+        <button
+          type="button"
+          className="btn icon share-open"
+          onClick={props.shareWhyNot ? undefined : props.onShare}
+          aria-disabled={props.shareWhyNot ? true : undefined}
+          title={props.shareWhyNot ? `share — ${props.shareWhyNot}` : 'share this session as a GIF or a card (G)'}
+          aria-label={props.shareWhyNot ? `share: ${props.shareWhyNot}` : 'share this session as a GIF or a card'}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M6 1.5v6M3.6 3.9 6 1.5l2.4 2.4" />
+            <path d="M2 7.2v2.8h8V7.2" />
+          </svg>
+          <span className="lbl">share</span>
+        </button>
+      )}
 
       {/* The hub finds new sessions by itself every few seconds; this only asks it to look now.
           It says so in the tooltip rather than pretending to be a repair, and it reports back —

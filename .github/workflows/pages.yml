@@ -1,0 +1,66 @@
+name: Pages
+
+# The zero-install demo at https://kostakurta8.github.io/roundtable/ — the real client, replaying a
+# recording of the hub (`src/demo/`), built by `npm run build:pages`. It needs the repository's Pages
+# source set to "GitHub Actions" (Settings → Pages) once, by hand; until then `configure-pages` or
+# the deploy fails, and says why.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Nothing by default; each job gets what it uses. The build runs `npm ci`, which runs install
+# scripts from third-party packages, so it gets no write and no OIDC token. Only the deploy job —
+# which runs one first-party action and nothing from npm — mints the token that proves to Pages
+# which run it is, and holds `pages: write`, because that is what publishing is.
+permissions: {}
+
+# One deploy at a time, and a newer push waits rather than cancelling one already under way — a
+# deploy killed halfway can leave Pages serving nothing until the next one finishes.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # `configure-pages` reads the site's settings, and fails with a reason if Pages is not enabled.
+      pages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - uses: actions/configure-pages@v5
+
+      # `vite build --mode pages`: `base` is /roundtable/, the entry is `src/demo/main.tsx`, and the
+      # social card is copied next to the page so `og:image` resolves.
+      - name: Build
+        run: npm run build:pages
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
