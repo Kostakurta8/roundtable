@@ -136,6 +136,22 @@ The caption strip under the room carries only the elapsed time, the agent count,
 the project's address. The command prints a reminder to look before posting whenever the clip is not
 `--bare`.
 
+**The Share dialog in the page makes the same GIF, and writes nothing itself.** It renders in a Web
+Worker the bundle ships (`src/clip/worker.ts`, served by the hub as one more fingerprinted asset),
+from the events the page has already received — `src/ui/evlog.ts` keeps a bounded copy of them —
+with the same renderer and the same redaction as `--gif`, and "Hide transcript text" is `--bare`.
+The result becomes a `blob:` URL in the tab; the browser saves it when you click Download, to
+wherever the browser saves things. "Copy caption" writes one fixed line of text to the clipboard,
+and only when clicked. Nothing is uploaded, and the dialog links nowhere.
+
+**The hosted demo is a static page, and reads nothing from your machine.** The page at
+`https://kostakurta8.github.io/roundtable/` is built by `npm run build:pages` from its own entry
+(`src/demo/main.tsx`), which the installed package does not contain. It plays a recording of a
+*staged* session committed to this repository (`src/demo/recording.json`, made by
+`scripts/recordDemo.ts` against a synthetic root, with the root's path scrubbed and the output
+refused if the path appears anywhere), and opens no socket at all. Unlike the local app, it does
+link out — to this repository — because being found is its purpose.
+
 **A client cannot name a path.** The only command that takes an argument is
 `{"cmd":"follow","sessionId":"…"}`. Before anything happens, the id is looked up with
 `findSession`, which is `listSessions(root).find((s) => s.sessionId === sessionId)` — a match
