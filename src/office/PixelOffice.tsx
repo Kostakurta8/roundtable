@@ -36,7 +36,7 @@ import { evSession } from '../../shared/events';
 import { agentLook, type RtAgent } from '../store';
 import { duration, money, tokens as fmtTokens, clip } from '../ui/format';
 import type { EvSink } from '../ws';
-import { Engine, type ActorState } from './engine';
+import { Engine, podSeat, SCENE, WAYPOINTS, type ActorState } from './engine';
 import { mapEvent } from './mapping';
 import { Recorder, Replay } from './replay';
 import { PAL, PIX } from './pixel/art';
@@ -113,6 +113,86 @@ const SPEND_FULL_USD = 25;
  */
 const BOARD_BOX: Box = fixtureBox('whiteboard');
 const TABLE_BOX: Box = fixtureBox('roundtable');
+
+// ------------------------------------------------------------------ framing
+
+/**
+ * The column the room always reaches, whatever the session: the manager's desk, the door and the
+ * roundtable's rug all sit left of it, and the break corner holds the left edge down.
+ */
+const FRAME_MIN_RIGHT = 372;
+
+/**
+ * How far past its seat a pod desk's pixels reach — half the desk, its nameplate and a margin.
+ * Read off the rendered room: the right bank's inner desk spans 356…400 around a seat at 378.
+ */
+const DESK_REACH = 30;
+
+/**
+ * Within this many columns of the far wall, the frame simply takes the wall too. Cropping a room a
+ * dozen pixels short of its edge saves nothing a viewer can see and cuts a nameplate in half.
+ */
+const FRAME_SNAP = 16;
+
+/**
+ * The smallest a buffer pixel is allowed to be at rest, in CSS pixels, when the stage can afford
+ * it only by cropping the sides. A phone-width stage fits the whole 480 columns at 0.79px each,
+ * which draws every person ten pixels tall — a picture of an office, not one you can read. Past
+ * this the resting frame gives up the room's outer desks (still a drag away) for people you can see.
+ */
+const READABLE_PX = 1.3;
+
+/**
+ * How far right the session's room reaches, in buffer columns.
+ *
+ * The room draws desks up to the most it has ever needed (`desksFor` in the scene), so a small
+ * session is a small room with bare floor to its right — and fitting the whole 480-column plan to
+ * the stage spent a third of the picture on that floor. This is the same rule restated as a width:
+ * the widest desk the session has drawn, the fixtures that are always there, and nothing past them.
+ * Monotone in `highWater` for the same reason the scene's rule is: the frame only ever widens.
+ */
+export function frameCols(highWater: number): number {
+  const seats = Math.min(Math.max(0, highWater), WAYPOINTS.podSeats.length);
+  let right = FRAME_MIN_RIGHT;
+  for (let i = 0; i < seats; i++) right = Math.max(right, podSeat(i).x * (PIX.w / SCENE.w) + DESK_REACH);
+  return right >= PIX.w - FRAME_SNAP ? PIX.w : Math.ceil(right);
+}
+
+/**
+ * Where the camera rests: the session's room, wall to floor, as large as the stage allows.
+ *
+ * `blitOf` fits a 16:9 window of the buffer to the stage and bottom-aligns it, and every stage in
+ * this shell is taller than that window — the dock takes the right-hand third — so at the old
+ * resting zoom of 1 the room filled the width and left a band of ceiling over it, a third of the
+ * stage at 1440×900. Zooming in does not fill that band with ceiling: `headroomBlits` paints the
+ * buffer's own rows above the window first. So the zoom at which the room's full height exactly
+ * meets the stage's (`zFill`) shows the whole wall and the whole floor with no band at all, and the
+ * only question is whether the session's room is narrow enough to afford it (`zContent`).
+ *
+ * The result goes through `clampCam` like every other camera, so nothing here can show the void
+ * past the buffer; and it is recomputed every frame from the stage and the room's width, which is
+ * what lets the frame follow the room as it grows and the window as it resizes, eased by the same
+ * loop that eases every other camera move.
+ */
+export function homeCam(cols: number, g: Geo): Cam {
+  const usableW = Math.max(g.w * 0.55, g.w - g.insetLeft);
+  if (!(usableW > 0) || !(g.h > 0)) return { ...CAM_HOME };
+  const widthScale = usableW / PIX.w;
+  const zFill = g.h / PIX.h / widthScale;
+  const zContent = PIX.w / Math.max(1, Math.min(PIX.w, cols));
+  const zReadable = READABLE_PX / widthScale;
+  const want = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(zFill, Math.max(zContent, zReadable))));
+  // A whole number of rows in the window, rounding the zoom *out*. `blitOf` snaps the window's
+  // origin to a whole row, so a fractional height left the window half a row past the floor's
+  // bottom edge — a hairline of surround under the room — or, rounded the other way, half a row
+  // short of the wall. Out, because `zFill` is the most the stage's height can hold.
+  const rows = Math.ceil(PIX.h / want - 1e-9);
+  const z = PIX.h / rows;
+  // Centred on the room the session has, and resting on the floor's bottom edge: when the window
+  // is shorter than the buffer, the rows it leaves out are the ones `headroomBlits` puts back above
+  // it, so the wall is never what gets cropped.
+  return clampCam({ z, x: Math.min(PIX.w, cols) / 2, y: PIX.h - rows / 2 });
+}
 
 type Sim = {
   engine: Engine;
@@ -448,6 +528,12 @@ export type PixelOfficeProps = {
   onOpenSession?: () => void;
   /** Clicking the roundtable — the fixture the cross-talk between agents belongs to. */
   onFilterCrossTalk?: () => void;
+  /**
+   * Told how many buffer columns the session's room reaches, whenever that changes — a handful of
+   * times a session, as the room grows into its floor plan. The shell lays the roster out around
+   * the room's shape, and the room is the only thing that knows it.
+   */
+  onFrameCols?: (cols: number) => void;
 };
 
 export const PixelOffice = memo(function PixelOffice({
@@ -464,6 +550,7 @@ export const PixelOffice = memo(function PixelOffice({
   replayAt = null,
   onOpenSession,
   onFilterCrossTalk,
+  onFrameCols,
 }: PixelOfficeProps) {
   const wrap = useRef<HTMLDivElement | null>(null);
   const view = useRef<HTMLCanvasElement | null>(null);
@@ -497,9 +584,31 @@ export const PixelOffice = memo(function PixelOffice({
   const geo = useRef<Geo>({ w: 0, h: 0, dpr: 1, insetLeft });
   /** One frame's worth of "point the camera at this person", consumed and cleared. */
   const look = useRef<string | null>(null);
+  /**
+   * Whether the camera is resting on the room's own frame (`homeCam`) rather than where a viewer
+   * put it.
+   *
+   * While it is, the loop re-aims at the frame every tick, which is what lets the picture follow a
+   * room that grows as agents arrive and a stage that changes shape. The moment anybody pans, zooms,
+   * follows or double-clicks, it stops — a camera that drifted back to its own idea of the room
+   * while somebody was looking at a desk would be fighting them. Home, Escape, ⌂, a double-click on
+   * the floor and clearing the selection hand it back.
+   */
+  const framed = useRef(true);
+  /** Jump to the frame on the next tick instead of easing in: a first paint, or a different room. */
+  const snap = useRef(true);
+  /**
+   * The most pod desks this room has drawn — the scene's own high-water rule, mirrored from the
+   * same actor list the scene is handed, because the frame has to be exactly as wide as that room.
+   */
+  const highWater = useRef(0);
 
   const [follow, setFollow] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
+  /** `framed`, for the readout: written when it flips, which is a handful of times a session. */
+  const [framedUi, setFramedUi] = useState(true);
+  /** The frame's zoom, for the readout's buttons — written only when it moves by a visible step. */
+  const [homeZ, setHomeZ] = useState(1);
   /**
    * The zoom, as the readout shows it.
    *
@@ -535,7 +644,27 @@ export const PixelOffice = memo(function PixelOffice({
    */
   useEffect(() => {
     scene.current?.reset();
+    // The frame is the room's, so a different room starts on its own — and cuts to it, because an
+    // ease from one session's frame to another's is a camera move through a room that is not there.
+    highWater.current = 0;
+    framed.current = true;
+    snap.current = true;
+    setFramedUi(true);
   }, [roomId]);
+
+  /** Takes the camera off the room's frame: somebody is steering it now. */
+  const unframe = useCallback((): void => {
+    if (!framed.current) return;
+    framed.current = false;
+    setFramedUi(false);
+  }, []);
+
+  /** Hands the camera back to the room's frame. */
+  const reframe = useCallback((): void => {
+    look.current = null;
+    framed.current = true;
+    setFramedUi(true);
+  }, []);
 
   /** The selected agent's spawn tree. Everyone outside it is dimmed; `null` dims nobody. */
   const kin = useMemo(() => (selected === null ? null : subtreeOf(agents, selected)), [agents, selected]);
@@ -560,21 +689,26 @@ export const PixelOffice = memo(function PixelOffice({
   };
   const sync = useRef(office.sync);
   sync.current = office.sync;
+  const colsTo = useRef(onFrameCols);
+  colsTo.current = onFrameCols;
 
   // A selection is a request to look at someone; clearing it hands the room back.
   useEffect(() => {
     if (selected === null) {
       setFollow(false);
-      camWant.current = { ...CAM_HOME };
-      setZoom(1);
-      look.current = null;
+      reframe();
       return;
     }
     // Point the camera at them once, on the next frame — the scene knows where they are and this
-    // does not. At the default zoom the whole room is already in view and `clampCam` pins the
-    // camera to its centre, so this is a no-op until somebody has actually zoomed in.
+    // does not. When the frame already shows the whole room `clampCam` pins the camera and this is
+    // a no-op, and a no-op glance leaves the camera on its frame (see the loop).
     look.current = selected;
-  }, [selected]);
+  }, [selected, reframe]);
+
+  // Following is steering: the frame would otherwise pull the camera back off the person every tick.
+  useEffect(() => {
+    if (follow) unframe();
+  }, [follow, unframe]);
 
   useLayoutEffect(() => {
     const el = wrap.current;
@@ -619,9 +753,18 @@ export const PixelOffice = memo(function PixelOffice({
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       ctx.imageSmoothingEnabled = false;
+      // Resizing a canvas clears it, and a `ResizeObserver` callback runs after this frame's
+      // `requestAnimationFrame` and before its paint — so without this, every frame the stage
+      // changes size is a frame of bare canvas. The roster strip eases its height when the room
+      // grows, which resizes the stage for a third of a second at a time: a visible flicker, every
+      // frame of it. Re-presenting the last scene costs one blit and moves no simulation.
+      if (painted) present(0);
     };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
+    // Whether `present` has anything to show yet; the first `measure` below runs before the first
+    // scene has been drawn.
+    let painted = false;
     measure();
 
     const still =
@@ -651,6 +794,12 @@ export const PixelOffice = memo(function PixelOffice({
       age: Element | null;
       note: Element | null;
     } | null = null;
+
+    /** The cast the last `paint` drew, for a `present` that runs without one. */
+    let lastActors: ActorState[] = [];
+    /** What the shell and the readout were last told, so each hears only about a change. */
+    let colsSaid = -1;
+    let homeZSaid = -1;
 
     /** One frame: advance every simulation, repaint the visible one, blit it, move the DOM marks. */
     const paint = (dt: number): void => {
@@ -758,14 +907,67 @@ export const PixelOffice = memo(function PixelOffice({
         clockMs: cur.replayAt ?? Date.now(),
       });
 
+      // The scene's own high-water rule, read off the same actors it was just handed. Pod seats are
+      // the non-negative desk indices; the manager, the queue outside and the break corner are the
+      // negative sentinels and never widen the room.
+      for (const a of actors) {
+        if (a.deskIndex >= 0 && a.deskIndex + 1 > highWater.current) highWater.current = a.deskIndex + 1;
+      }
+      lastActors = actors;
+      painted = true;
+      present(dt);
+    };
+
+    /**
+     * The half of a frame that moves nothing but the camera: aim, blit, and lay the DOM over it.
+     *
+     * Split from `paint` so that a resize can put the last frame back on a canvas the browser has
+     * just cleared without advancing any simulation — ticking the engines from a layout callback
+     * would give them a second clock.
+     */
+    const present = (dt: number): void => {
+      const actors = lastActors;
+      const cur = live.current;
+
       // --- camera ---------------------------------------------------------------
+      const { w, h, dpr } = size;
+      const g = geo.current;
+      g.w = w;
+      g.h = h;
+      g.dpr = dpr;
+      g.insetLeft = cur.insetLeft;
+
+      const cols = frameCols(highWater.current);
+      if (cols !== colsSaid) {
+        colsSaid = cols;
+        colsTo.current?.(cols);
+      }
+      const rest = homeCam(cols, g);
+      if (Math.abs(rest.z - homeZSaid) > 0.02) {
+        homeZSaid = rest.z;
+        setHomeZ(rest.z);
+      }
+
       const want = camWant.current;
+      if (framed.current) {
+        want.x = rest.x;
+        want.y = rest.y;
+        want.z = rest.z;
+      }
       if (look.current !== null) {
-        // A one-shot glance, from a fresh selection or a double-click.
+        // A one-shot glance, from a fresh selection or a double-click. Only a glance that actually
+        // moves the camera takes it off the room's frame: when the frame already shows everybody,
+        // `clampCam` pins the camera where it is, and giving up the frame for a move that did not
+        // happen would leave the room refusing to re-fit itself as it grows, for no visible reason.
         const box = scene.current!.boxOf(look.current);
         if (box) {
-          want.x = box.x + box.w / 2;
-          want.y = box.y + box.h / 2;
+          const to = clampCam({ ...want, x: box.x + box.w / 2, y: box.y + box.h / 2 });
+          if (Math.abs(to.x - want.x) > 0.5 || Math.abs(to.y - want.y) > 0.5) {
+            framed.current = false;
+            setFramedUi(false);
+            want.x = to.x;
+            want.y = to.y;
+          }
         }
         look.current = null;
       } else if (cur.follow && cur.selected !== null) {
@@ -777,6 +979,10 @@ export const PixelOffice = memo(function PixelOffice({
           want.y = box.y + box.h / 2;
         }
       }
+      if (snap.current && w > 1 && h > 1) {
+        cam.current = { ...want };
+        snap.current = false;
+      }
       const k = Math.min(1, dt / 220);
       const c = cam.current;
       c.x += (want.x - c.x) * k;
@@ -786,12 +992,6 @@ export const PixelOffice = memo(function PixelOffice({
       cam.current = cl;
 
       // --- blit ------------------------------------------------------------------
-      const { w, h, dpr } = size;
-      const g = geo.current;
-      g.w = w;
-      g.h = h;
-      g.dpr = dpr;
-      g.insetLeft = cur.insetLeft;
       const b = blitOf(cl, g);
 
       // The surround — the gutters either side of the room when the stage is *shorter* than 16:9 —
@@ -955,18 +1155,26 @@ export const PixelOffice = memo(function PixelOffice({
 
   // ----------------------------------------------------------------- controls
 
-  /** Sends the camera somewhere, keeping the readout and the autopilot honest. */
-  const aim = useCallback((next: Cam, autopilot?: boolean): void => {
-    const cl = clampCam(next);
-    camWant.current = cl;
-    setZoom(cl.z);
-    if (autopilot === false) setFollow(false);
-  }, []);
+  /**
+   * Sends the camera somewhere, keeping the readout and the autopilot honest. Every caller is a
+   * viewer steering, so every call takes the camera off the room's frame.
+   */
+  const aim = useCallback(
+    (next: Cam, autopilot?: boolean): void => {
+      const cl = clampCam(next);
+      unframe();
+      camWant.current = cl;
+      setZoom(cl.z);
+      if (autopilot === false) setFollow(false);
+    },
+    [unframe],
+  );
 
+  /** Back to the room's own frame — which the loop keeps current, so there is no target to name. */
   const home = useCallback((): void => {
-    look.current = null;
-    aim({ ...CAM_HOME }, false);
-  }, [aim]);
+    setFollow(false);
+    reframe();
+  }, [reframe]);
 
   /**
    * Zooms, keeping the buffer pixel under `client` under `client`.
@@ -1047,6 +1255,7 @@ export const PixelOffice = memo(function PixelOffice({
       d.moved = true;
       look.current = null;
       setFollow(false);
+      unframe();
       wrap.current?.setAttribute('data-drag', 'on');
       try {
         wrap.current?.setPointerCapture(e.pointerId);
@@ -1062,7 +1271,7 @@ export const PixelOffice = memo(function PixelOffice({
     // A copy, not the same object — the loop eases `cam` toward `camWant` and aliasing the two
     // would quietly make the easing a no-op for every later move as well.
     cam.current = { ...next };
-  }, []);
+  }, [unframe]);
 
   const endDrag = useCallback((e: React.PointerEvent) => {
     const d = drag.current;
@@ -1150,6 +1359,9 @@ export const PixelOffice = memo(function PixelOffice({
         case 'f':
         case 'F':
           setFollow((v) => !v);
+          break;
+        case 'Home':
+          home();
           break;
         case 'Escape':
           // Not stopped: the shell's own Escape clears the selection, and "home" means both.
@@ -1329,22 +1541,38 @@ export const PixelOffice = memo(function PixelOffice({
           type="button"
           className="cam-btn"
           aria-label="Zoom out"
-          disabled={zoom <= ZOOM_MIN}
+          disabled={(framedUi ? homeZ : zoom) <= ZOOM_MIN + 0.001}
           onClick={() => zoomBy(1 / KEY_STEP)}
         >
           −
         </button>
-        <span className="cam-z" aria-label={`zoom ${zoom.toFixed(1)} times`}>{`${zoom.toFixed(1)}×`}</span>
+        {/* `fit` while the camera rests on the room's frame: the number there is whatever the stage
+            and the session's size make it, and a viewer who has never touched the zoom should not
+            be told the room is at 1.4× as if somebody had set it. */}
+        <span
+          className="cam-z"
+          aria-label={framedUi ? 'zoom: fitted to the room' : `zoom ${zoom.toFixed(1)} times`}
+          title={framedUi ? 'fitted to the room — Home or ⌂ returns here' : undefined}
+        >
+          {framedUi ? 'fit' : `${zoom.toFixed(1)}×`}
+        </span>
         <button
           type="button"
           className="cam-btn"
           aria-label="Zoom in"
-          disabled={zoom >= ZOOM_MAX}
+          disabled={(framedUi ? homeZ : zoom) >= ZOOM_MAX - 0.001}
           onClick={() => zoomBy(KEY_STEP)}
         >
           +
         </button>
-        <button type="button" className="cam-btn" aria-label="Reset the camera" onClick={home}>
+        <button
+          type="button"
+          className="cam-btn"
+          aria-label="Fit the room"
+          title="fit the room (Home)"
+          aria-pressed={framedUi}
+          onClick={home}
+        >
           ⌂
         </button>
         <button

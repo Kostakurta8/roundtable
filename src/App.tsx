@@ -13,6 +13,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Chat } from './chat/Chat';
 import { useKeys, useNow } from './hooks';
 import { PixelOffice, useOffice } from './office/PixelOffice';
+import { PIX } from './office/pixel/art';
 import { initialState, roster as rosterOf, turnCount, workingAgents } from './store';
 import { OfflineNote } from './ui/OfflineNote';
 import { useTheme } from './theme';
@@ -36,21 +37,6 @@ const TITLE_MAX = 110;
  */
 const TAB_ABOUT_MAX = 90;
 
-/**
- * The clamp on a tab's second line.
- *
- * Inline because `index.css` is not this session's to edit and `.session-tab .slug` has no rule of
- * its own — without a ceiling a session whose opening prompt is a sentence would push every other
- * tab out of the strip. `.session-tabs` already scrolls, so nothing is lost; this is what keeps the
- * scrolling from being needed on two tabs.
- */
-const TAB_ABOUT: CSSProperties = {
-  maxWidth: 168,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  color: 'var(--ink-3)',
-};
 
 /**
  * Whether the distinguishing line says anything the name has not already said.
@@ -166,36 +152,73 @@ function Nothing({ connected, sessions, root }: { connected: boolean; sessions: 
   );
 }
 
+/** The least a roster strip under the room is worth: one row of agents and its padding. */
+const ROSTER_MIN = 64;
+/** The most of the stage the strip may take, however much the room leaves over. */
+const ROSTER_MAX_SHARE = 0.4;
+
 /**
- * How much of the stage's left edge the roster rail covers — measured, never asserted.
+ * Where the roster goes, and how much of the stage it takes from the room.
  *
- * `--rail-w` is 244px until `index.css` drops it to 210 at ≤1180px, and the rail is `display: none`
- * altogether at ≤900px. A constant here was wrong at both of those widths, and wrong in the
- * direction that hurts: the room was fitted around a rail that was not on screen. An observer on
- * the element itself is right at every breakpoint, including the one where it has no box at all.
+ * The roster used to be a column down the stage's left edge, always. That is the right place on a
+ * stage wider than the room, where the column sits in what would otherwise be letterbox — but the
+ * dock takes the right third of the window, so the stage is nearly always *taller* than 16:9, and
+ * at 1440×900 the column took a quarter of the width from a room that was already width-limited:
+ * the office came out 776px wide under 330px of empty ceiling, its people ten pixels tall. A roster
+ * is a list. It does not need the stage's height; the room does.
  *
- * The gutter to the right of the rail is not a second constant either — it mirrors the rail's own
- * offset from the stage's left edge, so the room is balanced against whatever the stylesheet gives
- * it rather than against a number that exists only in this file.
+ * So the stage's own shape decides. When the room at full width leaves at least a row's worth of
+ * height under it, the roster becomes a strip there (`below`) and the room gets the whole width.
+ * When it does not, the column comes back (`side`) and sits in what would be letterbox, as before.
+ * At ≤900px the stylesheet hides the rail altogether and the Agents tab carries it (`none`).
+ *
+ * The strip is sized from the room the session actually has — `cols`, from `PixelOffice`. A small
+ * session draws a narrow room that wants to be taller than 16:9, so it keeps the height and the
+ * strip gets one row; as agents arrive the room widens and the strip grows into the slack it
+ * leaves, which is also when the roster has more rows to show. Every length here is measured off
+ * the live stage and the stylesheet's own `--rail-w`: a constant for the rail's width was once
+ * wrong at both of its breakpoints, in the direction that fitted the room around a rail that was
+ * not on screen.
  */
-function useRailInset(stage: React.RefObject<HTMLElement>, present: boolean): number {
-  const [inset, setInset] = useState(0);
+type RoomLayout = { mode: 'side' | 'below' | 'none'; insetLeft: number; rosterH: number };
+
+const NO_LAYOUT: RoomLayout = { mode: 'none', insetLeft: 0, rosterH: 0 };
+
+function useRoomLayout(
+  stage: React.RefObject<HTMLElement>,
+  present: boolean,
+  cols: number,
+  tabsUp: boolean,
+): RoomLayout {
+  const [layout, setLayout] = useState<RoomLayout>(NO_LAYOUT);
 
   useLayoutEffect(() => {
     const host = stage.current;
-    const rail = present ? host?.querySelector('.rail') : null;
-    if (!host || !rail) {
-      setInset(0);
-      return;
-    }
+    if (!host) return;
 
     const measure = (): void => {
-      const r = rail.getBoundingClientRect();
-      const h = host.getBoundingClientRect();
-      // A `display: none` element has no box, so every edge reads 0 — which is exactly the answer
-      // the room needs: no rail, no inset.
-      const next = r.width === 0 ? 0 : Math.max(0, Math.round(r.right - h.left + (r.left - h.left)));
-      setInset((prev) => (prev === next ? prev : next));
+      const rail = present ? host.querySelector('.rail') : null;
+      let next = NO_LAYOUT;
+      // A `display: none` rail is the ≤900px layout: no rail, no inset, the room has the stage.
+      if (rail && getComputedStyle(rail).display !== 'none') {
+        const tabs = host.querySelector('.session-tabs');
+        const w = host.clientWidth;
+        const h = host.clientHeight - (tabs ? tabs.getBoundingClientRect().height : 0);
+        const slack = h - (w * PIX.h) / PIX.w;
+        if (slack >= ROSTER_MIN) {
+          const want = h - (w * PIX.h) / Math.max(1, cols);
+          const rosterH = Math.round(Math.min(Math.max(want, ROSTER_MIN), slack, h * ROSTER_MAX_SHARE));
+          next = { mode: 'below', insetLeft: 0, rosterH };
+        } else {
+          // The column's width as the stylesheet has it at this breakpoint. Read rather than
+          // measured off the rail's box: on the frame the mode flips, that box is still the strip.
+          const railW = Number.parseFloat(getComputedStyle(host).getPropertyValue('--rail-w')) || 0;
+          next = { mode: 'side', insetLeft: Math.round(railW), rosterH: 0 };
+        }
+      }
+      setLayout((prev) =>
+        prev.mode === next.mode && prev.insetLeft === next.insetLeft && prev.rosterH === next.rosterH ? prev : next,
+      );
     };
 
     measure();
@@ -203,15 +226,13 @@ function useRailInset(stage: React.RefObject<HTMLElement>, present: boolean): nu
     // than a crash on a constructor that is not there.
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
-    ro.observe(rail);
-    // The rail's own box covers the token change at ≤1180px; the stage covers the case a browser
-    // may not report — an element being hidden is a box that stopped existing, not one that resized
-    // — and both breakpoints resize the stage on the way past.
+    // The stage covers the window, the dock toggle and both breakpoints: hiding the rail at ≤900px
+    // restacks the shell, which resizes the stage on the way past.
     ro.observe(host);
     return () => ro.disconnect();
-  }, [stage, present]);
+  }, [stage, present, cols, tabsUp]);
 
-  return inset;
+  return layout;
 }
 
 export default function App() {
@@ -307,8 +328,20 @@ export default function App() {
   const turns = turnCount(state);
 
   const stageRef = useRef<HTMLElement>(null);
-  // `Rail` renders nothing without rows, so this is also the question "is there a rail to measure".
-  const railInset = useRailInset(stageRef, rows.length > 0);
+  /** How wide the session's room is, in buffer columns — reported by the room, `null` until then. */
+  const [frameCols, setFrameCols] = useState<number | null>(null);
+  // `Rail` renders nothing without rows, so this is also the question "is there a rail to lay out".
+  const layout = useRoomLayout(stageRef, rows.length > 0, frameCols ?? PIX.w, tabs.length > 0);
+  /**
+   * Whether the strip may ease between heights. Not on the first frames: the room reports its width
+   * once the backlog has been folded in, and a strip that visibly shrank and regrew while the page
+   * loaded would be animating the loading, not the room.
+   */
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(true), 800);
+    return () => clearTimeout(id);
+  }, []);
 
   const task = state.task;
   /**
@@ -448,13 +481,20 @@ export default function App() {
         onRescan={rescan}
       />
 
-      {/* `has-tabs` reserves headroom for the strip: the inspector floats over the same corner of
-          the room and used to grow straight under it. `has-rail` says the roster column is up, so
-          the strip can centre on the room beside it rather than on the whole stage. */}
+      {/* `has-tabs` gives the session strip a band of its own above the room, which the rail and
+          the inspector start below. `roster-*` is where `useRoomLayout` put the roster, and
+          `--roster-h` how much height a strip under the room takes from it. */}
       <main
-        className={['stage', tabs.length > 0 ? 'has-tabs' : '', rows.length > 0 ? 'has-rail' : '']
+        className={[
+          'stage',
+          tabs.length > 0 ? 'has-tabs' : '',
+          rows.length > 0 ? 'has-rail' : '',
+          `roster-${layout.mode}`,
+          settled ? 'settled' : '',
+        ]
           .filter(Boolean)
           .join(' ')}
+        style={{ '--roster-h': `${layout.rosterH}px` } as CSSProperties}
         ref={stageRef}
       >
         {/* Over the room rather than in the shell's grid: the strip is not always there, and a
@@ -522,9 +562,7 @@ export default function App() {
                   <span className={s.live ? 'dot live' : 'dot'} />
                   <b>{name}</b>
                   {says && (
-                    <span className="slug" style={TAB_ABOUT}>
-                      {says}
-                    </span>
+                    <span className="slug">{says}</span>
                   )}
                   {/* Only when there is something to count. A tab is now raised by a session merely
                       running, so a badge reading `0` would be on most of them most of the time —
@@ -547,7 +585,8 @@ export default function App() {
           turns={turns}
           selected={selected}
           onSelect={select}
-          insetLeft={railInset}
+          insetLeft={layout.insetLeft}
+          onFrameCols={setFrameCols}
           // The room re-lights itself rather than swapping a stylesheet: the same office after
           // hours, lit by its desk lamps instead of by its windows.
           night={theme.resolved === 'dark' ? 1 : 0}

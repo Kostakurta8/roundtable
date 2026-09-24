@@ -1,5 +1,7 @@
 /**
- * The roster rail: every agent in the room, as a tree, floating over the office's bottom corner.
+ * The roster: every agent in the room, as a tree — a column beside the office, or a strip under it,
+ * whichever the stage's shape can afford (`useRoomLayout` in `App.tsx` decides; this is the same
+ * markup either way, and the stylesheet lays it out).
  *
  * It is a control as well as a legend — picking a row selects that agent everywhere, which is how
  * a busy room stays navigable once there are more people in it than you can tell apart by shirt.
@@ -80,12 +82,26 @@ export const Rail = memo(function Rail({ rows, selected, now, onSelect }: RailPr
 
   return (
     <aside className="rail panel" aria-label="agents">
+      {/* Three parts rather than one string so the strip under the room can stack them as a label
+          column — AGENTS, the count, how many are still working — while the column beside it keeps
+          them on one line. */}
       <div className="rail-hd">
-        AGENTS
+        <span className="rail-k">AGENTS</span>
         <span className="spacer" />
-        <span>{anyDone ? `${working} working · ${rows.length}` : rows.length}</span>
+        {anyDone && <span className="rail-sub">{working} working</span>}
+        <b className="rail-n">{rows.length}</b>
       </div>
-      <div className="rail-list">
+      <div
+        className="rail-list"
+        // Laid out as a strip under the room the list scrolls sideways and shows no scrollbar (it
+        // would cost the strip a row), so an ordinary wheel has to be able to move it. The column
+        // layout scrolls vertically, where the wheel already works and this never engages.
+        onWheel={(e) => {
+          const el = e.currentTarget;
+          if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+          el.scrollLeft += e.deltaY;
+        }}
+      >
         {rows.map((row) => (
           <Row
             key={row.agent.id}
