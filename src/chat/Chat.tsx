@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStickToBottom } from '../hooks';
 import { SYSTEM, USER, type RtMsg, type RtState } from '../store';
-import { MessageCard } from './MessageCard';
+import { MessageCard, SystemRun } from './MessageCard';
 
 export type ChatProps = {
   state: RtState;
@@ -76,6 +76,34 @@ const FRESH_BATCH_MAX = 8;
 const laneOf = (m: RtMsg): Lane =>
   m.agentId === SYSTEM ? 'system' : m.agentId === USER ? 'human' : 'agents';
 
+/** A stretch of the feed as it is drawn: one turn, or a run of consecutive system lines. */
+export type FeedItem = { kind: 'one'; msg: RtMsg } | { kind: 'run'; msgs: RtMsg[] };
+
+/**
+ * Folds every run of two or more consecutive system lines into one item, and leaves the rest alone.
+ *
+ * Only *consecutive* lines fold, for the reason `tally` gives about tool chips: grouping every
+ * system line would move later ones back to the first one's position and rewrite the order the
+ * session happened in. A lone system line stays a line — folding one thing into a summary of one
+ * thing is a click for nothing.
+ */
+export function foldSystem(msgs: readonly RtMsg[]): FeedItem[] {
+  const out: FeedItem[] = [];
+  for (let i = 0; i < msgs.length; ) {
+    const m = msgs[i];
+    let j = i;
+    while (j < msgs.length && msgs[j].agentId === SYSTEM) j += 1;
+    if (j - i >= 2) {
+      out.push({ kind: 'run', msgs: msgs.slice(i, j) });
+      i = j;
+    } else {
+      out.push({ kind: 'one', msg: m });
+      i += 1;
+    }
+  }
+  return out;
+}
+
 export function Chat({
   state,
   title,
@@ -108,6 +136,13 @@ export function Chat({
 
   const hidden = Math.max(0, shown.length - limit);
   const visible = hidden > 0 ? shown.slice(hidden) : shown;
+  const items = useMemo(() => foldSystem(visible), [visible]);
+  /**
+   * Runs open themselves when a fold would hide what the reader asked for: a search (the match may
+   * be the line inside), or a feed filtered down to the system lane (where a run would be the whole
+   * feed behind one line).
+   */
+  const openRuns = q.trim() !== '' || (lanes.has('system') && !lanes.has('agents') && !lanes.has('human'));
 
   /**
    * Which cards are news. Ids are ascending and never reused, so "everything above the id this
@@ -163,7 +198,9 @@ export function Chat({
       setLimit(list.length - idx + 20);
       return; // re-runs once the card is rendered
     }
-    const card = ref.current?.querySelector(`[data-mid="${targetId}"]`);
+    // A system line folded into a closed run is not in the DOM; the run that holds it is, and says so.
+    const card =
+      ref.current?.querySelector(`[data-mid="${targetId}"]`) ?? ref.current?.querySelector(`[data-run~="${targetId}"]`);
     if (!card) return; // not in the DOM yet; the widening above will bring the effect back
     card.scrollIntoView({ block: 'center', behavior: 'smooth' });
     seekedTo.current = targetId;
@@ -250,15 +287,21 @@ export function Chat({
           <div className="empty-note">nothing here matches the current filter</div>
         )}
 
-        {visible.map((m) => (
-          <MessageCard
-            key={m.id}
-            msg={m}
-            agent={state.agents[m.agentId]}
-            focus={focusAgent !== null && m.agentId === focusAgent}
-            fresh={m.id > freshFrom}
-          />
-        ))}
+        {items.map((it) =>
+          it.kind === 'run' ? (
+            // Keyed on the run's first line, so a run that grows as the fan-out continues keeps its
+            // open or closed state rather than remounting shut under the reader.
+            <SystemRun key={it.msgs[0].id} msgs={it.msgs} fresh={it.msgs[0].id > freshFrom} forceOpen={openRuns} />
+          ) : (
+            <MessageCard
+              key={it.msg.id}
+              msg={it.msg}
+              agent={state.agents[it.msg.agentId]}
+              focus={focusAgent !== null && it.msg.agentId === focusAgent}
+              fresh={it.msg.id > freshFrom}
+            />
+          ),
+        )}
       </div>
     </>
   );
