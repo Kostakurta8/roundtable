@@ -77,16 +77,17 @@ npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtabl
 ```
 
 An office with nobody in it is what an idle machine honestly looks like, and it is a poor way to
-find out what this does. `--demo` writes a synthetic `~/.claude` root under your temp directory and
-points the observer at that instead: agents arrive, work, report to each other, hand down verdicts,
-fill the desks past the point where there are chairs, and go home — and then it keeps going, so the
-room is still moving when you come back to it.
+find out what this does. `--demo` writes a synthetic `~/.claude` root into a fresh directory under
+your temp directory and points the observer at that instead: agents arrive, work, report to each
+other, hand down verdicts, fill the desks past the point where there are chairs, and go home — and
+then it keeps going, so the room is still moving when you come back to it.
 
 Nothing about it is faked except the transcripts. The lines go to disk and come back through the
 same watcher, parser, normalizer, socket and store as a real session, and the hub's timing is left
 at its shipped defaults. It never reads your own `~/.claude`, so no prompt, path or project name of
 yours can appear in it, and `--root` is ignored with it, so it cannot be pointed at a real
-directory. `Ctrl+C` deletes the staged root on the way out.
+directory. `Ctrl+C` deletes the staged root on the way out — that one directory, so two demos can
+run side by side.
 
 Without it, the first screen tells you where the observer is looking — the directory, in full —
 and that the first Claude Code session to start on this machine will appear there on its own.
@@ -158,11 +159,11 @@ subagents less mysterious.
 
 ## The whole app
 
-![agents arriving, reporting to each other, and one verdict going each way](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
+![the whole app on the staged demo session, a minute of it in nineteen seconds: agents walk in and take desks as they are spawned, one crosses the floor to report, then one says REFUTED and another CONFIRMED — in speech bubbles in the room and as red and green cards in the feed beside it — while the roster strip under the room and the token count fill in](https://raw.githubusercontent.com/Kostakurta8/roundtable/main/media/roundtable-demo.gif)
 
-The room is one panel of the app. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
-shows the rest: the timeline rewinding the room to an earlier second, two sessions in tabs, and the
-per-agent token and cost breakdown. No narration; captions are burned in, and
+The clip stays on one live session. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
+shows what it does not: the timeline rewinding the room to an earlier second, two sessions in tabs,
+and the per-agent token and cost breakdown. No narration; captions are burned in, and
 `media/roundtable-trailer.srt` has them as text.
 
 Every frame of both clips is the real application driven by real events — only the *content* of the
