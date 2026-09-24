@@ -1092,6 +1092,22 @@ details.monologue summary:focus-visible,
   border-bottom: 1px solid var(--line-soft);
   flex: none;
 }
+/* Inside the feed's header block, whose own border already draws this line. */
+.chat-top .tab-tools {
+  flex-wrap: wrap;
+  border-bottom: 0;
+  padding: 6px 12px 8px;
+}
+/* The search yields first, but not past legibility: under this it wraps to its own row rather than
+   clipping its placeholder to "searc…", which is what a 330px dock did. */
+.chat-top .search {
+  flex: 1 1 130px;
+}
+.chip-set {
+  display: flex;
+  gap: 3px;
+  flex: none;
+}
 .search {
   flex: 1;
   min-width: 0;
@@ -1124,8 +1140,20 @@ details.monologue summary:focus-visible,
   color: var(--ink-3);
   font-family: var(--font-mono);
   font-size: 9.5px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   cursor: pointer;
+  transition:
+    background 0.14s var(--ease),
+    border-color 0.14s var(--ease),
+    color 0.14s var(--ease),
+    transform 0.1s var(--ease);
+}
+.filter-chip:hover {
+  color: var(--ink-2);
+  border-color: var(--ink-3);
+}
+.filter-chip:active {
+  transform: scale(0.96);
 }
 .filter-chip.on {
   background: var(--accent-wash);
@@ -1211,19 +1239,56 @@ details.monologue summary:focus-visible,
 
 /* =============================================================== chat ==== */
 
-.chat-head {
-  padding: 9px 12px 8px;
-  border-bottom: 1px solid var(--line-soft);
-  font-family: var(--font-mono);
+/*
+ * The feed's header: the session's brief, then search and the lane filters. One block, so the
+ * shadow that says "the feed is scrolled under here" sits under all of it (`.under`, set by `Chat`
+ * while the scroller is off its top) — positioned so the shadow paints over the list it lifts off.
+ */
+.chat-top {
+  position: relative;
+  z-index: 1;
   flex: none;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-soft);
+  transition: box-shadow 0.18s var(--ease);
 }
-.chat-head .l2 {
-  margin-top: 3px;
+.chat-top.under {
+  box-shadow: 0 7px 12px -9px oklch(0.2 0.02 70 / 0.38);
+}
+:root[data-theme='dark'] .chat-top.under {
+  box-shadow: 0 7px 12px -8px oklch(0 0 0 / 0.7);
+}
+.chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px 2px;
+  font-family: var(--font-mono);
+}
+.chat-k {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--panel-3);
+  color: var(--ink-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+/* Two lines, not one: the brief is the human's opening prompt, and one clipped line of it was the
+   only place the feed said what the session is for. The shell clips it at 110 characters, which
+   two lines of this column hold. */
+.chat-brief {
+  min-width: 0;
   font-size: 11px;
+  line-height: 1.45;
   color: var(--ink);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 /* The 1fr column must be minmax(0, 1fr): an auto column sizes to the longest unbroken string
