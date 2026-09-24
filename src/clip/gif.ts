@@ -175,8 +175,20 @@ function indexer(palette: readonly number[]): (c: number) => number {
 
 // --------------------------------------------------------------- LZW
 
+/**
+ * LZW's string table, as two flat arrays indexed by `prefix << 8 | byte` — under 2^20, since a code
+ * is at most twelve bits.
+ *
+ * It was a `Map`. At 2x scale a twenty-second clip feeds LZW a few hundred million bytes, one
+ * lookup each, and hashing every one of them was the largest single cost of the encode. Clearing
+ * the table is bumping `now`: an entry counts only if it was written in the current generation, so
+ * a clear touches nothing, and one table serves every frame of a clip.
+ */
+type Table = { code: Uint16Array; gen: Uint32Array; now: number };
+const newTable = (): Table => ({ code: new Uint16Array(1 << 20), gen: new Uint32Array(1 << 20), now: 0 });
+
 /** GIF's variable-width LZW, packed into 255-byte sub-blocks. */
-function lzw(indices: Uint8Array, minCodeSize: number): Uint8Array {
+function lzw(indices: Uint8Array, minCodeSize: number, table: Table = newTable()): Uint8Array {
   const clear = 1 << minCodeSize;
   const eoi = clear + 1;
   const out: number[] = [];
@@ -184,7 +196,8 @@ function lzw(indices: Uint8Array, minCodeSize: number): Uint8Array {
   let bits = 0;
   let size = minCodeSize + 1;
   let next = eoi + 1;
-  const dict = new Map<number, number>();
+  const { code, gen } = table;
+  let now = ++table.now;
 
   const emit = (code: number): void => {
     cur |= code << bits;
@@ -204,18 +217,18 @@ function lzw(indices: Uint8Array, minCodeSize: number): Uint8Array {
     for (let i = 1; i < indices.length; i++) {
       const k = indices[i];
       const key = (prefix << 8) | k;
-      const found = dict.get(key);
-      if (found !== undefined) {
-        prefix = found;
+      if (gen[key] === now) {
+        prefix = code[key];
         continue;
       }
       emit(prefix);
       if (next < 4096) {
-        dict.set(key, next++);
+        gen[key] = now;
+        code[key] = next++;
         if (next > 1 << size && size < 12) size++;
       } else {
         emit(clear);
-        dict.clear();
+        now = ++table.now;
         size = minCodeSize + 1;
         next = eoi + 1;
       }
@@ -261,8 +274,27 @@ function concat(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
  */
 export function encodeGif(input: GifInput, onFrame?: (done: number, total: number) => void): Uint8Array<ArrayBuffer> {
   const { width, height, frames, delayCs, scale } = input;
+  // Counted a run at a time rather than a pixel at a time. The room is drawn in flat rectangles, so
+  // a row is a few dozen runs, not 480 colours, and a map lookup per pixel was most of the cost of
+  // a long clip. Runs are flushed in the order they start, so every colour still enters the map at
+  // the moment its first pixel is reached — the order `cutPalette` breaks its ties in is unchanged,
+  // and so is every byte of the file.
   const hist = new Map<number, number>();
-  for (const f of frames) for (let i = 0; i < f.length; i++) hist.set(f[i], (hist.get(f[i]) ?? 0) + 1);
+  for (const f of frames) {
+    let run = 0;
+    let n = 0;
+    for (let i = 0; i < f.length; i++) {
+      const c = f[i];
+      if (n > 0 && c === run) {
+        n++;
+        continue;
+      }
+      if (n > 0) hist.set(run, (hist.get(run) ?? 0) + n);
+      run = c;
+      n = 1;
+    }
+    if (n > 0) hist.set(run, (hist.get(run) ?? 0) + n);
+  }
   const palette = cutPalette(hist);
   const toIndex = indexer(palette);
 
@@ -286,9 +318,18 @@ export function encodeGif(input: GifInput, onFrame?: (done: number, total: numbe
 
   let prev: Uint8Array | null = null;
   const idx = new Uint8Array(width * height);
+  const strings = newTable();
   for (let f = 0; f < frames.length; f++) {
     const src = frames[f];
-    for (let i = 0; i < idx.length; i++) idx[i] = toIndex(src[i]);
+    // The same run-at-a-time shortcut: a pixel the colour of its left neighbour has its index.
+    for (let i = 0, was = -1, at = 0; i < idx.length; i++) {
+      const c = src[i];
+      if (c !== was) {
+        was = c;
+        at = toIndex(c);
+      }
+      idx[i] = at;
+    }
 
     // The box around everything that changed. The first frame is the whole picture.
     let x0 = 0, y0 = 0, x1 = width - 1, y1 = height - 1;
@@ -341,7 +382,7 @@ export function encodeGif(input: GifInput, onFrame?: (done: number, total: numbe
       Uint8Array.from([0x21, 0xf9, 0x04, (1 << 2) | 1, ...u16(delay), TRANSPARENT, 0]),
       Uint8Array.from([0x2c, ...u16(x0 * scale), ...u16(y0 * scale), ...u16(bw * scale), ...u16(bh * scale), 0]),
       Uint8Array.from([8]),
-      lzw(body, 8),
+      lzw(body, 8, strings),
     );
     prev = prev ?? new Uint8Array(idx.length);
     prev.set(idx);
