@@ -9,6 +9,53 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 > is reserved for the same thing and not yet published. Entries are written from `git log` rather
 > than from memory.
 
+## [Unreleased]
+
+### Added
+
+**A browser demo that needs no install.** `npm run build:pages` builds the real app against a
+recording of the real hub — `scripts/recordDemo.ts` stages the `--demo` room, follows the shipped hub
+over a socket, and writes down every frame it sends — and `.github/workflows/pages.yml` publishes it
+to `https://kostakurta8.github.io/roundtable/`. It plays at 2.5× and loops; a banner says it is a
+staged replay, carries the install command and a copy button, and the status pill reads `REPLAY`.
+The demo lives behind its own entry file, so the bundle people install contains none of it. The
+page has Open Graph and Twitter card tags, so a pasted link unfurls with the social card.
+
+**Share as GIF, from the app.** A Share button in the top bar, `G`, or the palette renders the
+session on screen as a GIF in a Web Worker, previews it, and lets the browser save it. It is the
+`--gif` renderer, moved to `src/clip/` so both halves import it: the same events make the same
+bytes. Length, busiest stretch or whole session, and "Hide transcript text" are options; nothing is
+uploaded. The encoder is also twice as fast, with identical output.
+
+**A first-visit guide.** A card over the room says what a person, a desk, a bubble, a walk and the
+door mean, and that the timeline rewinds. It does not block the room, collapses to a one-row legend
+on a short stage, is remembered once dismissed, and is back from the Help sheet or the palette.
+
+**Pointing at a person** shows a card beside the cursor: who it is, what it is doing, its tokens,
+cost and age.
+
+### Changed
+
+**The room fills its stage.** The camera rests on a frame computed from the desks the session has
+drawn, wall to floor, as large as the stage allows, and eases as the room grows; `Home`, ⌂, Escape
+and a double-click return to it. The roster becomes a strip under the room whenever that draws the
+room larger than a column beside it. At 1440×900 people went from 26×39 to 39×59 pixels on screen.
+
+**The feed reads as a conversation.** Runs of two or more system lines fold into one expandable
+line — "spawned 6 subagents · 6 prompts ▸" — with nothing dropped; search opens the folds.
+
+**Every agent's name is legible in both themes.** Names keep their hue and take their lightness
+from the theme; the worst contrast went from 1.24:1 to 6.45:1 at night, 3.90:1 to 4.93:1 by day.
+
+**A phone-width layout.** The room gets nearly half the height, session tabs scroll sideways, the
+top bar keeps the session's name, and the timeline takes two rows.
+
+**The activity strip fills its width** at any session length and names the second under the pointer.
+
+**The README** leads with the demo and the one install line; the screenshots and the social card
+show the app as it now is. `docs/launch/` holds launch drafts, and `.github/workflows/publish-npm.yml`
+publishes to npm on a release once an `NPM_TOKEN` secret exists — until then it skips, green.
+
 ## [0.3.1] — 2026-09-23
 
 ### Added
