@@ -14,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentRef, Ev } from '../shared/events';
 import { Normalizer } from '../server/normalize';
 import { parseLine } from '../server/parse';
-import { CARD_H, CARD_SCALE, CARD_W, cardStats, costText, renderCard, tokText } from '../src/clip/card';
+import { CARD_H, CARD_SCALE, CARD_W, cardStats, clock, costText, renderCard, tokText } from '../src/clip/card';
 import { initialState, reduce, type RtState } from '../src/store';
 import { money, tokens } from '../src/ui/format';
 
@@ -206,5 +206,18 @@ describe('the picture', () => {
     const s = renderCard(solo).stats;
     expect([s.spawned, s.peak, s.confirmed + s.refuted]).toEqual([0, 0, 0]);
     expect(renderCard([]).stats.busiest).toBeNull();
+  });
+});
+
+describe('the card\'s numbers, as the pixel font can spell them', () => {
+  // Two misreadings found by looking at a rendered card: `$1.31` drawn in the font's 3x5 `$` read
+  // as `¢1.31`, and `29.8s` read as `29.85` because the font's S is two pixels from its 5.
+  it('writes a duration as a clock, with nothing a 3x5 font can confuse with a digit', () => {
+    expect(clock(29_800)).toBe('0:30');
+    expect(clock(774_000)).toBe('12:54');
+    expect(clock(3_723_000)).toBe('1:02:03');
+    expect(clock(0)).toBe('0:00');
+    expect(clock(-5)).toBe('0:00');
+    for (const ms of [999, 61_000, 5_999_000]) expect(clock(ms)).toMatch(/^[\d:]+$/);
   });
 });
