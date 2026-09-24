@@ -1,9 +1,9 @@
 /** One line of the feed: a human turn, an agent's card, or a system note. */
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { modelInfo } from '../../shared/models';
-import { agentLook, SYSTEM, USER, type RtAgent, type RtMsg, type RtTool } from '../store';
+import { SYSTEM, USER, type RtAgent, type RtMsg, type RtTool } from '../store';
 import { clock, duration, editLines, isoOrUndefined } from '../ui/format';
-import { MiniHead } from '../ui/MiniHead';
+import { agentInk, MiniHead } from '../ui/MiniHead';
 
 const NAME_MAX = 16;
 
@@ -100,6 +100,112 @@ function Chip({ g }: { g: ToolGroup }) {
   );
 }
 
+// ------------------------------------------------------------ system lines
+
+/**
+ * What a system line is about, read off the sentence the store wrote for it.
+ *
+ * Display only, and deliberately forgiving: a line whose wording this does not recognise is a
+ * `note`, which is still counted and still shown — it just gets the plainest glyph and the plainest
+ * word in a run's summary. Nothing is decided by it except how a line is labelled.
+ */
+export type SysKind = 'spawn' | 'prompt' | 'done' | 'failed' | 'note';
+
+export function sysKind(text: string): SysKind {
+  if (text.startsWith('spawned ')) return 'spawn';
+  if (text.startsWith('prompt to ')) return 'prompt';
+  if (text.endsWith(' finished with an error')) return 'failed';
+  if (text.endsWith(' finished')) return 'done';
+  return 'note';
+}
+
+const GLYPH: Record<SysKind, string> = { spawn: '↳', prompt: '→', done: '✓', failed: '✕', note: '·' };
+
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * A run of system lines, said in one breath: `spawned 6 subagents · 6 prompts`.
+ *
+ * Counts, never a selection: every line in the run is accounted for by exactly one of the parts,
+ * so the summary cannot claim less happened than did. The order is the order a fan-out happens in.
+ */
+export function runSummary(msgs: readonly RtMsg[]): string {
+  const n: Record<SysKind, number> = { spawn: 0, prompt: 0, done: 0, failed: 0, note: 0 };
+  for (const m of msgs) n[sysKind(m.text)] += 1;
+  return [
+    n.spawn > 0 ? `spawned ${plural(n.spawn, 'subagent')}` : '',
+    n.prompt > 0 ? plural(n.prompt, 'prompt') : '',
+    n.done > 0 ? `${n.done} finished` : '',
+    n.failed > 0 ? `${n.failed} failed` : '',
+    n.note > 0 ? plural(n.note, 'note') : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/**
+ * Two or more system lines in a row, folded into one line that opens.
+ *
+ * A fan-out writes a spawn line and a prompt line for every agent it starts, so the turn that
+ * launched six scouts was followed by twelve centred lines restating the six `Task` chips already
+ * on its card — and the conversation the feed exists to show was a screen further down. The run is
+ * one line now, counted, with every line one press away and in the DOM once opened; a search or a
+ * system-only filter opens it, because a match hidden behind a fold is a match the reader cannot
+ * see.
+ *
+ * `data-run` lists every id inside, so the timeline can still find a line it is seeking to while
+ * the run is closed (`[data-run~="12"]`) and scroll to the fold that holds it.
+ */
+export const SystemRun = memo(function SystemRun({
+  msgs,
+  fresh,
+  forceOpen,
+}: {
+  msgs: readonly RtMsg[];
+  fresh?: boolean;
+  forceOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const shown = open || forceOpen === true;
+  const first = msgs[0];
+  const last = msgs[msgs.length - 1];
+  if (!first || !last) return null;
+  return (
+    <div
+      className={`sys-run${shown ? ' open' : ''}${fresh ? ' fresh' : ''}`}
+      data-mid={first.id}
+      data-run={msgs.map((m) => m.id).join(' ')}
+    >
+      <button
+        type="button"
+        className="sys-sum"
+        aria-expanded={shown}
+        disabled={forceOpen === true}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="sys-caret" aria-hidden="true">
+          ▸
+        </span>
+        <span className="sys-text">{runSummary(msgs)}</span>
+        <time dateTime={isoOrUndefined(last.ts)}>{clock(last.ts)}</time>
+      </button>
+      {shown && (
+        <ul className="sys-list">
+          {msgs.map((m) => (
+            <li key={m.id} className="sys-line" data-mid={m.id}>
+              <span className="sys-glyph" aria-hidden="true">
+                {GLYPH[sysKind(m.text)]}
+              </span>
+              <span className="sys-text">{m.text}</span>
+              <time dateTime={isoOrUndefined(m.ts)}>{clock(m.ts)}</time>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+});
+
 const displayName = (msg: RtMsg, agent?: RtAgent): string => {
   const name = agent?.label ?? msg.agentId;
   return name.length > NAME_MAX ? `${name.slice(0, NAME_MAX - 1)}…` : name;
@@ -131,8 +237,12 @@ export const MessageCard = memo(function MessageCard({
   // moment a filter is on, and seeking by scroll fraction assumes every card is the same height.
   if (msg.agentId === SYSTEM) {
     return (
-      <div className={fresh ? 'msg-sys fresh' : 'msg-sys'} data-mid={msg.id}>
-        — {msg.text} —
+      <div className={fresh ? 'msg-sys sys-line fresh' : 'msg-sys sys-line'} data-mid={msg.id}>
+        <span className="sys-glyph" aria-hidden="true">
+          {GLYPH[sysKind(msg.text)]}
+        </span>
+        <span className="sys-text">{msg.text}</span>
+        <time dateTime={isoOrUndefined(msg.ts)}>{clock(msg.ts)}</time>
       </div>
     );
   }
@@ -143,7 +253,6 @@ export const MessageCard = memo(function MessageCard({
   const machine = isUser && msg.source !== undefined && msg.source !== 'human';
   const who = isUser ? (machine ? msg.source : 'you') : displayName(msg, agent);
   const folded = machine && msg.text.length > FOLD_OVER;
-  const color = isUser ? 'var(--ink-2)' : agentLook(msg.agentId).color;
   const model = agent?.model ? modelInfo(agent.model).short : undefined;
 
   const cls = [isUser ? 'msg msg-user' : 'msg', machine ? 'machine' : '', focus ? 'focus' : '', fresh ? 'fresh' : '']
@@ -155,7 +264,11 @@ export const MessageCard = memo(function MessageCard({
       {!isUser && <MiniHead agentId={msg.agentId} />}
       <div className={`msg-card${msg.verdict ? ` verdict-${msg.verdict}` : ''}`}>
         <div className="msg-head">
-          <span className="who" style={{ color }} title={agent?.model ?? msg.agentId}>
+          <span
+            className={isUser ? 'who' : 'who agent-ink'}
+            style={isUser ? { color: 'var(--ink-2)' } : agentInk(msg.agentId)}
+            title={agent?.model ?? msg.agentId}
+          >
             {who}
           </span>
           {model && <span className="model">{model}</span>}

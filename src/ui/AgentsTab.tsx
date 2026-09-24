@@ -4,9 +4,9 @@
  */
 import { memo } from 'react';
 import { modelInfo } from '../../shared/models';
-import { agentLook, displayPhase, type RtAgent } from '../store';
+import { displayPhase, type RtAgent } from '../store';
 import { duration, money, tokens } from './format';
-import { MiniHead } from './MiniHead';
+import { agentInk, MiniHead } from './MiniHead';
 import { peakTokens, type RosterRow } from './roster';
 
 function Card({
@@ -46,7 +46,9 @@ function Card({
     >
       <div className="acard-head">
         <MiniHead agentId={a.id} />
-        <b style={{ color: agentLook(a.id).color }}>{a.label ?? a.id}</b>
+        <b className="agent-ink" style={agentInk(a.id)}>
+          {a.label ?? a.id}
+        </b>
         <span className="right">
           <span className={`phase ${phase}`} title={phase} />
           {phase}
