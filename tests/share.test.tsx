@@ -13,9 +13,18 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ev } from '../shared/events';
+import type { CardStats } from '../src/clip/card';
 import type { ClipInfo, ClipReply, ClipRequest } from '../src/clip/worker';
 import { Help } from '../src/ui/Help';
-import { CAPTION, caption, ShareDialog, type ClipWorker, type ShareDialogProps } from '../src/ui/ShareDialog';
+import {
+  CAPTION,
+  caption,
+  cardCaption,
+  ShareDialog,
+  type ClipWorker,
+  type PngEncoder,
+  type ShareDialogProps,
+} from '../src/ui/ShareDialog';
 import { TopBar, type TopBarProps } from '../src/ui/TopBar';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -356,9 +365,222 @@ describe('the keyboard', () => {
     expect(document.activeElement).toBe(first); // it wrapped
     expect(stops.every((s) => box.contains(s))).toBe(true);
     const radios = stops.filter((s): s is HTMLInputElement => s instanceof HTMLInputElement && s.type === 'radio');
-    expect(radios.map((r) => r.value)).toEqual(['20', 'busiest']);
+    expect(radios.map((r) => r.value)).toEqual(['gif', '20', 'busiest']);
     key(first, 'Tab', { shiftKey: true });
     expect(document.activeElement).toBe(stops[stops.length - 1]);
+  });
+});
+
+describe('the card', () => {
+  const STATS: CardStats = {
+    agents: 4,
+    spawned: 3,
+    peak: 2,
+    totalTok: 67_200,
+    cost: 0.0421,
+    costPartial: true,
+    durationMs: 8_000,
+    confirmed: 1,
+    refuted: 1,
+    busiest: { name: 'Scout the queue', tokens: 50_000 },
+    task: 'ship the billing migration',
+  };
+  const cardReply = (stats: CardStats = STATS): ClipReply => ({ kind: 'card', rgba: new ArrayBuffer(16), width: 1200, height: 630, stats });
+
+  let encoded: [number, number][] = [];
+  const encodePng: PngEncoder = async (_rgba, w, h) => {
+    encoded.push([w, h]);
+    return new Blob([new Uint8Array(2048)], { type: 'image/png' });
+  };
+  const cardDialog = (over: Partial<ShareDialogProps> = {}): HTMLDivElement => {
+    encoded = [];
+    return dialog({ encodePng, ...over });
+  };
+  /** The encoder answers on a later tick, as a canvas's `toBlob` does. */
+  const settle = async (): Promise<void> => {
+    await act(async () => {});
+  };
+  const toCard = (el: HTMLElement): void => act(() => radio(el, 'Card').click());
+
+  it('is the second format, GIF being the first and the default', () => {
+    const el = cardDialog();
+    const formats = Array.from(el.querySelectorAll<HTMLInputElement>('input[name="share-format"]'));
+    expect(formats.map((r) => [r.value, r.checked])).toEqual([
+      ['gif', true],
+      ['card', false],
+    ]);
+    expect(workers[0].posted[0].kind).toBe('gif');
+  });
+
+  it('renders in the worker from the same events, and abandons a GIF still being made', () => {
+    const el = cardDialog();
+    toCard(el);
+    expect(workers[0].terminated).toBe(true);
+    expect(workers[1].posted[0]).toEqual({ kind: 'card', evs: EVS, opts: { bare: false } });
+    expect(el.textContent).toContain('finding the busiest moment');
+    expect(byText(el, 'button', 'Download PNG')).toHaveProperty('disabled', true);
+    expect(byText(el, 'button', 'Copy image')).toHaveProperty('disabled', true);
+  });
+
+  it('shows the card it made, and offers exactly that PNG, named for the session', async () => {
+    const el = cardDialog();
+    toCard(el);
+    workers[1].reply(cardReply());
+    await settle();
+    expect(workers[1].terminated).toBe(true);
+    expect(encoded).toEqual([[1200, 630]]);
+    const img = el.querySelector('img')!;
+    expect(img.getAttribute('src')).toBe('blob:test/0');
+    // Described by its numbers, as the top bar would print them.
+    expect(img.getAttribute('alt')).toContain('3 subagents (2 at once), 67.2k tokens, 8.0s');
+    expect(img.getAttribute('alt')).toContain('≥$0.04');
+    const meta = el.querySelector('figcaption')!.textContent!;
+    expect(meta).toContain('1200×630');
+    expect(meta).toContain('2 KB');
+    expect(meta).toContain('PNG');
+    const dl = byText(el, 'a', 'Download PNG') as HTMLAnchorElement;
+    expect(dl.getAttribute('href')).toBe('blob:test/0');
+    expect(dl.getAttribute('download')).toBe('roundtable-abcdef01-card.png');
+    expect(el.textContent).toContain('saved as roundtable-abcdef01-card.png');
+  });
+
+  it('keeps each finished render, so switching back and forth makes nothing twice', async () => {
+    const el = cardDialog();
+    toCard(el);
+    workers[1].reply(cardReply());
+    await settle();
+    act(() => radio(el, 'GIF').click());
+    // The GIF was abandoned half-made when the card was picked, so it starts again.
+    expect(workers).toHaveLength(3);
+    expect(workers[2].posted[0].kind).toBe('gif');
+    workers[2].reply({ kind: 'done', gif: new ArrayBuffer(8), info: INFO });
+    toCard(el);
+    act(() => radio(el, 'GIF').click());
+    expect(workers).toHaveLength(3);
+    expect(el.querySelector('img')!.getAttribute('src')).toBe('blob:test/1');
+  });
+
+  it('shares the one privacy switch, and a bare card is a new render', async () => {
+    const el = cardDialog();
+    act(() => checkbox(el).click());
+    toCard(el);
+    const req = workers[workers.length - 1].posted[0];
+    expect(req).toMatchObject({ kind: 'card', opts: { bare: true } });
+    const what = document.getElementById(checkbox(el).getAttribute('aria-describedby')!)!;
+    expect(what.textContent).toContain('numbers, people and desks only');
+    expect(el.querySelector('#share-privacy')!.textContent).toContain('Text hidden');
+    act(() => checkbox(el).click());
+    expect(workers[workers.length - 1].posted[0]).toMatchObject({ kind: 'card', opts: { bare: false } });
+    expect(el.querySelector('#share-privacy')!.textContent).toContain('Look at it before you post it.');
+    expect(el.querySelector('#share-privacy')!.textContent).toContain('This card shows');
+  });
+
+  it('has no Length or Plays: a card is one moment', () => {
+    const el = cardDialog();
+    toCard(el);
+    expect(el.querySelector('input[name="share-length"]')).toBeNull();
+    expect(el.querySelector('input[name="share-range"]')).toBeNull();
+    const stops: Element[] = [];
+    const first = document.activeElement!;
+    for (let i = 0; i < 12; i++) {
+      key(document.activeElement!, 'Tab');
+      if (document.activeElement === first) break;
+      stops.push(document.activeElement!);
+    }
+    const radios = [first, ...stops].filter((s): s is HTMLInputElement => s instanceof HTMLInputElement && s.type === 'radio');
+    expect(radios.map((r) => r.value)).toEqual(['card']);
+  });
+
+  it('puts the image on the clipboard where the browser can take one', async () => {
+    const wrote: ClipboardItem[][] = [];
+    class Item {
+      constructor(readonly items: Record<string, Blob>) {}
+    }
+    Object.defineProperty(globalThis, 'ClipboardItem', { configurable: true, value: Item });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { write: async (items: ClipboardItem[]) => void wrote.push(items) },
+    });
+    try {
+      const el = cardDialog();
+      toCard(el);
+      workers[1].reply(cardReply());
+      await settle();
+      await act(async () => byText(el, 'button', 'Copy image').click());
+      expect(wrote).toHaveLength(1);
+      const item = wrote[0][0] as unknown as Item;
+      expect(Object.keys(item.items)).toEqual(['image/png']);
+      expect(item.items['image/png'].size).toBe(2048);
+      expect(el.textContent).toContain('Image copied');
+    } finally {
+      Reflect.deleteProperty(globalThis, 'ClipboardItem');
+    }
+  });
+
+  it('downloads the card instead, and says so, where the browser cannot', async () => {
+    const saved: [string, string][] = [];
+    const realClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      saved.push([this.getAttribute('href') ?? '', this.download]);
+    };
+    try {
+      const el = cardDialog(); // jsdom has neither `ClipboardItem` nor `navigator.clipboard`
+      toCard(el);
+      workers[1].reply(cardReply());
+      await settle();
+      await act(async () => byText(el, 'button', 'Copy image').click());
+      expect(saved).toEqual([['blob:test/0', 'roundtable-abcdef01-card.png']]);
+      expect(el.textContent).toContain('so the card was downloaded instead');
+    } finally {
+      HTMLAnchorElement.prototype.click = realClick;
+    }
+  });
+
+  it('has a caption of its own: the numbers, and no word from the transcripts', async () => {
+    const el = cardDialog();
+    toCard(el);
+    const input = (): string => (el.querySelector('input.share-caption') as HTMLInputElement).value;
+    expect(input()).toBe(cardCaption(null));
+    workers[1].reply(cardReply());
+    await settle();
+    expect(input()).toBe(cardCaption(STATS));
+    expect(input()).toContain('My Claude Code session in numbers: 3 subagents (2 at once), 67.2k tokens, 8.0s');
+    expect(input()).not.toContain(STATS.task!);
+    expect(input()).not.toContain(STATS.busiest!.name);
+    expect(input()).not.toBe(CAPTION);
+  });
+
+  it('says what went wrong when the PNG cannot be made, and offers another go', async () => {
+    const el = cardDialog({
+      encodePng: async () => {
+        throw new Error('the browser would not encode the PNG');
+      },
+    });
+    toCard(el);
+    workers[1].reply(cardReply());
+    await settle();
+    expect(el.textContent).toContain('The card could not be rendered: the browser would not encode the PNG');
+    act(() => byText(el, 'button', 'Try again').click());
+    expect(workers[2].posted[0].kind).toBe('card');
+  });
+
+  it('links nowhere but the PNG it made', async () => {
+    const el = cardDialog();
+    toCard(el);
+    workers[1].reply(cardReply());
+    await settle();
+    expect(Array.from(el.querySelectorAll('a')).map((a) => a.getAttribute('href'))).toEqual(['blob:test/0']);
+  });
+
+  it('lets go of the card when the dialog closes', async () => {
+    const el = cardDialog();
+    toCard(el);
+    workers[1].reply(cardReply());
+    await settle();
+    void el;
+    act(() => root?.unmount());
+    root = null;
+    expect(revoked).toContain('blob:test/0');
   });
 });
 
