@@ -201,9 +201,13 @@ export function Chat({
       setLimit(list.length - idx + 20);
       return; // re-runs once the card is rendered
     }
-    // A system line folded into a closed run is not in the DOM; the run that holds it is, and says so.
+    // A system line inside a run is found as the line, not as the run: the run opens itself for the
+    // seek (`reveal`), and its container carries its first line's id too, so a plain `[data-mid]`
+    // would land on the fold's header. The run is only the fallback, for a line not rendered yet.
     const card =
-      ref.current?.querySelector(`[data-mid="${targetId}"]`) ?? ref.current?.querySelector(`[data-run~="${targetId}"]`);
+      ref.current?.querySelector(`.sys-line[data-mid="${targetId}"]`) ??
+      ref.current?.querySelector(`[data-mid="${targetId}"]`) ??
+      ref.current?.querySelector(`[data-run~="${targetId}"]`);
     if (!card) return; // not in the DOM yet; the widening above will bring the effect back
     card.scrollIntoView({ block: 'center', behavior: 'smooth' });
     seekedTo.current = targetId;
@@ -322,7 +326,13 @@ export function Chat({
           it.kind === 'run' ? (
             // Keyed on the run's first line, so a run that grows as the fan-out continues keeps its
             // open or closed state rather than remounting shut under the reader.
-            <SystemRun key={it.msgs[0].id} msgs={it.msgs} fresh={it.msgs[0].id > freshFrom} forceOpen={openRuns} />
+            <SystemRun
+              key={it.msgs[0].id}
+              msgs={it.msgs}
+              fresh={it.msgs[0].id > freshFrom}
+              forceOpen={openRuns}
+              reveal={targetId}
+            />
           ) : (
             <MessageCard
               key={it.msg.id}

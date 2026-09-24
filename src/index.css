@@ -764,6 +764,11 @@ details.monologue summary:focus-visible,
   white-space: nowrap;
   color: var(--ink-3);
 }
+/* On the chosen tab's accent wash `--ink-3` measured 3.96:1 at night (axe); `--ink-2` clears 4.5:1
+   in both themes and still reads as the quieter of the tab's two lines. */
+.session-tab.on .slug {
+  color: var(--ink-2);
+}
 /*
  * The working-agent count is the reason the tab exists, so it is the loudest thing on it. On
  * `--accent` rather than `--accent-2`: the lighter teal carried the panel colour at 3.2:1 by day.
@@ -798,7 +803,9 @@ details.monologue summary:focus-visible,
   top: 0;
   bottom: 0;
   z-index: 30;
-  width: var(--rail-w);
+  /* `--rail-fit` is `useRoomLayout` narrowing the column so the room beside it fills the height;
+     `--rail-w` stays the breakpoint's own width, which is what that hook measures against. */
+  width: var(--rail-fit, var(--rail-w));
   display: flex;
   flex-direction: column;
   padding: 10px 8px;
@@ -953,14 +960,26 @@ details.monologue summary:focus-visible,
   border-color: var(--accent-2);
 }
 /* Finished agents step back, so the rows still in play are the ones the eye lands on. Hover,
-   selection and keyboard focus restore full weight — dimmed must never mean unreachable. */
-.arow.done {
+   selection and keyboard focus restore full weight — dimmed must never mean unreachable.
+   The words step back to `--ink-3` rather than to an opacity: the whole row at 0.55 put the name
+   and status line at 2.3–2.6:1 by day and 2.5–3.8:1 at night (axe), and "dimmed" must not mean
+   "unreadable" either. The head, the bar and the dot carry no words and still fade. */
+.arow.done > :not(.who) {
   opacity: 0.55;
 }
-.arow.done:hover,
-.arow.done.on,
-.arow.done:focus-visible {
+.arow.done:not(:hover, .on, :focus-visible) .who b,
+.arow.done .who .sub {
+  color: var(--ink-3);
+}
+.arow.done:hover > *,
+.arow.done.on > *,
+.arow.done:focus-visible > * {
   opacity: 1;
+}
+/* The status line on a selected row sits on the accent wash, where `--ink-3` measured 3.96:1 at
+   night; one step up the ink scale clears it in both themes. */
+.arow.on .sub {
+  color: var(--ink-2);
 }
 .arow .who {
   display: flex;
@@ -1396,6 +1415,17 @@ details.monologue summary:focus-visible,
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
 }
+/* On the selected agent's accent wash `--ink-3` measured 3.96:1 at night (axe), the same shortfall
+   as the roster's selected row, and 4.44:1 on a REFUTED card's wash by day; one step up the ink
+   scale clears 4.5:1 on all of them in both themes. */
+.msg.focus .msg-head .model,
+.msg.focus .msg-head time,
+.msg-card.verdict-err .msg-head .model,
+.msg-card.verdict-err .msg-head time,
+.msg-card.verdict-ok .msg-head .model,
+.msg-card.verdict-ok .msg-head time {
+  color: var(--ink-2);
+}
 .msg-body {
   margin-top: 3px;
   font-size: 12.5px;
@@ -1606,7 +1636,10 @@ details.monologue summary:focus-visible,
   background: var(--err-wash);
 }
 .chip--refuted {
-  color: var(--err);
+  /* A step toward the theme's ink: `--err` on its own wash measured 4.39:1 by day (axe), a hair
+     under the 4.5:1 the tokens promise for status text; mixing toward `--ink` darkens it by day and
+     lightens it by night, which is the direction legibility is in both times. */
+  color: color-mix(in oklch, var(--err) 85%, var(--ink));
   border-color: var(--err-line);
   background: var(--err-wash);
   font-weight: 700;
@@ -1837,6 +1870,70 @@ details.monologue[open] summary::before {
   color: var(--ink-3);
   margin-bottom: 8px;
 }
+.sheet-grab {
+  display: none;
+}
+
+/*
+ * The inspector at phone width: a sheet over the dock, not a card over the room.
+ *
+ * As a card it covered 220×285 of a 380×307 room — the person just tapped was under the panel about
+ * them. Here it is a grid item placed in the dock's cell (which `App` keeps open while it shows),
+ * pinned to the bottom and as tall as its content up to the whole cell, so the room above stays in
+ * full view and the chat is what gets covered — it is one tap away again. Its header is the handle a
+ * thumb pulls it down by (`Inspector`), so the header does not scroll the page under the thumb.
+ */
+.app > .inspector.sheet {
+  grid-area: dock;
+  position: relative;
+  top: auto;
+  right: auto;
+  z-index: 45;
+  align-self: end;
+  width: auto;
+  /* Short of the dock's tab row, which stays in view: the plainest "outside" to tap, and it says
+     where the tap goes back to. */
+  max-height: calc(100% - 38px);
+  padding: 2px 14px 14px;
+  border-radius: 12px 12px var(--radius) var(--radius);
+  font-size: 10.5px;
+  animation: sheet-in 0.22s var(--ease);
+}
+.inspector.sheet .sheet-grab {
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin: 7px auto 9px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.inspector.sheet .sheet-grab,
+.inspector.sheet h3,
+.inspector.sheet .sub {
+  touch-action: none;
+  cursor: grab;
+}
+.inspector.sheet .close {
+  top: 12px;
+  right: 10px;
+  min-width: 30px;
+  min-height: 30px;
+  justify-content: center;
+}
+.inspector.sheet h3 {
+  font-size: 12px;
+  margin-right: 40px;
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
 
 /* ============================================================== guide ==== */
 
@@ -1864,7 +1961,7 @@ details.monologue[open] summary::before {
   animation: guide-in 0.42s var(--ease) 0.6s both;
 }
 .stage.roster-side .guide {
-  left: calc(var(--rail-w) + 12px);
+  left: calc(var(--rail-fit, var(--rail-w)) + 12px);
 }
 .guide-hd {
   display: flex;
@@ -2386,6 +2483,8 @@ kbd {
  * capped at 0.5 by day (the amber look was 4.4:1 on the panel and 3.9:1 on a selected row at its
  * own lightness), raised to 0.8 by night. Measured with `getComputedStyle` over `--panel`,
  * `--panel-2`, `--accent-wash` and both verdict washes, for all eight looks: ≥ 4.5:1 throughout.
+ * The day cap is now 0.47: the feed's verdict cards moved to half-strength washes afterwards, and
+ * axe measured the teal look at 4.38:1 on a REFUTED card at 0.5.
  *
  * The `color-mix` lines are for a browser without relative colour syntax: coarser, and still
  * above 4.5:1, because mixing toward the theme's own ink moves every look toward legibility.
@@ -2400,7 +2499,7 @@ kbd {
 }
 @supports (color: oklch(from red l c h)) {
   :root .agent-ink {
-    color: oklch(from var(--agent, var(--ink)) min(l, 0.5) c h);
+    color: oklch(from var(--agent, var(--ink)) min(l, 0.47) c h);
   }
   :root[data-theme='dark'] .agent-ink {
     color: oklch(from var(--agent, var(--ink)) max(l, 0.8) c h);
