@@ -26,10 +26,11 @@ rerun `--stats` for fresh numbers, change all the drafts at once.
    under Settings → Secrets and variables → Actions, then run *Publish to npm* from the Actions tab
    with the release tag. If it publishes, check `npx claude-roundtable --demo` yourself, and only
    then change the README and the drafts to the short line.
-5. **Make the missing assets:** a terminal screenshot of your own `--stats` output; a screenshot of
-   the Share dialog; a 240×240 thumbnail for Product Hunt; the trailer uploaded to YouTube (Product
-   Hunt takes a link, not a file). Consider re-exporting `media/social-preview.png`: it shows
-   `npx github:Kostakurta8/roundtable --gif`, the slow install path.
+5. **Make the missing assets:** a terminal screenshot of your own `--stats` output; a 240×240
+   thumbnail for Product Hunt; the trailer uploaded to YouTube (Product Hunt takes a link, not a
+   file). The Share dialog is `media/screenshot-share.png`, and `media/social-preview.png` now points
+   at the browser demo — upload it under Settings → Social preview too, because GitHub does not
+   read it from the repo.
 6. **Try Pixel Agents** (`npx pixel-agents`, or the VS Code extension). It is the pixel-office tool
    people will compare Roundtable to, and you will answer that question better having used it.
 7. **Install the plugin fresh** in a Claude Code session: `/plugin marketplace add
