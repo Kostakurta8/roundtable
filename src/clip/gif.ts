@@ -35,7 +35,8 @@ export type RgbFrame = Uint32Array;
 export type GifInput = {
   width: number;
   height: number;
-  frames: readonly RgbFrame[];
+  /** Every frame, whole — or a `FrameLog` of them, which is the same frames in a fraction of the memory. */
+  frames: readonly RgbFrame[] | FrameLog;
   /** Hundredths of a second each frame is shown for — the unit the format uses. */
   delayCs: number;
   /** How long the last frame holds before the loop restarts, in hundredths of a second. */
@@ -50,6 +51,115 @@ export function packRgb(rgba: Uint8ClampedArray, out?: Uint32Array): Uint32Array
   const px = out ?? new Uint32Array(n);
   for (let i = 0, j = 0; i < n; i++, j += 4) px[i] = (rgba[j] << 16) | (rgba[j + 1] << 8) | rgba[j + 2];
   return px;
+}
+
+/**
+ * Adds one frame's colours to a histogram, a run at a time.
+ *
+ * Counted a run at a time rather than a pixel at a time. The room is drawn in flat rectangles, so a
+ * row is a few dozen runs, not 480 colours, and a map lookup per pixel was most of the cost of a long
+ * clip. Runs are flushed in the order they start, so every colour still enters the map at the moment
+ * its first pixel is reached — the order `cutPalette` breaks its ties in is unchanged, and so is
+ * every byte of the file.
+ */
+function countColours(hist: Map<number, number>, f: RgbFrame): void {
+  let run = 0;
+  let n = 0;
+  for (let i = 0; i < f.length; i++) {
+    const c = f[i];
+    if (n > 0 && c === run) {
+      n++;
+      continue;
+    }
+    if (n > 0) hist.set(run, (hist.get(run) ?? 0) + n);
+    run = c;
+    n = 1;
+  }
+  if (n > 0) hist.set(run, (hist.get(run) ?? 0) + n);
+}
+
+/**
+ * Unchanged pixels a span of changes may swallow rather than end at. A span costs two words of
+ * bookkeeping, so closing one over a single matching pixel and opening the next costs more than
+ * carrying the pixel along.
+ */
+const SPAN_GAP = 2;
+
+/**
+ * A clip's frames, kept as what changed since the frame before.
+ *
+ * The palette is cut from every frame at once, so every frame has to exist before the first can be
+ * encoded — and held whole, a frame of the room is 480x281 packed pixels, 540 KB, which put a
+ * forty-second clip at close to 300 MB before the encoder wrote a byte. In a browser worker on a
+ * phone that is the tab. But consecutive frames of an office are nearly the same picture: two
+ * people walking and a clock ticking is a few small rectangles. So each frame is kept as the spans
+ * of pixels that differ from the one before, the histogram the palette needs is counted as each
+ * frame arrives, and the encoder is handed the frames back one at a time, rebuilt in a single
+ * buffer. The frames it sees, and the order it counts their colours in, are exactly the frames and
+ * the order it would have been handed as an array, so the file is the same to the byte.
+ */
+export class FrameLog {
+  /** Every frame's colours, counted in the order `encodeGif` would have counted them. */
+  readonly hist = new Map<number, number>();
+  private readonly spans: Uint32Array[] = [];
+  /** The frame before the next one, whole: the one full frame this keeps. */
+  private last: Uint32Array | null = null;
+  private scratch = new Uint32Array(0);
+
+  get length(): number {
+    return this.spans.length;
+  }
+
+  /** What the log holds, in bytes — the number the whole design is for, so a test can pin it. */
+  get bytes(): number {
+    return this.spans.reduce((n, d) => n + d.byteLength, (this.last?.byteLength ?? 0) + this.scratch.byteLength);
+  }
+
+  /** Keeps a frame. It is read here and not held, so the caller may reuse the buffer. */
+  push(frame: RgbFrame): void {
+    countColours(this.hist, frame);
+    const prev = this.last;
+    if (!prev) {
+      const whole = new Uint32Array(frame.length + 2);
+      whole[1] = frame.length;
+      whole.set(frame, 2);
+      this.spans.push(whole);
+      this.last = frame.slice();
+      return;
+    }
+    if (prev.length !== frame.length) throw new Error('every frame of a clip is one size');
+    // `[start, length, ...pixels]` for each run of changes, in order, written into a scratch buffer
+    // that cannot overflow — two spans are always at least SPAN_GAP apart, so even a frame that
+    // changed everywhere costs under two words a pixel — and copied out at its real length.
+    const n = frame.length;
+    if (this.scratch.length < 2 * n + 2) this.scratch = new Uint32Array(2 * n + 2);
+    const out = this.scratch;
+    let o = 0;
+    for (let i = 0; i < n; ) {
+      if (frame[i] === prev[i]) {
+        i++;
+        continue;
+      }
+      let end = i + 1;
+      for (let j = end; j < n && j - end <= SPAN_GAP; j++) if (frame[j] !== prev[j]) end = j + 1;
+      out[o++] = i;
+      out[o++] = end - i;
+      out.set(frame.subarray(i, end), o);
+      o += end - i;
+      i = end;
+    }
+    this.spans.push(out.slice(0, o));
+    prev.set(frame);
+  }
+
+  /** The frames again, in order, each rebuilt into the same buffer — read one before asking for the next. */
+  *frames(): Generator<RgbFrame> {
+    const cur = new Uint32Array(this.last?.length ?? 0);
+    for (const d of this.spans) {
+      for (let o = 0; o < d.length; o += 2 + d[o + 1]) cur.set(d.subarray(o + 2, o + 2 + d[o + 1]), d[o]);
+      yield cur;
+    }
+  }
 }
 
 // --------------------------------------------------------------- palette
@@ -274,26 +384,11 @@ function concat(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
  */
 export function encodeGif(input: GifInput, onFrame?: (done: number, total: number) => void): Uint8Array<ArrayBuffer> {
   const { width, height, frames, delayCs, scale } = input;
-  // Counted a run at a time rather than a pixel at a time. The room is drawn in flat rectangles, so
-  // a row is a few dozen runs, not 480 colours, and a map lookup per pixel was most of the cost of
-  // a long clip. Runs are flushed in the order they start, so every colour still enters the map at
-  // the moment its first pixel is reached — the order `cutPalette` breaks its ties in is unchanged,
-  // and so is every byte of the file.
-  const hist = new Map<number, number>();
-  for (const f of frames) {
-    let run = 0;
-    let n = 0;
-    for (let i = 0; i < f.length; i++) {
-      const c = f[i];
-      if (n > 0 && c === run) {
-        n++;
-        continue;
-      }
-      if (n > 0) hist.set(run, (hist.get(run) ?? 0) + n);
-      run = c;
-      n = 1;
-    }
-    if (n > 0) hist.set(run, (hist.get(run) ?? 0) + n);
+  let hist: Map<number, number>;
+  if (frames instanceof FrameLog) hist = frames.hist;
+  else {
+    hist = new Map<number, number>();
+    for (const f of frames) countColours(hist, f);
   }
   const palette = cutPalette(hist);
   const toIndex = indexer(palette);
@@ -319,8 +414,10 @@ export function encodeGif(input: GifInput, onFrame?: (done: number, total: numbe
   let prev: Uint8Array | null = null;
   const idx = new Uint8Array(width * height);
   const strings = newTable();
-  for (let f = 0; f < frames.length; f++) {
-    const src = frames[f];
+  const count = frames.length;
+  let f = -1;
+  for (const src of frames instanceof FrameLog ? frames.frames() : frames) {
+    f++;
     // The same run-at-a-time shortcut: a pixel the colour of its left neighbour has its index.
     for (let i = 0, was = -1, at = 0; i < idx.length; i++) {
       const c = src[i];
@@ -375,7 +472,7 @@ export function encodeGif(input: GifInput, onFrame?: (done: number, total: numbe
       }
     }
 
-    const last = f === frames.length - 1;
+    const last = f === count - 1;
     const delay = last && input.holdLastCs !== undefined ? input.holdLastCs : delayCs;
     parts.push(
       // Graphic control: disposal 1 (leave the frame in place), transparency on.
@@ -386,7 +483,7 @@ export function encodeGif(input: GifInput, onFrame?: (done: number, total: numbe
     );
     prev = prev ?? new Uint8Array(idx.length);
     prev.set(idx);
-    onFrame?.(f + 1, frames.length);
+    onFrame?.(f + 1, count);
   }
   parts.push(Uint8Array.from([0x3b]));
   return concat(parts);

@@ -28,7 +28,7 @@ import { drawText, PAL, PIX, textWidth } from '../office/pixel/art';
 import { Scene, type Ghost, type SceneAgent } from '../office/pixel/scene';
 import { Replay, type Entry } from '../office/replay';
 import { agentLook, initialState, reduce, turnCount, type RtState } from '../store';
-import { encodeGif, packRgb, type RgbFrame } from './gif';
+import { encodeGif, FrameLog, packRgb, type RgbFrame } from './gif';
 import { asCtx, SoftCtx } from './softctx';
 
 export type ClipOptions = {
@@ -400,26 +400,51 @@ export function renderClip(
   opts: ClipOptions = CLIP_DEFAULTS,
   onProgress?: (p: ClipProgress) => void,
 ): ClipResult {
-  const c = clipFrames(evs, opts, onProgress && ((done, total) => onProgress({ phase: 'draw', done, total })));
+  // Kept as the changes between frames, not as frames: see `FrameLog` for what that saves, and why
+  // the file cannot tell the difference.
+  const log = new FrameLog();
+  const c = drawClip(
+    evs,
+    opts,
+    (px) => log.push(px),
+    onProgress && ((done, total) => onProgress({ phase: 'draw', done, total })),
+  );
   const gif = encodeGif(
     {
       width: c.width,
       height: c.height,
-      frames: c.frames,
+      frames: log,
       delayCs: c.delayCs,
       holdLastCs: HOLD_LAST_CS,
       scale: c.scale,
     },
     onProgress && ((done, total) => onProgress({ phase: 'encode', done, total })),
   );
-  return { ...c, gif, frames: c.frames.length, width: c.width * c.scale, height: c.height * c.scale };
+  return { ...c, gif, frames: log.length, width: c.width * c.scale, height: c.height * c.scale };
 }
 
+/** Every frame of the clip, whole, for a caller that wants to look at them rather than post them. */
 export function clipFrames(
   evs: readonly Ev[],
   opts: ClipOptions = CLIP_DEFAULTS,
   onFrame?: (done: number, total: number) => void,
 ): ClipFrames {
+  const frames: RgbFrame[] = [];
+  return { ...drawClip(evs, opts, (px) => frames.push(px.slice()), onFrame), frames };
+}
+
+/**
+ * Draws the clip a frame at a time and hands each to `keep` as it is finished.
+ *
+ * `keep` is lent the frame, not given it: the same buffer is packed again for the next one, so
+ * whatever it wants to hold it copies.
+ */
+function drawClip(
+  evs: readonly Ev[],
+  opts: ClipOptions,
+  keep: (px: RgbFrame) => void,
+  onFrame?: (done: number, total: number) => void,
+): Omit<ClipFrames, 'frames'> {
   const fps = Math.min(50, Math.max(2, opts.fps));
   const delayCs = Math.max(2, Math.round(100 / fps));
   const frameMs = delayCs * 10;
@@ -442,7 +467,8 @@ export function clipFrames(
   const scene = new Scene();
   const room = new SoftCtx(PIX.w, PIX.h + BAR_H);
   const ctx = asCtx(room);
-  const frames: RgbFrame[] = [];
+  const px = new Uint32Array(room.width * room.height);
+  let drawn = 0;
 
   let state: RtState = initialState;
   let folded = 0;
@@ -470,12 +496,13 @@ export function clipFrames(
       clockMs: lastReal,
     });
     drawBar(ctx, PIX.h, { elapsed: lastReal - t0, agents: seen.size, tokens: state.totalTok });
-    frames.push(packRgb(room.data));
-    onFrame?.(frames.length, total);
+    keep(packRgb(room.data, px));
+    // Counted outside the call: `onFrame?.(++drawn)` skips its arguments when nobody is listening.
+    drawn += 1;
+    onFrame?.(drawn, total);
   }
 
   return {
-    frames,
     width: room.width,
     height: room.height,
     delayCs,
@@ -483,7 +510,7 @@ export function clipFrames(
     agents: seen.size,
     tokens: state.totalTok,
     realMs,
-    clipMs: frames.length * frameMs,
+    clipMs: drawn * frameMs,
     speed,
     shownFrom: realAt(beats, from),
     shownTo: realAt(beats, Math.min(to, compressedMs)),
