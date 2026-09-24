@@ -92,23 +92,29 @@ The root is `~/.claude`, or `$ROUNDTABLE_HOME` when that is set — `claudeRoot(
 the whole app from a synthetic tree without ever touching your real sessions.
 
 **`--demo` is the one mode in which the process writes files, and it never writes to a directory
-you named.** It stages a synthetic session for the observer to watch. The path is fixed by
-`demoRoot()` in `server/cli.ts` to `roundtable-demo-root` under the operating system's temp
-directory; `--root` and `$ROUNDTABLE_HOME` are overridden when `--demo` is given, so the stage —
-which wipes and recreates the directory it is handed — can never be pointed at a real one. The
-writer is `scripts/promo/stage.ts`, bundled into `dist/server/cli.mjs` for the installed binary;
-the three files that read your transcripts (`server/sessions.ts`, `server/tail.ts`,
-`server/hub.ts`) still import no write API, and that is asserted by the paragraphs above rather
-than changed by this one. The staged root is deleted when the process exits. Nothing under
-`~/.claude` is read in this mode: the hub is handed the staged directory and only that.
+you named.** It stages a synthetic session for the observer to watch, in a fresh directory under
+the operating system's temp directory: `run` in `server/cli.ts` creates it with `mkdtempSync`
+(`newDemoRoot()` in `scripts/promo/demoRoom.ts`, a `roundtable-demo-` name with a random suffix)
+immediately before staging into it. `--root` and `$ROUNDTABLE_HOME` are overridden when `--demo` is
+given, and `run` ignores whatever root it was handed in this mode, so the stage — which wipes and
+recreates the directory it is handed — is only ever handed a directory this process has just
+created: never a real one, and never another demo's. The writer is `scripts/promo/stage.ts`,
+bundled into `dist/server/cli.mjs` for the installed binary; the three files that read your
+transcripts (`server/sessions.ts`, `server/tail.ts`, `server/hub.ts`) still import no write API,
+and that is asserted by the paragraphs above rather than changed by this one. The staged directory
+is deleted when the process exits, including on `Ctrl+C` and `SIGTERM`, and only that directory: a
+second demo running beside it keeps its own. A process killed outright cannot clean up, and leaves
+its synthetic transcripts in the temp directory. Nothing under `~/.claude` is read in this mode: the
+hub is handed the staged directory and only that.
 
 **`--gif` writes exactly one file: the GIF, where `--out` says or as `roundtable-<session>.gif` in
 the working directory.** The write is one `writeFileSync` in `makeClip` (`server/cli.ts`); the
 reading is done by the same hub as always (`server/clip.ts` starts it with `startServer`), so the
 transcripts are read by the code the paragraphs above describe and by nothing else. That hub binds
 `127.0.0.1` on a port the operating system picks, is followed by one socket from the same process,
-and is stopped before the command returns. `--gif --demo` stages its session in its own directory
-under the temp directory (`showcaseRoot()`, the same rule as `--demo`) and deletes it afterwards.
+and is stopped before the command returns. `--gif --demo` stages its session in a fresh directory
+under the temp directory (`mkdtempSync` in `makeClip`, the same rule as `--demo`) and deletes it
+afterwards.
 
 The GIF is the one artefact this project produces that is *meant* to be shared, so what it contains
 is stated rather than implied: by default it draws what the session drew — the opening prompt on the
