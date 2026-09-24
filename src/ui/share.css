@@ -1,0 +1,387 @@
+/*
+ * The share dialog, and the top-bar button that opens it.
+ *
+ * The palette's sheet — same surface, hairline, shadow and pop — wider, because what it holds is a
+ * picture of the room close to the size it will be posted at. Every colour is a token from
+ * `index.css`, so both themes come for free and neither is special-cased here.
+ */
+
+/* ------------------------------------------------------------ top bar ---- */
+
+/*
+ * Stacked above its neighbours. Below about 420px the session picker's button is wider than the
+ * slot the bar gives its menu and overhangs whatever follows — the LIVE pill already sat under it
+ * before this button existed — and a Share button with its left edge under another control only
+ * works where it happens to show.
+ */
+.topbar .share-open {
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * `aria-disabled` rather than `disabled`: a disabled button takes no focus and, in some browsers,
+ * shows no tooltip — and the tooltip is the only place that says *why* there is nothing to share.
+ */
+.topbar .share-open[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.topbar .share-open[aria-disabled='true']:hover {
+  background: var(--panel-2);
+  color: var(--ink-2);
+}
+.share-open svg {
+  flex: none;
+}
+
+/* ------------------------------------------------------------- dialog ---- */
+
+/* Higher on the page than the palette's 14vh: this sheet is tall, and on a short window the
+   palette's offset would push the Download button below the fold. */
+.overlay.share-overlay {
+  padding: max(12px, 6vh) 12px 12px;
+}
+
+.share {
+  width: min(640px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-3);
+  animation: pop-in 0.16s var(--ease);
+}
+
+.share-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  min-width: 0;
+}
+.share-hd b {
+  flex: none;
+}
+.share-hd .spacer {
+  margin-left: auto;
+}
+.share-which {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+
+/* The only part that scrolls. Header and footer stay put, so Download is never scrolled away. */
+.share-body {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 12px 14px;
+  display: grid;
+  gap: 12px;
+}
+
+/* --- preview --- */
+
+.share-preview {
+  display: grid;
+  gap: 6px;
+}
+/* The clip's own proportions — 480×281, the room plus its caption strip — so the box does not jump
+   when the picture replaces the progress bar inside it. */
+.share-frame {
+  aspect-ratio: 480 / 281;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.share-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.share-wait {
+  width: min(320px, 80%);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.share-bar {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+.share-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent-2);
+  transition: width 0.12s linear;
+}
+.share-doing {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.share-err {
+  color: var(--err);
+}
+.share-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.share-meta span + span::before {
+  content: '·';
+  margin: 0 7px;
+}
+
+/* --- options --- */
+
+.share-opts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 18px;
+  align-items: start;
+}
+.share-seg {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.share-seg legend {
+  padding: 0;
+  margin-bottom: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+/*
+ * A radio group drawn as a segmented control. The inputs stay real — they are what the arrow keys
+ * move between and what a screen reader announces — and sit invisibly over their own labels.
+ */
+.share-seg-row {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.share-seg label {
+  position: relative;
+  display: flex;
+  cursor: pointer;
+}
+.share-seg input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.share-seg span {
+  padding: 5px 11px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  transition:
+    background 0.14s var(--ease),
+    color 0.14s var(--ease);
+}
+.share-seg label + label span {
+  border-left: 1px solid var(--line);
+}
+.share-seg label:hover span {
+  background: var(--panel-3);
+  color: var(--ink);
+}
+.share-seg input:checked + span {
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-weight: 700;
+}
+/* Inset, because the row clips its children to its rounded corners and an outset ring would be
+   clipped with them. */
+.share-seg input:focus-visible + span {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
+}
+
+.share-bare {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.share-bare:has(input:checked) {
+  border-color: var(--accent-2);
+  background: var(--accent-wash);
+}
+.share-bare input {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.share-bare input:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+.share-bare b {
+  display: block;
+  font-size: 12px;
+  color: var(--ink);
+}
+.share-bare small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+/* --- notes --- */
+
+.share-note {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.share-note code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink);
+}
+/* The warning is printed in the status colour on its own wash, which is the pairing `index.css`
+   measures for contrast; the body text stays ink so it reads as a sentence, not an alarm. */
+.share-warn {
+  padding: 8px 10px;
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--warn-wash);
+  color: var(--ink);
+}
+.share-warn b {
+  color: var(--warn);
+}
+
+/* --- footer --- */
+
+.share-ft {
+  display: grid;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--line);
+}
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.share .btn {
+  padding: 6px 12px;
+  font-size: 11.5px;
+}
+.share .btn.icon {
+  padding: 4px 7px;
+  font-size: 10.5px;
+}
+/* Three classes deep because `index.css` is bundled after this file, and its `.btn` and
+   `.btn:hover` would otherwise win on source order and paint Download like every other button. */
+.share .btn.share-primary,
+.share .btn.share-primary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--panel-solid);
+  font-weight: 700;
+  text-decoration: none;
+}
+.share .btn.share-primary:hover {
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.share .btn:disabled {
+  background: var(--panel-3);
+  border-color: var(--line);
+  color: var(--ink-3);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.share-copied {
+  font-size: 11px;
+  color: var(--warn);
+}
+.share-caption {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+}
+/* A text field's ring is its border, as the feed's search box has it. */
+.share-caption:focus-visible {
+  outline: none;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+.share-local {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+}
+
+/* One column once the two option groups would squeeze each other. */
+@media (max-width: 560px) {
+  .share-opts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The facts wrap here, and a line that opens on a separator reads as a line that lost its start. */
+  .share-meta {
+    column-gap: 12px;
+  }
+  .share-meta span + span::before {
+    content: none;
+  }
+  .share-body {
+    padding: 10px 12px;
+  }
+  .share-ft {
+    padding: 10px 12px 12px;
+  }
+}
