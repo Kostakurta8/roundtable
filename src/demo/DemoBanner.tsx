@@ -15,7 +15,7 @@
  * so it never draws a link that leaves the machine.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { DEMO_SPEED } from './playback';
+import { demoPace } from './source';
 
 export const INSTALL = 'npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz';
 export const REPO = 'https://github.com/Kostakurta8/roundtable';
@@ -35,6 +35,7 @@ const wasCompact = (): boolean => {
 type Copy = 'idle' | 'copied' | 'select';
 
 export function DemoBanner() {
+  const [pace] = useState(demoPace);
   const [compact, setCompact] = useState(wasCompact);
   const [copy, setCopy] = useState<Copy>('idle');
   const cmdRef = useRef<HTMLElement>(null);
@@ -102,8 +103,8 @@ export function DemoBanner() {
   return (
     <aside className={compact ? 'demo-bar compact' : 'demo-bar'} aria-label="about this demo">
       <p className="demo-what">
-        <span className="demo-tag" title={`played at ${DEMO_SPEED}× the speed it was recorded`}>
-          STAGED REPLAY · {DEMO_SPEED}×
+        <span className="demo-tag" title={pace.title}>
+          STAGED REPLAY · {pace.label}
         </span>
         {!compact && (
           <>
