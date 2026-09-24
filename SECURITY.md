@@ -142,6 +142,16 @@ The caption strip under the room carries only the elapsed time, the agent count,
 the project's address. The command prints a reminder to look before posting whenever the clip is not
 `--bare`.
 
+**`--card` writes exactly one file too: a PNG, where `--out` says or as
+`roundtable-<session>-card.png` in the working directory** (with `--gif`, both files: `--out` names
+the GIF, and the card goes beside it as `<name>-card.png`). `--card --demo` stages its session in a
+directory of its own under the temp directory and deletes it afterwards. It reads the session through the same in-process hub `--gif` starts, renders with
+the page's own card renderer (`src/clip/card.ts`), and encodes with the project's own PNG writer
+(`scripts/pixpreview.ts`, `node:zlib`). What the card shows is on the card and nowhere else: the
+figures, a still of the room drawn with the same redaction as a clip, and — unless it is hidden —
+the session's task along the bottom. "Hide transcript text" (`--bare`) removes the task, numbers the
+agents instead of naming them, and blanks the board.
+
 **The Share dialog in the page makes the same GIF, and writes nothing itself.** It renders in a Web
 Worker the bundle ships (`src/clip/worker.ts`, served by the hub as one more fingerprinted asset),
 from the events the page has already received — `src/ui/evlog.ts` keeps a bounded copy of them —
