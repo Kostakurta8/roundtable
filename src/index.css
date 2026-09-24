@@ -373,23 +373,34 @@ body {
   margin-left: auto;
 }
 
+/*
+ * The bar's three numbers, read as one instrument: a hairline between each, the key small and the
+ * figure large, all three on one baseline. They used to sit at the bar's gap spacing like three
+ * unrelated words, and the eye had to pair each key with the number beside it rather than read
+ * across. `.stat + .stat` rather than a wrapper: the bar's markup is shared with other work.
+ */
 .stat {
   display: flex;
   align-items: baseline;
-  gap: 5px;
+  gap: 6px;
   flex: none;
   white-space: nowrap;
   color: var(--ink-2);
+}
+.stat + .stat {
+  padding-left: 12px;
+  border-left: 1px solid var(--line-soft);
 }
 .stat b {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 14px;
+  letter-spacing: -0.01em;
 }
 .stat .k {
-  font-size: 9.5px;
-  letter-spacing: 0.14em;
+  font-size: 9px;
+  letter-spacing: 0.16em;
   color: var(--ink-3);
 }
 
@@ -468,6 +479,10 @@ body {
 .btn:hover {
   background: var(--panel-3);
   color: var(--ink);
+}
+/* A press you can see: one pixel down, the way the room's own furniture would give. */
+.btn:active {
+  transform: translateY(1px);
 }
 .btn.on {
   background: var(--accent-wash);
@@ -748,7 +763,7 @@ details.monologue summary:focus-visible,
 }
 /*
  * The working-agent count is the reason the tab exists, so it is the loudest thing on it. On
- * `--accent` rather than `--accent-2`: the lighter teal carried the panel colour at 3.4:1 by day.
+ * `--accent` rather than `--accent-2`: the lighter teal carried the panel colour at 3.2:1 by day.
  */
 .session-tab .n {
   min-width: 15px;
@@ -1049,7 +1064,9 @@ details.monologue summary:focus-visible,
   font-size: 10px;
   letter-spacing: 0.16em;
   cursor: pointer;
-  transition: color 0.14s var(--ease);
+  transition:
+    color 0.14s var(--ease),
+    border-color 0.2s var(--ease);
 }
 .tab:hover {
   color: var(--ink-2);
@@ -1069,6 +1086,8 @@ details.monologue summary:focus-visible,
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Remounted per tab (`key` in App), so switching panels is a short settle rather than a cut. */
+  animation: panel-in 0.2s var(--ease);
 }
 .dock-foot {
   border-top: 1px solid var(--line);
@@ -2375,6 +2394,16 @@ kbd {
   from {
     opacity: 0;
     transform: translateY(-6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
   }
   to {
     opacity: 1;

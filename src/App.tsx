@@ -644,7 +644,9 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="dock-body" role="tabpanel">
+        {/* Keyed on the tab so a switch remounts the panel and plays its entrance — each tab already
+            mounts its own content fresh, so the key costs nothing it was not already paying. */}
+        <div className="dock-body" role="tabpanel" key={tab}>
           {/* The socket is down and a session is on screen: the pill says OFFLINE, this says what
               that means and what to do. Above every tab, because the question is the same on each. */}
           {!connected && title !== null && <OfflineNote url={WS_URL} />}
