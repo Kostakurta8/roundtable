@@ -56,6 +56,20 @@ top bar keeps the session's name, and the timeline takes two rows.
 show the app as it now is. `docs/launch/` holds launch drafts, and `.github/workflows/publish-npm.yml`
 publishes to npm on a release once an `NPM_TOKEN` secret exists — until then it skips, green.
 
+**The "whole app" GIF is the app as it now is**: the `--demo` session filmed at 960×640 through the
+current shell, with arrivals, a report and a verdict each way in nineteen seconds, at 1 MB instead of
+4.9. `npx tsx scripts/promo/demoGif.ts` re-films it with Playwright screenshots and the app's own
+GIF encoder, so it needs no ffmpeg.
+
+### Fixed
+
+**Two demos no longer delete each other.** `--demo`, `--gif --demo` and `npm run demo` each stage
+into a fresh directory under the temp directory, made for that run, instead of one fixed path. With
+the fixed path a second demo wiped the first one's room, and whichever exited first deleted the
+directory the other's hub was still serving. `--root` is still ignored with `--demo`, the hub still
+watches the staged directory by polling, and exiting — `Ctrl+C` and `SIGTERM` included — deletes
+that run's directory and nothing else.
+
 ## [0.3.1] — 2026-09-23
 
 ### Added
