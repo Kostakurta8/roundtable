@@ -40,6 +40,16 @@
    */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+  transition: opacity 0.2s var(--ease, ease);
+}
+/*
+ * Held back while a page load's first frame is still arriving (`SETTLE_QUIET_MS` in the component),
+ * so the room appears on its frame rather than zooming out to it from the empty room drawn before
+ * the backlog landed. Only the paint: every mark over it is already in place, focusable and
+ * clickable, and the stage's own colour is what shows for those few frames.
+ */
+.office.pixel[data-framing='arriving'] > .pixel-canvas {
+  opacity: 0;
 }
 
 /*

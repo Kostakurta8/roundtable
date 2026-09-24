@@ -21,7 +21,7 @@ import { AgentsTab } from './ui/AgentsTab';
 import { boardText, clashingNames, clip, clockSec, hasChosenName, sessionAbout, sessionName, shortId } from './ui/format';
 import { Guide, guideSeen, rememberGuide } from './ui/Guide';
 import { Help } from './ui/Help';
-import { Inspector } from './ui/Inspector';
+import { Inspector, useSheet } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
 import { Rail } from './ui/Rail';
 import { rosterTree } from './ui/roster';
@@ -159,6 +159,11 @@ function Nothing({ connected, sessions, root }: { connected: boolean; sessions: 
 const ROSTER_MIN = 64;
 /** The most of the stage the strip may take, however much the room leaves over. */
 const ROSTER_MAX_SHARE = 0.4;
+/**
+ * The narrowest the roster column may become so the room beside it can fill the stage's height:
+ * the strip's own chip width (176px) plus the column's padding, so a row still reads as one.
+ */
+const RAIL_MIN = 192;
 
 /**
  * Where the roster goes, and how much of the stage it takes from the room.
@@ -211,20 +216,28 @@ function useRoomLayout(
         // measured off the rail's box: on the frame the mode flips, that box is still the strip.
         const railW = Number.parseFloat(getComputedStyle(host).getPropertyValue('--rail-w')) || 0;
         const room = Math.max(1, cols);
+        // The column gives up width, down to `RAIL_MIN`, until the room beside it fills the
+        // stage's height. At its full width it could leave the room width-limited with a band of
+        // ceiling over the wall — 60px at 1440×900 with the dock hidden — for want of 107px.
+        const railFit = Math.min(railW, Math.max(Math.min(RAIL_MIN, railW), w - (h * room) / PIX.h));
         // Whichever mode draws the bigger room. Deciding on "is there a row's worth of height
         // under a full-width room" alone flipped to the column at 1920×1080 with 61px of slack
         // against a 64px row — and the column then took 240px of width from a width-limited
         // room, which put 200px of empty ceiling above it: a far worse room than a strip three
         // pixels shorter than it would like.
         const belowScale = Math.min(w / room, (h - ROSTER_MIN) / PIX.h);
-        const sideScale = Math.min((w - railW) / room, h / PIX.h);
-        if (h > ROSTER_MIN && belowScale >= sideScale) {
+        const sideScale = Math.min((w - railFit) / room, h / PIX.h);
+        // …unless the column, even at its narrowest, still leaves ceiling over the wall. The strip
+        // never does on a stage like that (it grows into the height the room leaves), and the room
+        // it costs is at most the row the strip takes: about 30px of height at 1440×900.
+        const sideBand = h - PIX.h * sideScale;
+        if (h > ROSTER_MIN && (belowScale >= sideScale || sideBand > 1)) {
           const slack = Math.max(h - (w * PIX.h) / PIX.w, ROSTER_MIN);
           const want = h - (w * PIX.h) / room;
           const rosterH = Math.round(Math.min(Math.max(want, ROSTER_MIN), slack, h * ROSTER_MAX_SHARE));
           next = { mode: 'below', insetLeft: 0, rosterH };
         } else {
-          next = { mode: 'side', insetLeft: Math.round(railW), rosterH: 0 };
+          next = { mode: 'side', insetLeft: Math.round(railFit), rosterH: 0 };
         }
       }
       setLayout((prev) =>
@@ -370,6 +383,17 @@ export default function App() {
    * "rows I am about to render" — the feed's own window, the tools strip — deliberately do not.
    */
   const turns = turnCount(state);
+
+  /**
+   * The inspector, placed by width: a card over the room, or at phone width a sheet over the dock —
+   * a child of the shell's grid rather than of the stage, which clips and contains everything in it.
+   * Rendered straight after the stage either way, so Tab goes from the room into it.
+   */
+  const sheet = useSheet();
+  const inspector =
+    selected && state.agents[selected] ? (
+      <Inspector state={state} agentId={selected} now={now} sheet={sheet} onClose={() => setSelected(null)} />
+    ) : null;
 
   const stageRef = useRef<HTMLElement>(null);
   /** How wide the session's room is, in buffer columns — reported by the room, `null` until then. */
@@ -522,7 +546,9 @@ export default function App() {
   });
 
   return (
-    <div className={`app${dockOpen ? '' : ' dock-hidden'}`}>
+    // A sheet brings the dock's row back while it is open: with the dock hidden a phone's stage is
+    // the whole height, the room sits at its foot, and a sheet over the stage covered exactly that.
+    <div className={`app${dockOpen || (sheet && inspector !== null) ? '' : ' dock-hidden'}`}>
       <TopBar
         sessions={sessions}
         sessionId={sessionId}
@@ -558,7 +584,13 @@ export default function App() {
         ]
           .filter(Boolean)
           .join(' ')}
-        style={{ '--roster-h': `${layout.rosterH}px` } as CSSProperties}
+        style={
+          {
+            '--roster-h': `${layout.rosterH}px`,
+            // The column's width as the layout fitted it, which can be narrower than `--rail-w`.
+            '--rail-fit': layout.mode === 'side' ? `${layout.insetLeft}px` : undefined,
+          } as CSSProperties
+        }
         ref={stageRef}
       >
         {/* Over the room rather than in the shell's grid: the strip is not always there, and a
@@ -666,13 +698,12 @@ export default function App() {
           onFilterCrossTalk={filterCrossTalk}
         />
         <Rail rows={rows} selected={selected} now={now} onSelect={select} />
-        {selected && state.agents[selected] && (
-          <Inspector state={state} agentId={selected} now={now} onClose={() => setSelected(null)} />
-        )}
+        {!sheet && inspector}
         {/* Only over a room that exists: a guide to the people in an office that has no session in
             it would be explaining pictures nobody can see. */}
         {guideOpen && sessionId !== null && <Guide onClose={closeGuide} />}
       </main>
+      {sheet && inspector}
 
       <aside className="dock panel" aria-label="session detail">
         <nav className="tabs" role="tablist">

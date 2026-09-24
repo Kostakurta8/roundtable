@@ -15,6 +15,7 @@ import type { Ev } from '../shared/events';
 import { Chat, foldSystem } from '../src/chat/Chat';
 import { runSummary } from '../src/chat/MessageCard';
 import { initialState, reduce, type RtState } from '../src/store';
+import { Inspector } from '../src/ui/Inspector';
 import { OfflineNote } from '../src/ui/OfflineNote';
 import { Timeline } from '../src/ui/Timeline';
 
@@ -158,6 +159,42 @@ describe('the feed folds runs of system lines', () => {
     expect(el.querySelectorAll('.sys-list .sys-line')).toHaveLength(6);
   });
 
+  /**
+   * Seeking the strip to a system line inside a closed run scrolled to the closed fold — "spawned 3
+   * subagents · 3 prompts ▸" — and nothing opened it, so the line the strip was clicked for was
+   * never on screen. The run holding the target opens for the seek, and the scroll lands on the line.
+   */
+  it('opens the run a seek lands in, and scrolls to the line rather than the fold', () => {
+    const state = fanOut();
+    const line = state.msgs.find((m) => m.agentId === 'system' && m.ts === 1201)!;
+    const scrolledTo: Element[] = [];
+    const real = Element.prototype.scrollIntoView;
+    // jsdom lays nothing out and has no `scrollIntoView`; this records where the feed asked to go.
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolledTo.push(this);
+    };
+    try {
+      const at = (seekTs: number | null) => (
+        <Chat state={state} title="TASK · x" live truncatedDropped={0} focusAgent={null} seekTs={seekTs} />
+      );
+      const el = mount(at(null));
+      expect(el.querySelector('.sys-sum')?.getAttribute('aria-expanded')).toBe('false');
+      rerender(at(line.ts));
+      const sum = el.querySelector<HTMLButtonElement>('.sys-sum')!;
+      expect(sum.getAttribute('aria-expanded')).toBe('true');
+      expect(scrolledTo).toHaveLength(1);
+      expect(scrolledTo[0].matches(`.sys-line[data-mid="${line.id}"]`)).toBe(true);
+      // Opened as the reader's own state: it can still be closed while the seek is held, and a
+      // later render of the same seek does not force it back open under them.
+      act(() => sum.click());
+      expect(sum.getAttribute('aria-expanded')).toBe('false');
+      rerender(at(line.ts));
+      expect(sum.getAttribute('aria-expanded')).toBe('false');
+    } finally {
+      Element.prototype.scrollIntoView = real;
+    }
+  });
+
   it('opens itself while a search is on, so a match inside is not hidden behind the fold', () => {
     const el = mount(chat(fanOut()));
     const input = el.querySelector<HTMLInputElement>('input.search')!;
@@ -214,6 +251,71 @@ describe('the activity strip reads at any session length', () => {
     expect(bars()[3].tabIndex).toBe(0);
     act(() => bars()[3].click());
     expect(seeks).toEqual([4000]);
+  });
+});
+
+describe('the inspector as a phone sheet', () => {
+  /**
+   * At 390×844 the inspector was a card pinned over the room, covering 220×285 of a 378×305 room:
+   * the person just tapped was under the panel about them. It is a sheet over the dock there now,
+   * and a sheet has to go away the ways a sheet does.
+   */
+  const state = fold([agentSeen('a')]);
+  const sheet = (onClose: () => void, isSheet = true) => (
+    <>
+      <div className="office">
+        <button type="button" className="actor">a person</button>
+      </div>
+      <nav className="tabs">
+        <button type="button">CHAT</button>
+      </nav>
+      <Inspector state={state} agentId="a" now={2000} onClose={onClose} sheet={isSheet} />
+    </>
+  );
+  const down = (el: Element) =>
+    act(() => {
+      el.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    });
+
+  it('closes on a tap anywhere that is not it, except the room, which answers its own taps', () => {
+    let closed = 0;
+    const el = mount(sheet(() => closed++));
+    expect(el.querySelector('.inspector.sheet .sheet-grab')).not.toBeNull();
+    down(el.querySelector('.inspector h3')!);
+    expect(closed).toBe(0);
+    down(el.querySelector('.office .actor')!);
+    expect(closed).toBe(0);
+    down(el.querySelector('.tabs button')!);
+    expect(closed).toBe(1);
+  });
+
+  it('closes on Escape from inside, and hands focus back to what opened it', () => {
+    let closed = 0;
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    const opener = document.createElement('button');
+    host.appendChild(opener);
+    opener.focus();
+    const into = document.createElement('div');
+    host.appendChild(into);
+    root = createRoot(into);
+    act(() => root!.render(sheet(() => closed++)));
+    const close = into.querySelector<HTMLButtonElement>('.inspector .close')!;
+    act(() => close.focus());
+    act(() => {
+      close.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(closed).toBe(1);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('is still the card over the room on a wider stage, with no handle and no tap-away', () => {
+    let closed = 0;
+    const el = mount(sheet(() => closed++, false));
+    expect(el.querySelector('.inspector.sheet')).toBeNull();
+    expect(el.querySelector('.sheet-grab')).toBeNull();
+    down(el.querySelector('.tabs button')!);
+    expect(closed).toBe(0);
   });
 });
 

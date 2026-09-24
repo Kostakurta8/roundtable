@@ -92,6 +92,32 @@ const DRAG_SLOP = 4;
 const SAY_ANNOUNCE_MS = 900;
 
 /**
+ * How long the room's frame has to hold still before a page load shows it.
+ *
+ * The first frames of a page are drawn before anything has arrived: an empty session's room, on a
+ * stage the session tabs, the roster and its strip have not yet taken their share of. The backlog
+ * then lands over the next hundred milliseconds or so, and each of those arrivals grows the room or
+ * shrinks the stage, so the camera eased from the empty room's close-up out to the real frame across
+ * the whole first second — at 1024×700 the whiteboard went from 141px wide to 110px between 250ms
+ * and 900ms, a zoom-out nobody asked for on every load. The canvas now stays blank until the frame
+ * has stopped moving for this long with somebody in the room, and appears already on it. Every
+ * change measured on a load came within 60ms of the one before it.
+ */
+const SETTLE_QUIET_MS = 180;
+
+/**
+ * The longest a load, or a switch to another session, waits for the frame to settle: long enough
+ * for a slow socket, short enough that an empty session is not a blank stage for long.
+ */
+const SETTLE_CAP_MS = 900;
+
+/**
+ * Buffer columns kept either side of a desk the phone frame pans to show — the nameplate over it
+ * and a margin, so "on screen" means readable rather than touching the edge.
+ */
+const KEEP_PAD = 4;
+
+/**
  * Where the hover card sits relative to the pointer: below and to the right, the way a tooltip
  * does, far enough off the cursor that the sprite being pointed at stays in view.
  */
@@ -209,7 +235,7 @@ export function clampView(cam: Cam, g: Geo): Cam {
  * what lets the frame follow the room as it grows and the window as it resizes, eased by the same
  * loop that eases every other camera move.
  */
-export function homeCam(cols: number, g: Geo): Cam {
+export function homeCam(cols: number, g: Geo, keep: readonly Span[] = NO_SPANS, near?: number): Cam {
   const usableW = Math.max(g.w * 0.55, g.w - g.insetLeft);
   if (!(usableW > 0) || !(g.h > 0)) return { ...CAM_HOME };
   const widthScale = usableW / PIX.w;
@@ -223,10 +249,61 @@ export function homeCam(cols: number, g: Geo): Cam {
   // short of the wall. Out, because `zFill` is the most the stage's height can hold.
   const rows = Math.ceil(PIX.h / want - 1e-9);
   const z = PIX.h / rows;
-  // Centred on the room the session has, and resting on the floor's bottom edge: when the window
-  // is shorter than the buffer, the rows it leaves out are the ones `headroomBlits` puts back above
-  // it, so the wall is never what gets cropped.
-  return clampCam({ z, x: Math.min(PIX.w, cols) / 2, y: PIX.h - rows / 2 });
+  // Centred on the room the session has — or, where the stage can afford only part of its width,
+  // placed over the people working in it (`panFor`) — and resting on the floor's bottom edge: when
+  // the window is shorter than the buffer, the rows it leaves out are the ones `headroomBlits` puts
+  // back above it, so the wall is never what gets cropped.
+  const room = Math.min(PIX.w, cols);
+  const viewW = PIX.w / z;
+  const x = viewW < room - 0.5 ? panFor(viewW, room, keep, near ?? room / 2) : room / 2;
+  return clampCam({ z, x, y: PIX.h - rows / 2 });
+}
+
+/** A stretch of buffer columns the resting frame should keep on screen if it can: one desk. */
+export type Span = { from: number; to: number };
+
+const NO_SPANS: readonly Span[] = [];
+
+/**
+ * Where a window narrower than the room sits across it: over as many of `keep` as it can show
+ * whole, and of the places that show that many, the one nearest `near` — where it already is.
+ *
+ * On a phone the frame crops the room's sides to keep its people readable (`READABLE_PX`), and it
+ * used to crop them about the room's centre whatever was happening there: at 390×844 a full room's
+ * window ran from column 72 to 408, which is the whole far-right bank of desks gone, and in the
+ * demo's fan-out two of the agents at work were sitting at exactly those desks, off screen for the
+ * rest of the session. `keep` is the desks of everybody not yet finished, so the frame goes to them.
+ * It moves only when it has to: a window that already shows as many as it can stays put, because a
+ * camera that re-centred itself every time somebody finished would be panning the room all session.
+ *
+ * Desks rather than people, because people walk — to report, to the roundtable, to the door — and a
+ * frame that chased every walk would never rest; desks change only when somebody arrives or leaves.
+ * The candidates are the places where the window's edge meets a desk's, which is where the count
+ * can change, plus `near` itself.
+ */
+export function panFor(viewW: number, room: number, keep: readonly Span[], near: number): number {
+  const half = viewW / 2;
+  const hi = Math.max(half, room - half);
+  const at = (x: number): number => Math.min(hi, Math.max(half, x));
+  if (keep.length === 0) return at(room / 2);
+  const shows = (x: number): number => {
+    let n = 0;
+    for (const s of keep) if (s.from >= x - half - 0.5 && s.to <= x + half + 0.5) n += 1;
+    return n;
+  };
+  let best = at(near);
+  let most = shows(best);
+  for (const s of keep) {
+    for (const edge of [s.from + half, s.to - half]) {
+      const x = at(edge);
+      const n = shows(x);
+      if (n > most || (n === most && Math.abs(x - near) < Math.abs(best - near))) {
+        best = x;
+        most = n;
+      }
+    }
+  }
+  return best;
 }
 
 type Sim = {
@@ -630,8 +707,18 @@ export const PixelOffice = memo(function PixelOffice({
    * the floor and clearing the selection hand it back.
    */
   const framed = useRef(true);
-  /** Jump to the frame on the next tick instead of easing in: a first paint, or a different room. */
+  /**
+   * Cut to the frame instead of easing, until it holds still: a first paint, or a different room.
+   * An ease from one session's frame to another's is a camera move through a room that is not
+   * there, and so is an ease out of the frame a load draws before its backlog has arrived.
+   */
   const snap = useRef(true);
+  /**
+   * Repaints now rather than at the next tick, for a viewer who asked for reduced motion. That loop
+   * steps every half second, so without this a zoom, a drag or a hover answered up to half a second
+   * late — a drag at two frames a second. `null` while the ordinary loop is running every frame.
+   */
+  const redraw = useRef<(() => void) | null>(null);
   /**
    * The most pod desks this room has drawn — the scene's own high-water rule, mirrored from the
    * same actor list the scene is handed, because the frame has to be exactly as wide as that room.
@@ -765,6 +852,10 @@ export const PixelOffice = memo(function PixelOffice({
     const el = wrap.current;
     const canvas = view.current;
     if (!el || !canvas) return;
+    // First thing, before `measure` reads a rect: reading one flushes styles, and a canvas styled
+    // visible there and hidden here fades out — the empty room it was meant never to show.
+    el.dataset.framing = 'arriving';
+    el.dataset.cam = 'moving';
 
     buffer.current ??= (() => {
       const c = document.createElement('canvas');
@@ -820,6 +911,21 @@ export const PixelOffice = memo(function PixelOffice({
 
     const still =
       typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /**
+     * The first frame's arrival (`SETTLE_QUIET_MS`). `hidden` holds the canvas back on a page load
+     * until the frame has settled with somebody in it; `cutting` makes the camera jump to the frame
+     * rather than ease, for as long as it is still moving — on a load and after a session switch.
+     * `seen` is the frame and stage last compared, and `quietFrom` when either last changed.
+     * Presentation only: none of it reaches an engine or the scene.
+     */
+    let hidden = true;
+    let cutting = true;
+    let cutFrom = 0;
+    let quietFrom = 0;
+    const seen = { x: -1, y: -1, z: -1, w: -1, h: -1 };
+    /** The desks the phone frame keeps on screen, rebuilt each frame into the same array. */
+    const keep: Span[] = [];
 
     // The seating revision the DOM layer was last told about. A counter rather than a comparison
     // of two id lists, because this runs sixty times a second and must allocate nothing at all on
@@ -993,7 +1099,42 @@ export const PixelOffice = memo(function PixelOffice({
         colsSaid = cols;
         colsTo.current?.(cols);
       }
-      const rest = homeCam(cols, g);
+      keep.length = 0;
+      for (const a of actors) {
+        if (a.done) continue;
+        const d = scene.current!.deskBoxOf(a.id);
+        if (d) keep.push({ from: d.x - KEEP_PAD, to: d.x + d.w + KEEP_PAD });
+      }
+      const rest = homeCam(cols, g, keep, camWant.current.x);
+
+      if (snap.current) {
+        snap.current = false;
+        cutting = true;
+        cutFrom = clock;
+        quietFrom = clock;
+      }
+      if (cutting && w > 1 && h > 1) {
+        if (rest.x !== seen.x || rest.y !== seen.y || rest.z !== seen.z || w !== seen.w || h !== seen.h) {
+          seen.x = rest.x;
+          seen.y = rest.y;
+          seen.z = rest.z;
+          seen.w = w;
+          seen.h = h;
+          quietFrom = clock;
+        }
+        const quiet = clock - quietFrom >= SETTLE_QUIET_MS;
+        if (hidden) {
+          // Somebody has to be in the room: before the backlog lands the frame is perfectly still,
+          // and it is the empty room's frame. The cap is for a session that has nobody in it yet.
+          if ((quiet && actors.length > 0) || clock - cutFrom >= SETTLE_CAP_MS) {
+            hidden = false;
+            cutting = false;
+            el.dataset.framing = 'settled';
+          }
+        } else if (quiet || clock - cutFrom >= SETTLE_CAP_MS) {
+          cutting = false;
+        }
+      }
       if (Math.abs(rest.z - homeZSaid) > 0.02) {
         homeZSaid = rest.z;
         setHomeZ(rest.z);
@@ -1031,17 +1172,34 @@ export const PixelOffice = memo(function PixelOffice({
           want.y = box.y + box.h / 2;
         }
       }
-      if (snap.current && w > 1 && h > 1) {
-        cam.current = { ...want };
-        snap.current = false;
-      }
-      const k = Math.min(1, dt / 220);
+      // Easing is the only camera motion, so a viewer who asked for none gets the cut every time —
+      // including the `present(0)` a resize or `redraw` calls, which would otherwise not move at all.
+      const k = cutting || still ? 1 : Math.min(1, dt / 220);
       const c = cam.current;
       c.x += (want.x - c.x) * k;
       c.y += (want.y - c.y) * k;
       c.z += (want.z - c.z) * k;
+      // …and then arrives. An exponential ease never does, and the blit snaps its source to whole
+      // buffer pixels, so the last visible step of a move — a whole buffer pixel, five screen
+      // pixels at 2× — came whenever the creeping remainder happened to cross a rounding boundary:
+      // up to 2.4s after the move looked finished, a twitch of the whole room long after anybody
+      // touched it. It fooled the e2e test the same way (`834 → 1112 → 839`: the "settled" first
+      // reading was taken in the still-looking gap before that step; one run in eleven, simulated
+      // over targets). Within half a buffer pixel the camera takes the step now and stops.
+      if (Math.abs(want.x - c.x) < 0.5) c.x = want.x;
+      if (Math.abs(want.y - c.y) < 0.5) c.y = want.y;
+      if (Math.abs(want.z - c.z) < 0.002) c.z = want.z;
       const cl = clampView(c, g);
       cam.current = cl;
+      // Whether the camera is where it was sent — exactly, which only the finish above makes
+      // possible. Said on the room as `data-cam` because nothing else can say it: a sprite that has
+      // stopped moving on screen is not a camera that has arrived, since frames can stall mid-move
+      // on a loaded machine, and "three equal readings" then measures the stall (the e2e's
+      // `834 → 1112 → 839`). Compared clamped against clamped, so a target past the room's edge is
+      // arrived at when the camera reaches the edge.
+      const goal = clampView(want, g);
+      const arrived = cl.x === goal.x && cl.y === goal.y && cl.z === goal.z ? 'still' : 'moving';
+      if (el.dataset.cam !== arrived) el.dataset.cam = arrived;
 
       // --- blit ------------------------------------------------------------------
       const b = blitOf(cl, g);
@@ -1199,29 +1357,52 @@ export const PixelOffice = memo(function PixelOffice({
       }
     };
 
-    if (still) {
-      const id = setInterval(() => paint(SETTLE_TICK_MS), SETTLE_TICK_MS);
-      paint(0);
-      return () => {
-        ro.disconnect();
-        clearInterval(id);
-      };
-    }
-
+    // Reduced motion steps the room in whole walks (`SETTLE_TICK_MS`) — but not while the canvas is
+    // still held back for the first frame: nobody can see those frames glide, and a half-second tick
+    // would keep the stage blank for a second on every load. It changes over on the reveal.
     let raf = 0;
     let prev = 0;
+    let stepper: ReturnType<typeof setInterval> | undefined;
     const frame = (now: number): void => {
       raf = requestAnimationFrame(frame);
       const dt = prev === 0 ? 0 : Math.min(MAX_FRAME_MS, now - prev);
       prev = now;
       paint(dt);
+      if (still && !hidden) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+        stepper = setInterval(() => paint(SETTLE_TICK_MS), SETTLE_TICK_MS);
+      }
     };
     raf = requestAnimationFrame(frame);
+
+    let redrawAsked = 0;
+    redraw.current = still
+      ? () => {
+          // One repaint per frame however many inputs asked for it; `paint(0)` moves no simulation.
+          if (redrawAsked === 0) {
+            redrawAsked = requestAnimationFrame(() => {
+              redrawAsked = 0;
+              paint(0);
+            });
+          }
+        }
+      : null;
+
     return () => {
       ro.disconnect();
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(redrawAsked);
+      if (stepper !== undefined) clearInterval(stepper);
+      redraw.current = null;
     };
   }, [sim]);
+
+  // Under reduced motion, anything that changes what the camera or the hover card shows asks for a
+  // repaint rather than waiting out the step. A no-op otherwise: the loop draws every frame.
+  useEffect(() => {
+    redraw.current?.();
+  }, [hover, follow, selected, framedUi, zoom, insetLeft, night, replayAt, cast]);
 
   // ----------------------------------------------------------------- controls
 
@@ -1234,8 +1415,12 @@ export const PixelOffice = memo(function PixelOffice({
       const cl = clampView(next, geo.current);
       unframe();
       camWant.current = cl;
+      // Now rather than on the next frame, so nothing that reads the room straight after a key can
+      // see `still` left over from before it.
+      wrap.current?.setAttribute('data-cam', 'moving');
       setZoom(cl.z);
       if (autopilot === false) setFollow(false);
+      redraw.current?.();
     },
     [unframe],
   );
@@ -1318,6 +1503,8 @@ export const PixelOffice = memo(function PixelOffice({
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const r = wrap.current?.getBoundingClientRect();
     if (r) pointer.current = { x: e.clientX - r.left, y: e.clientY - r.top };
+    // The hover card follows the cursor, and a drag moves the room: both are drawn by the loop.
+    redraw.current?.();
     const d = drag.current;
     if (!d.on || e.pointerId !== d.id) return;
     const dx = e.clientX - d.x;
@@ -1522,27 +1709,6 @@ export const PixelOffice = memo(function PixelOffice({
       </div>
 
       {/*
-        The off-site strip's names. The room seats thirteen and a workflow spawns forty; the
-        surplus is drawn along the bottom as small heads, which without this is twenty-three
-        anonymous silhouettes — present, which is the point, but unidentifiable, which is not.
-        Hovering one names it; tabbing reaches it; a screen reader reads it.
-      */}
-      <div className="ghost-layer" role="list" aria-label="waiting for a desk">
-        {room.offsite.map((id) => (
-          <GhostMark
-            key={id}
-            id={id}
-            name={agents[id]?.label ?? id}
-            status={agents[id]?.status ?? ''}
-            hovered={hover === id}
-            onHover={hoverAgent}
-            onPick={pick}
-            register={registerGhost}
-          />
-        ))}
-      </div>
-
-      {/*
         The room, as anything that is not an eye sees it. These sit exactly over the sprites the
         canvas paints and carry the label, the state and the text; they are transparent because
         the picture is already there, not because they are decorative.
@@ -1561,6 +1727,29 @@ export const PixelOffice = memo(function PixelOffice({
             onPick={pick}
             onZoomTo={zoomTo}
             register={register}
+          />
+        ))}
+      </div>
+
+      {/*
+        The off-site strip's names. The room seats thirteen and a workflow spawns forty; the
+        surplus is drawn along the bottom as small heads, which without this is twenty-three
+        anonymous silhouettes — present, which is the point, but unidentifiable, which is not.
+        Hovering one names it; tabbing reaches it; a screen reader reads it. After the people in
+        the room in the DOM, so Tab meets whoever is working before the queue at the door; the
+        stylesheet stacks the strip above them either way.
+      */}
+      <div className="ghost-layer" role="list" aria-label="waiting for a desk">
+        {room.offsite.map((id) => (
+          <GhostMark
+            key={id}
+            id={id}
+            name={agents[id]?.label ?? id}
+            status={agents[id]?.status ?? ''}
+            hovered={hover === id}
+            onHover={hoverAgent}
+            onPick={pick}
+            register={registerGhost}
           />
         ))}
       </div>
