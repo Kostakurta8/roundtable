@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { podSeat, SCENE, WAYPOINTS } from '../src/office/engine';
-import { frameCols, homeCam } from '../src/office/PixelOffice';
+import { clampView, frameCols, homeCam } from '../src/office/PixelOffice';
 import { PIX } from '../src/office/pixel/art';
 import { blitOf, clampCam, headroomOf, ZOOM_MAX, ZOOM_MIN, type Geo } from '../src/office/pixel/stage';
 
@@ -108,6 +108,30 @@ describe('where the camera rests', () => {
   it('is the whole room at zoom 1 on a stage the room already fills', () => {
     const g = geo(1024, 576);
     expect(homeCam(PIX.w, g)).toEqual(clampCam({ x: PIX.w / 2, y: PIX.h / 2, z: 1 }));
+  });
+
+  it('does not let a vertical pan bring the ceiling back or cut the floor off', () => {
+    // Selecting somebody in the top row glances the camera at them. `clampCam` allowed that to slide
+    // the window up, and on a stage taller than the window the band above it filled with ceiling
+    // while the floor's bottom edge left the screen — found by clicking a name in the roster.
+    for (const g of STAGES) {
+      for (const z of [1, 1.2, 1.5, 2, 3]) {
+        for (const y of [0, 60, 135, 200, 270]) {
+          const c = clampView({ x: 240, y, z }, g);
+          expect(clampCam(c), 'still a camera the clamp accepts').toEqual(c);
+          const b = blitOf(c, g);
+          const hr = headroomOf(b, 72);
+          const shown = (g.h * g.dpr) / b.scale;
+          if (shown >= PIX.h) {
+            // The stage shows the whole height: the window stays on the floor.
+            expect(b.srcY + b.viewH, `${g.w}×${g.h} z${z} y${y}`).toBeCloseTo(PIX.h, 6);
+          } else {
+            // It does not: whatever part is shown, none of it is ceiling.
+            expect(hr.ceilRows, `${g.w}×${g.h} z${z} y${y}`).toBeLessThanOrEqual(1);
+          }
+        }
+      }
+    }
   });
 
   it('crops the sides rather than draw a phone’s people ten pixels tall', () => {

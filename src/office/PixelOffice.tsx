@@ -170,6 +170,30 @@ export function frameCols(highWater: number): number {
 }
 
 /**
+ * `clampCam`, plus the one bound the blit's headroom makes necessary.
+ *
+ * `clampCam` keeps the 16:9 *window* inside the buffer, but on a stage taller than 16:9 the window
+ * is not all that is visible: `headroomBlits` paints the buffer's rows above it too, and past row 0
+ * the ceiling. So a vertical pan that `clampCam` allows — a glance at somebody sitting in the top
+ * row, an arrow key, a drag — slid the window up, cut the floor's bottom edge off, and filled the
+ * top of the stage with ceiling: the band this frame exists to remove, brought back by a click on
+ * the roster. This holds the *visible* top at or below row 0 whenever there is room below to show
+ * instead, and pins the window to the floor when the stage already shows the whole height, where
+ * a vertical pan has nothing to reveal.
+ */
+export function clampView(cam: Cam, g: Geo): Cam {
+  const c = clampCam(cam);
+  const b = blitOf(c, g);
+  if (!(b.scale > 0)) return c;
+  const halfH = PIX.h / c.z / 2;
+  const yMax = PIX.h - halfH;
+  // The stage's height in buffer rows, window and headroom together, less half the window: the
+  // lowest centre at which the visible top is still the room's first row.
+  const yMin = (g.h * g.dpr) / b.scale - halfH;
+  return { ...c, y: Math.min(yMax, Math.max(c.y, yMin)) };
+}
+
+/**
  * Where the camera rests: the session's room, wall to floor, as large as the stage allows.
  *
  * `blitOf` fits a 16:9 window of the buffer to the stage and bottom-aligns it, and every stage in
@@ -674,11 +698,16 @@ export const PixelOffice = memo(function PixelOffice({
     setFramedUi(true);
   }, [roomId]);
 
-  /** Takes the camera off the room's frame: somebody is steering it now. */
+  /**
+   * Takes the camera off the room's frame: somebody is steering it now. The readout's zoom is set to
+   * the frame's own at that moment — while framed it was never written, and a readout that jumped
+   * from "fit" to a stale 1.0× on the first arrow key would be reporting a zoom nobody chose.
+   */
   const unframe = useCallback((): void => {
     if (!framed.current) return;
     framed.current = false;
     setFramedUi(false);
+    setZoom(camWant.current.z);
   }, []);
 
   /** Hands the camera back to the room's frame. */
@@ -983,10 +1012,11 @@ export const PixelOffice = memo(function PixelOffice({
         // happen would leave the room refusing to re-fit itself as it grows, for no visible reason.
         const box = scene.current!.boxOf(look.current);
         if (box) {
-          const to = clampCam({ ...want, x: box.x + box.w / 2, y: box.y + box.h / 2 });
+          const to = clampView({ ...want, x: box.x + box.w / 2, y: box.y + box.h / 2 }, g);
           if (Math.abs(to.x - want.x) > 0.5 || Math.abs(to.y - want.y) > 0.5) {
             framed.current = false;
             setFramedUi(false);
+            setZoom(want.z);
             want.x = to.x;
             want.y = to.y;
           }
@@ -1010,7 +1040,7 @@ export const PixelOffice = memo(function PixelOffice({
       c.x += (want.x - c.x) * k;
       c.y += (want.y - c.y) * k;
       c.z += (want.z - c.z) * k;
-      const cl = clampCam(c);
+      const cl = clampView(c, g);
       cam.current = cl;
 
       // --- blit ------------------------------------------------------------------
@@ -1201,7 +1231,7 @@ export const PixelOffice = memo(function PixelOffice({
    */
   const aim = useCallback(
     (next: Cam, autopilot?: boolean): void => {
-      const cl = clampCam(next);
+      const cl = clampView(next, geo.current);
       unframe();
       camWant.current = cl;
       setZoom(cl.z);
@@ -1307,7 +1337,7 @@ export const PixelOffice = memo(function PixelOffice({
       }
     }
     const px = blitOf(cam.current, geo.current).px || 1;
-    const next = clampCam({ ...camWant.current, x: d.cx - dx / px, y: d.cy - dy / px });
+    const next = clampView({ ...camWant.current, x: d.cx - dx / px, y: d.cy - dy / px }, geo.current);
     camWant.current = next;
     // A drag is direct manipulation: the room has to sit under the finger, not ease toward it.
     // A copy, not the same object — the loop eases `cam` toward `camWant` and aliasing the two
