@@ -7,10 +7,10 @@
  * a busy room stays navigable once there are more people in it than you can tell apart by shirt.
  */
 import { memo } from 'react';
-import { agentLook, displayPhase, MAIN, type RtAgent } from '../store';
+import { displayPhase, MAIN, type RtAgent } from '../store';
 import { modelInfo } from '../../shared/models';
 import { clip, tokens } from './format';
-import { MiniHead } from './MiniHead';
+import { agentInk, MiniHead } from './MiniHead';
 import { peakTokens, type RosterRow } from './roster';
 
 const NAME_MAX = 22;
@@ -49,7 +49,9 @@ function Row({
     >
       <MiniHead agentId={a.id} />
       <span className="who">
-        <b style={{ color: agentLook(a.id).color }}>{clip(name, NAME_MAX)}</b>
+        <b className="agent-ink" style={agentInk(a.id)}>
+          {clip(name, NAME_MAX)}
+        </b>
         <span className="sub">{sub}</span>
       </span>
       <span className="right">

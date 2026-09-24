@@ -2093,6 +2093,39 @@ kbd {
   color: var(--ink-2);
 }
 
+/* ========================================================= agent ink ==== */
+
+/*
+ * An agent's name, in its own colour, legible on every panel it is printed on in both themes.
+ *
+ * `agentInk()` hands the store's colour over as `--agent`; this decides what to do with it. The
+ * store's colours were chosen against the day theme's paper, and printed unchanged on the night
+ * theme's charcoal the orchestrator's came out at 1.6:1 — `main` all but vanished from the rail
+ * and the feed. So the hue and chroma stay the agent's and the *lightness* belongs to the theme:
+ * capped at 0.5 by day (the amber look was 4.4:1 on the panel and 3.9:1 on a selected row at its
+ * own lightness), raised to 0.8 by night. Measured with `getComputedStyle` over `--panel`,
+ * `--panel-2`, `--accent-wash` and both verdict washes, for all eight looks: ≥ 4.5:1 throughout.
+ *
+ * The `color-mix` lines are for a browser without relative colour syntax: coarser, and still
+ * above 4.5:1, because mixing toward the theme's own ink moves every look toward legibility.
+ * `:root` is there for weight — the panels' own `b { color: var(--ink) }` rules are two classes
+ * deep and used to lose to an inline style, which this replaces.
+ */
+:root .agent-ink {
+  color: color-mix(in oklch, var(--agent, var(--ink)) 82%, var(--ink));
+}
+:root[data-theme='dark'] .agent-ink {
+  color: color-mix(in oklch, var(--agent, var(--ink)) 34%, var(--ink));
+}
+@supports (color: oklch(from red l c h)) {
+  :root .agent-ink {
+    color: oklch(from var(--agent, var(--ink)) min(l, 0.5) c h);
+  }
+  :root[data-theme='dark'] .agent-ink {
+    color: oklch(from var(--agent, var(--ink)) max(l, 0.8) c h);
+  }
+}
+
 /* =============================================================== misc ==== */
 
 @keyframes blink {

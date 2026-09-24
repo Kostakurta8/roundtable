@@ -7,9 +7,9 @@
  */
 import { memo } from 'react';
 import { modelInfo } from '../../shared/models';
-import { agentLook, displayPhase, type RtMsg, type RtState } from '../store';
+import { displayPhase, type RtMsg, type RtState } from '../store';
 import { clip, clockSec, duration, editLines, money, oneLine, shortPath, tokens } from './format';
-import { MiniHead } from './MiniHead';
+import { agentInk, MiniHead } from './MiniHead';
 
 const LAST_TOOLS = 5;
 const EXCERPT = 180;
@@ -39,7 +39,9 @@ export const Inspector = memo(function Inspector({ state, agentId, now, onClose 
       </button>
 
       <h3>
-        <MiniHead agentId={a.id} /> <span style={{ color: agentLook(a.id).color }}>{a.label ?? a.id}</span>
+        <MiniHead agentId={a.id} /> <span className="agent-ink" style={agentInk(a.id)}>
+          {a.label ?? a.id}
+        </span>
       </h3>
       <div className="sub">
         {model ?? 'model unknown'}
