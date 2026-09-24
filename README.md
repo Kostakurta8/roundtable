@@ -77,16 +77,17 @@ npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtabl
 ```
 
 An office with nobody in it is what an idle machine honestly looks like, and it is a poor way to
-find out what this does. `--demo` writes a synthetic `~/.claude` root under your temp directory and
-points the observer at that instead: agents arrive, work, report to each other, hand down verdicts,
-fill the desks past the point where there are chairs, and go home — and then it keeps going, so the
-room is still moving when you come back to it.
+find out what this does. `--demo` writes a synthetic `~/.claude` root into a fresh directory under
+your temp directory and points the observer at that instead: agents arrive, work, report to each
+other, hand down verdicts, fill the desks past the point where there are chairs, and go home — and
+then it keeps going, so the room is still moving when you come back to it.
 
 Nothing about it is faked except the transcripts. The lines go to disk and come back through the
 same watcher, parser, normalizer, socket and store as a real session, and the hub's timing is left
 at its shipped defaults. It never reads your own `~/.claude`, so no prompt, path or project name of
 yours can appear in it, and `--root` is ignored with it, so it cannot be pointed at a real
-directory. `Ctrl+C` deletes the staged root on the way out.
+directory. `Ctrl+C` deletes the staged root on the way out — that one directory, so two demos can
+run side by side.
 
 Without it, the first screen tells you where the observer is looking — the directory, in full —
 and that the first Claude Code session to start on this machine will appear there on its own.
