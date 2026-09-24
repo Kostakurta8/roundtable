@@ -5,6 +5,7 @@ import { inflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SHOWCASE_SESSION, stageShowcase } from '../scripts/promo/showcase';
 import { collectSession } from '../server/clip';
+import { cardFile } from '../server/card';
 import { makeCard, parseArgs } from '../server/cli';
 import { renderCard } from '../src/clip/card';
 
@@ -77,6 +78,35 @@ describe('--card', () => {
       expect(msg).not.toContain('Look before you post'); // nothing of the user's is on a staged card
     } finally {
       rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+describe('--card beside --gif, and beside itself', () => {
+  it('writes the card beside the GIF when --out names the GIF, instead of over it', () => {
+    expect(cardFile({ out: null, gif: true }, 'fallback-card.png')).toBe('fallback-card.png');
+    expect(cardFile({ out: 'run.png', gif: false }, 'x')).toBe('run.png');
+    expect(cardFile({ out: 'run.gif', gif: true }, 'x')).toBe('run-card.png');
+    expect(cardFile({ out: 'clips/Run.GIF', gif: true }, 'x')).toBe('clips/Run-card.png');
+    expect(cardFile({ out: 'run', gif: true }, 'x')).toBe('run-card.png');
+  });
+
+  it('stages each --card --demo in a directory of its own, so two at once both finish', async () => {
+    // A fixed staging directory was shared by every run: the first to finish deleted the session
+    // the second was still reading.
+    const a = mkdtempSync(join(tmpdir(), 'rt-card-a-'));
+    const b = mkdtempSync(join(tmpdir(), 'rt-card-b-'));
+    try {
+      const opts = (cwd: string): Promise<string> =>
+        makeCard({ ...parseArgs(['--card', '--demo'], {}) }, cwd);
+      const [ma, mb] = await Promise.all([opts(a), opts(b)]);
+      for (const [dir, msg] of [[a, ma], [b, mb]] as const) {
+        expect(readFileSync(join(dir, 'roundtable-demo-card.png')).subarray(1, 4).toString('ascii')).toBe('PNG');
+        expect(msg).toContain('the staged demo session');
+      }
+    } finally {
+      rmSync(a, { recursive: true, force: true });
+      rmSync(b, { recursive: true, force: true });
     }
   }, 60_000);
 });

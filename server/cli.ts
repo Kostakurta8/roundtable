@@ -105,7 +105,8 @@ Options
         --full           The whole session, however long, instead of its busiest stretch.
       --card       Write a session as one PNG card — its numbers over a still of the office at its
                    busiest — and exit. Takes --session, --out, --bare and --demo as --gif does
-                   (default roundtable-<session>-card.png, here). With --gif, both are written.
+                   (default roundtable-<session>-card.png, here). With --gif, both are written,
+                   and --out names the GIF: the card goes beside it as <name>-card.png.
       --no-open    Do not open a browser; just print the address.
   -v, --version    Print the version.
   -h, --help       Print this.
