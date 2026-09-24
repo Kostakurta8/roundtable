@@ -24,6 +24,16 @@ import type { EvSink } from '../ws';
  */
 export const EV_KEEP = 20_000;
 
+/**
+ * The most events kept across every session at once.
+ *
+ * The hub streams every *running* session to the page, not only the one on screen, so a per-session
+ * cap alone let a tab left open for a week keep twenty thousand events for each of dozens of
+ * sessions, and never give any of it back. Past this, the least recently active sessions lose
+ * their oldest events first; the one being written to now is the last to be trimmed.
+ */
+export const EV_KEEP_ALL = 60_000;
+
 export type EvLog = {
   /** Hand this to `useRtStream` in place of the sink it wraps. */
   sink: EvSink;
@@ -36,29 +46,46 @@ export type EvLog = {
 type Kept = { evs: Ev[]; lost: number };
 
 /** The log itself, with no React in it. `next` is read per event, so the wrapped sink may change. */
-export function evLog(next: () => EvSink): EvLog {
+export function evLog(next: () => EvSink, keepAll = EV_KEEP_ALL): EvLog {
+  // In order of last activity, least recent first: a Map iterates in insertion order, and an
+  // event re-inserts its session at the end.
   const kept = new Map<string, Kept>();
+  let total = 0;
   return {
     sink: {
       ev: (ev) => {
         const id = evSession(ev);
-        let k = kept.get(id);
-        if (!k) {
-          k = { evs: [], lost: 0 };
-          kept.set(id, k);
-        }
+        const k = kept.get(id) ?? { evs: [], lost: 0 };
+        kept.delete(id);
+        kept.set(id, k);
         k.evs.push(ev);
+        total += 1;
         if (k.evs.length > EV_KEEP) {
           k.evs.shift();
           k.lost += 1;
+          total -= 1;
+        }
+        for (const old of kept.values()) {
+          if (total <= keepAll || old === k) break;
+          // Emptied, not forgotten: `lost` is what lets the share dialog say a clip of this
+          // session is partial rather than quietly render less of it.
+          const drop = Math.min(old.evs.length, total - keepAll);
+          old.evs.splice(0, drop);
+          old.lost += drop;
+          total -= drop;
         }
         next().ev(ev);
       },
       // A reset means the hub is about to replay that session from the top (or every session, on
       // a reconnect). Keeping the old copy would put every event in a clip twice.
       reset: (sessionId) => {
-        if (sessionId === null) kept.clear();
-        else kept.delete(sessionId);
+        if (sessionId === null) {
+          kept.clear();
+          total = 0;
+        } else {
+          total -= kept.get(sessionId)?.evs.length ?? 0;
+          kept.delete(sessionId);
+        }
         next().reset(sessionId);
       },
     },
