@@ -30,7 +30,7 @@ import { useEvLog } from './ui/evlog';
 import { Timeline } from './ui/Timeline';
 import { TopBar } from './ui/TopBar';
 import { ToolsTab } from './ui/ToolsTab';
-import { useRtStream, WS_URL, type RtSession } from './ws';
+import { useRtStream, WS_URL, type EvSink, type RtSession } from './ws';
 
 const TITLE_MAX = 110;
 /**
@@ -274,7 +274,27 @@ export default function App() {
   const { feed } = office;
   // The share dialog renders from raw events, which neither the store nor the office keeps.
   const evlog = useEvLog(feed);
-  const { states, sessions, dropped, replaying, notices, connected, root, rescan } = useRtStream(sessionId, evlog.sink);
+  /**
+   * A seek points into one reading of a session's history. When the hub replaces that history — a
+   * rewound transcript, a reconnect, the hosted demo starting its next pass on a new clock — a held
+   * seek points at nothing that exists any more: the room froze on the first moment of the new pass,
+   * the wall clock kept the stale time and the playhead vanished. The hub's `reset` is the one
+   * signal that says so; comparing timestamps is not, because the strip seeks to whole seconds that
+   * can fall before the first event, and a new pass's backlog can start before an old seek.
+   */
+  const pinnedRef = useRef(sessionId);
+  pinnedRef.current = sessionId;
+  const sink = useMemo<EvSink>(
+    () => ({
+      ev: (ev) => evlog.sink.ev(ev),
+      reset: (id) => {
+        if (id === null || id === pinnedRef.current) setSeekTs(null);
+        evlog.sink.reset(id);
+      },
+    }),
+    [evlog],
+  );
+  const { states, sessions, dropped, replaying, notices, connected, root, rescan } = useRtStream(sessionId, sink);
 
   /**
    * The session on screen. One selection drives everything: the picker sets it, a tab sets it, and
@@ -477,10 +497,10 @@ export default function App() {
     // The two overlays are exclusive on purpose: they share a z-index, so opening one over the
     // other stacked an invisible dialog under a visible one — ⌘K over the help put focus in a
     // palette nobody could see, and keystrokes ran commands off the screen.
-    'mod+k': () => { setPaletteOpen(true); setHelpOpen(false); },
+    'mod+k': () => { setPaletteOpen(true); setHelpOpen(false); setShareOpen(false); },
     t: theme.cycle,
     b: () => setDockOpen((v) => !v),
-    '?': () => { setHelpOpen(true); setPaletteOpen(false); },
+    '?': () => { setHelpOpen(true); setPaletteOpen(false); setShareOpen(false); },
     '1': () => { setTab('chat'); setDockOpen(true); },
     '2': () => { setTab('agents'); setDockOpen(true); },
     '3': () => { setTab('tools'); setDockOpen(true); },
@@ -489,8 +509,12 @@ export default function App() {
     // room, a seek is a state the whole room is held in, and a selection is the quietest of them
     // all. Escape that only ever cleared the selection left the seek with no keyboard exit.
     // (An open top-bar menu is closed before any of these by `useDismiss`, in the capture phase.)
+    // The share dialog handles its own Escape while focus is inside it; this is for when a click on
+    // its preview or its text has dropped focus to the page, where the shell used to clear the
+    // seek *behind* the dialog and leave the dialog up.
     Escape: () => {
-      if (paletteOpen) setPaletteOpen(false);
+      if (shareOpen) setShareOpen(false);
+      else if (paletteOpen) setPaletteOpen(false);
       else if (helpOpen) setHelpOpen(false);
       else if (seekTs !== null) setSeekTs(null);
       else setSelected(null);
@@ -740,6 +764,9 @@ export default function App() {
       {helpOpen && <Help onClose={() => setHelpOpen(false)} onGuide={showGuide} />}
       {shareOpen && sessionId !== null && (
         <ShareDialog
+          // A dialog belongs to the session it was opened on. Keyed, a switch behind it starts a
+          // new one, instead of labelling the old session's render with the new session's name.
+          key={sessionId}
           sessionId={sessionId}
           sessionName={current ? sessionName(current) : `session ${shortId(sessionId)}`}
           events={() => evlog.events(sessionId)}
