@@ -2,10 +2,11 @@
  * The hosted demo's transport: a recording of the hub, played back as though the hub were sending it.
  *
  * GitHub Pages serves files and nothing else, so the page there has no hub to open a socket to.
- * `scripts/recordDemo.ts` ran the real one against the staged demo room and wrote down every frame
- * it sent, with when it arrived; this hands those frames to the stream on the same schedule. Nothing
- * downstream is told the difference — the frames go through the same `onMsg` a socket's do, into the
- * same store and the same office — which is the whole point: the demo is the app, not a video of it.
+ * `scripts/recordDemo.ts` ran the real one against a staged session, kept every frame it sent, and
+ * cut them into a timelapse (`./timelapse.ts`) with the moment each one plays at; this hands those
+ * frames to the stream on that schedule. Nothing downstream is told the difference — the frames go
+ * through the same `onMsg` a socket's do, into the same store and the same office — which is the
+ * whole point: the demo is the app, not a video of it.
  *
  * Two things have to be rewritten on the way through, and only two.
  *
@@ -44,15 +45,15 @@ export type Recording = {
 export const HOLD_MS = 5000;
 
 /**
- * How much faster than it was recorded the hosted demo plays.
+ * How much faster than its own frames say the hosted demo plays: not at all.
  *
- * The staged room keeps the hub's shipped timing, so the first agent walks out almost three minutes
- * in — long after somebody who arrived from a link has closed the tab. Playing it faster is the
- * honest fix: nothing is skipped or reordered, every gap shrinks by the same factor, and the banner
- * says the replay is sped up. Re-staging a busier room would have meant a second demo that `--demo`
- * does not show.
+ * This was 2.5, when the recording was the `--demo` room taken live at the hub's shipped timing and
+ * the first agent walked out almost three minutes in. The recording is a timelapse now, already cut
+ * to the length a visitor watches (`PLAY_MS` in `scripts/recordDemo.ts` is where that length is
+ * chosen), and any factor here would be a second speed-up the banner has to own up to as well. It is
+ * kept as a knob because changing it needs no re-record.
  */
-export const DEMO_SPEED = 2.5;
+export const DEMO_SPEED = 1;
 
 /**
  * The recording as the page receives it, which is as JSON: checked here, once, and typed after.

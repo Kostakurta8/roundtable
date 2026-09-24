@@ -15,9 +15,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { evSession, isEv, type Ev } from '../shared/events';
 import type { HelloMsg, RosterMsg, ServerMsg } from '../shared/protocol';
-import { HOLD_MS, paceOf, parseRecording, play, seqSpan, sessionsOf, shift, type Recording } from '../src/demo/playback';
+import { DEMO_SPEED, HOLD_MS, paceOf, parseRecording, play, seqSpan, sessionsOf, shift, type Recording } from '../src/demo/playback';
 import { compressedClock, cut, type Cut, type CutOptions, type Take } from '../src/demo/timelapse';
-import { initialState, MAIN, reduce, roster, type RtState } from '../src/store';
+import { initialState, MAIN, reduce, roster, workingAgents, type RtState } from '../src/store';
 
 const S = 's-1';
 const ref = { sessionId: S, agentId: 'main' };
@@ -528,6 +528,10 @@ describe('the committed recording', () => {
   const raw = readFileSync(join('src', 'demo', 'recording.json'), 'utf8');
   const rec = parseRecording(JSON.parse(raw));
   const evs = rec.frames.map(([, m]) => m).filter(isEv);
+  const timed = rec.frames.flatMap(([t, m]) => (isEv(m) ? [[t, m] as [number, Ev]] : []));
+  const hi = rec.frames[0][1] as HelloMsg;
+  const LEAD = hi.sessions[0].sessionId;
+  const lead = evs.filter((e) => evSession(e) === LEAD);
 
   it('is small enough to ship inside the page', () => {
     expect(raw.length).toBeLessThan(200 * 1024);
@@ -535,19 +539,70 @@ describe('the committed recording', () => {
 
   /** Both tabs, and the busy room first: the page opens on `sessions[0]` when nothing is pinned. */
   it('opens on both staged sessions, the busy one first', () => {
-    const first = rec.frames[0][1] as HelloMsg;
-    expect(first.kind).toBe('hello');
-    expect(first.sessions.map((s) => s.name)).toEqual(['pathfinder-1', 'pathfinder-api-2']);
-    expect(first.sessions.every((s) => s.live)).toBe(true);
+    expect(hi.kind).toBe('hello');
+    expect(hi.sessions.map((s) => s.name)).toEqual(['billing-3', 'invoices-web-4']);
+    expect(hi.sessions.every((s) => s.live)).toBe(true);
     expect(sessionsOf(rec)).toHaveLength(2);
   });
 
-  it('runs long enough for the room to fill, both verdicts to land and people to leave', () => {
-    expect(evs.filter((e) => e.kind === 'agentSpawn').length).toBeGreaterThanOrEqual(17);
-    const said = evs.flatMap((e) => (e.kind === 'agentText' ? [e.text] : []));
-    expect(said.some((t) => t.startsWith('CONFIRMED'))).toBe(true);
-    expect(said.some((t) => t.startsWith('REFUTED'))).toBe(true);
-    expect(evs.filter((e) => e.kind === 'agentDone').length).toBeGreaterThanOrEqual(2);
+  /** The roster's order is the tabs' order: a busy room that lost first place would swap them over. */
+  it('keeps the busy room first in every roster, so the tabs never trade places', () => {
+    const rosters = rec.frames.map(([, m]) => m as { kind?: string; sessions?: { sessionId: string }[] }).filter((m) => m.kind === 'roster');
+    expect(rosters.length).toBeGreaterThan(3);
+    for (const r of rosters) expect(r.sessions?.[0].sessionId).toBe(LEAD);
+  });
+
+  it('tells the README’s story: six scouts, eight builders, a verifier on each, one refuted and fixed', () => {
+    const spawned = lead.filter((e) => e.kind === 'agentSpawn');
+    expect(spawned.length).toBe(24);
+    const said = lead.flatMap((e) => (e.kind === 'agentText' ? [e.text] : []));
+    expect(said.filter((t) => t.startsWith('CONFIRMED')).length).toBe(8);
+    expect(said.filter((t) => t.startsWith('REFUTED')).length).toBe(1);
+    // The fix is sent after the refutation, not alongside it.
+    const refuted = lead.findIndex((e) => e.kind === 'agentText' && e.text.startsWith('REFUTED'));
+    expect(lead.slice(refuted).some((e) => e.kind === 'agentSpawn' && /fix/.test(e.prompt))).toBe(true);
+  });
+
+  it('closes every tool call it opens, and walks out everybody who walked in', () => {
+    const opened = new Set(evs.flatMap((e) => (e.kind === 'toolStart' ? [`${evSession(e)} ${e.toolUseId}`] : [])));
+    const closed = new Set(evs.flatMap((e) => (e.kind === 'toolResult' ? [`${evSession(e)} ${e.toolUseId}`] : [])));
+    expect([...opened].filter((id) => !closed.has(id))).toEqual([]);
+    const children = new Set(evs.flatMap((e) => (e.kind === 'agentSeen' && e.parentToolUseId ? [`${evSession(e)} ${e.ref.agentId}`] : [])));
+    const done = new Set(evs.flatMap((e) => (e.kind === 'agentDone' ? [`${evSession(e)} ${e.ref.agentId}`] : [])));
+    expect(children.size).toBe(26);
+    expect([...children].filter((id) => !done.has(id))).toEqual([]);
+  });
+
+  it('lands every agentDone after the last thing its agent did', () => {
+    for (const [i, e] of evs.entries()) {
+      if (e.kind !== 'agentDone') continue;
+      const mine = (x: Ev): boolean => x.kind !== 'agentDone' && 'ref' in x && x.ref.agentId === e.ref.agentId && evSession(x) === evSession(e);
+      expect(i).toBeGreaterThan(lastIndex(evs, mine));
+    }
+  });
+
+  /** A visitor from a link decides in seconds whether anything is happening. */
+  it('has scouts in the room and working inside the first ten seconds', () => {
+    const early = timed.filter(([t, e]) => t <= 10_000 && evSession(e) === LEAD);
+    const busy = new Set(early.flatMap(([, e]) => (e.kind === 'toolStart' && e.ref.agentId !== MAIN ? [e.ref.agentId] : [])));
+    expect(busy.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('looks busy in the middle and empties by the end, judged the way the panels judge it', () => {
+    const fold = (upTo: number): RtState =>
+      timed.filter(([t, e]) => t <= upTo && evSession(e) === LEAD).reduce((s, [, e]) => reduce(s, e), initialState);
+    expect(workingAgents(fold(35_000), 35_000).length).toBeGreaterThanOrEqual(5);
+    const end = fold(rec.span);
+    expect(workingAgents(end, rec.span)).toEqual([]);
+    expect(roster(end).filter((a) => a.id !== MAIN && a.phase !== 'done')).toEqual([]);
+  });
+
+  it('says it is a timelapse, and comes round in a minute to a minute and a half', () => {
+    expect(rec.timelapse?.realMs).toBeGreaterThan(8 * 60_000);
+    expect(paceOf(rec).label).toBe('TIMELAPSE');
+    const loop = rec.span / DEMO_SPEED + HOLD_MS;
+    expect(loop).toBeGreaterThanOrEqual(60_000);
+    expect(loop).toBeLessThanOrEqual(100_000);
   });
 
   it('keeps the hub’s own seq order', () => {
@@ -558,8 +613,9 @@ describe('the committed recording', () => {
 
   /** Staged under a temp directory, published to strangers: nothing of the machine it ran on. */
   it('carries no path from the machine that recorded it', () => {
-    expect(raw).not.toMatch(/roundtable-demo-record|\/tmp\/|\\\\Temp\\\\|\/Users\/|\/home\//i);
-    expect((rec.frames[0][1] as HelloMsg).root).toBe('(a staged demo root)');
+    expect(raw).not.toMatch(/roundtable-demo-record|roundtable-demo-side|\/tmp\/|\\\\Temp\\\\|\/Users\/|\/home\//i);
+    expect(hi.root).toBe('(a staged demo root)');
+    expect(raw).not.toContain('tabTitle');
   });
 
   it('stores its times relative to the take, for the player to put back on the viewer’s clock', () => {
