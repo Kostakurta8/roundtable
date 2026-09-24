@@ -1353,6 +1353,91 @@ details.monologue summary:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/*
+ * System lines: events of the room — a spawn, a prompt handed down, somebody finishing — rather
+ * than anybody speaking. Set in the card column's gutter, small, with a glyph for what kind of event
+ * it is, so a glance down the feed separates the conversation from its bookkeeping.
+ */
+.sys-line {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 0 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  text-align: left;
+  letter-spacing: 0.02em;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+}
+.sys-glyph {
+  justify-self: center;
+  color: var(--ink-3);
+}
+.sys-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sys-line time,
+.sys-sum time {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+}
+.sys-run {
+  margin: 2px 0 4px;
+}
+.sys-run.fresh {
+  animation: msg-in 0.3s var(--ease);
+}
+.sys-sum {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 0 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+  text-align: left;
+  transition:
+    background 0.14s var(--ease),
+    color 0.14s var(--ease);
+}
+.sys-sum:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+.sys-sum:disabled {
+  cursor: default;
+}
+.sys-sum:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 1px;
+}
+.sys-caret {
+  justify-self: center;
+  color: var(--ink-3);
+  transition: transform 0.16s var(--ease);
+}
+.sys-run.open .sys-caret {
+  transform: rotate(90deg);
+}
+.sys-list {
+  margin: 1px 0 2px;
+  padding: 2px 0;
+  border-left: 1px solid var(--line);
+  margin-left: 10px;
+  animation: fade-in 0.16s var(--ease);
+}
+.sys-list .sys-line {
+  grid-template-columns: 17px minmax(0, 1fr) auto;
+  padding: 2px 0 2px 1px;
+}
+
 /* Mini-head: skin, hair and a sliver of torso, in the agent's own tints. */
 .mini {
   position: relative;
