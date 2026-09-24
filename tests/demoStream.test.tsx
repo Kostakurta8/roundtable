@@ -14,17 +14,19 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEMO_SPEED, HOLD_MS, parseRecording } from '../src/demo/playback';
-import { playDemo } from '../src/demo/source';
+import { demoPace, playDemo } from '../src/demo/source';
+import { displayPhase, MAIN, roster, workingAgents } from '../src/store';
 import { DEMO_CAPTION, caption } from '../src/ui/ShareDialog';
 import { TopBar } from '../src/ui/TopBar';
 import { feedFrom, useRtStream, type EvSink, type RtStream } from '../src/ws';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// The page plays the recording faster than it was made, so one pass takes this long on its clock.
+// One pass, on the page's clock: the recording's own length, at whatever speed the page plays it.
 const SPAN = parseRecording(JSON.parse(readFileSync(join('src', 'demo', 'recording.json'), 'utf8'))).span / DEMO_SPEED;
-const A = 'demo-7f2a91';
-const B = 'demo-9c4d20';
+/** The showcase, and the small session beside it that gives the page its tabs. */
+const A = '9b1c2d3e-4f50-4617-8a9b-0c1d2e3f4a5b';
+const B = '4e7a0c19-2b8d-4f63-9a15-7c3e8d2b6f01';
 
 let latest: RtStream | null = null;
 const resets: (string | null)[] = [];
@@ -72,7 +74,7 @@ describe('the stream, fed by the demo recording', () => {
   it('is connected from the first frame, with both sessions and no socket', () => {
     advance(500);
     expect(latest!.connected).toBe(true);
-    expect(latest!.sessions.map((s) => s.name)).toEqual(['pathfinder-1', 'pathfinder-api-2']);
+    expect(latest!.sessions.map((s) => s.name)).toEqual(['billing-3', 'invoices-web-4']);
     expect(Object.keys(latest!.states).sort()).toEqual([A, B].sort());
     expect(latest!.replaying[A]).toBe(false);
   });
@@ -115,6 +117,28 @@ describe('the stream, fed by the demo recording', () => {
     expect(second.cost).toBeCloseTo(first.cost, 10);
     expect(second.lastSeq).toBeGreaterThan(first.lastSeq);
     expect(second.lastTs).toBeGreaterThan(first.lastTs);
+  });
+
+  /**
+   * The panels judge "working" against `Date.now()`, with windows sized for a real session's pace.
+   * The timelapse moves faster than any real session, so it has to land on the right side of both:
+   * people at their desks read as working while they are, and as finished once they have gone.
+   */
+  it('shows people working mid-run and nobody left working at the end, by the panels’ own clock', () => {
+    advance(30_000);
+    const mid = latest!.states[A];
+    const busy = workingAgents(mid, Date.now());
+    expect(busy.length).toBeGreaterThanOrEqual(4);
+    // Between two tools the store itself says idle; what must not happen is the clock saying it.
+    for (const a of busy) expect(displayPhase(a, Date.now()).phase).toBe(a.phase);
+    expect(busy.some((a) => a.phase !== 'idle')).toBe(true);
+
+    advance(SPAN - 30_000);
+    const end = latest!.states[A];
+    expect(workingAgents(end, Date.now())).toEqual([]);
+    const left = roster(end).filter((a) => a.id !== MAIN);
+    expect(left.length).toBe(24);
+    for (const a of left) expect(displayPhase(a, Date.now()).phase).toBe('done');
   });
 
   it('stops playing when the stream is torn down', () => {
@@ -160,6 +184,16 @@ describe('the status pill, over a recording', () => {
     expect(box.querySelector('.pill-live')?.textContent).toBe('REPLAY');
     act(() => r.unmount());
     box.remove();
+  });
+});
+
+describe('the banner, over the committed recording', () => {
+  // A timelapse labelled with a speed factor would let a visitor believe the rest is real time.
+  it('calls the replay a timelapse and says the silences were shortened', () => {
+    const pace = demoPace();
+    expect(pace.label).toBe('TIMELAPSE');
+    expect(pace.title).toMatch(/silences .* shortened/);
+    expect(pace.title).not.toMatch(/\d×/);
   });
 });
 
