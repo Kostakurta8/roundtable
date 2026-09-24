@@ -283,30 +283,51 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
+  background: var(--stage-bg);
   /*
-   * Headroom for the session-tab strip. The rail and the inspector float over the room's corners
-   * and size themselves to the stage; when the strip is present they used to grow straight under
-   * it, and the rail's own header — AGENTS, and how many are working — was the first thing
-   * covered. The strip is 8px down, 24px tall and casts a shadow, so 44px clears it.
+   * The session strip's band. It used to float over the top of the room, which was harmless only
+   * because the room never reached the top of the stage — there was always a band of ceiling for it
+   * to cover. The room now fills the stage (`homeCam`), so the strip gets a band of its own and the
+   * room starts below it; the rail and the inspector start below it too.
    */
   --strip-h: 0px;
+  /* The roster strip under the room, when `useRoomLayout` puts it there. Written inline by App. */
+  --roster-h: 0px;
 }
 .stage.has-tabs {
-  --strip-h: 44px;
+  --strip-h: 40px;
 }
 /*
  * Two classes deep on purpose: `office/pixel.css` is imported after this file, so an equally
  * specific `.office` rule there would win. There the room is a full-bleed layer in its own right;
- * here it is one cell of a grid.
+ * here it is one cell of a grid, minus the bands above and below it.
  */
 .stage > .office {
   position: absolute;
-  inset: 0;
+  inset: var(--strip-h) 0 0 0;
+}
+.stage.roster-below > .office {
+  bottom: var(--roster-h);
+}
+/*
+ * The strip and the room move together when the room grows: same property pair, same duration,
+ * same curve, so the seam between them never opens onto the canvas behind. `settled` holds this off
+ * while the page loads, when the room reports its width a frame after it first paints.
+ */
+.stage.settled.roster-below > .office {
+  transition: bottom 0.42s var(--ease);
+}
+.stage.settled.roster-below > .rail {
+  transition: height 0.42s var(--ease);
 }
 /* The letterbox is the shell's colour, not the renderer's: `pixel.css` paints a fixed near-black
    there because it cannot know the theme, and this is the one place the theme is known. */
 .stage > .office.pixel {
   background: var(--stage-bg);
+  inset: var(--strip-h) 0 0 0;
+}
+.stage.roster-below > .office.pixel {
+  bottom: var(--roster-h);
 }
 
 /* ============================================================ top bar ==== */
@@ -616,56 +637,92 @@ details.monologue summary:focus-visible,
 /* ====================================================== session tabs ==== */
 
 /*
- * One tab per session with agents working, floating over the top of the room.
+ * One tab per running session, in a band across the top of the stage.
  *
- * Over the room rather than in the shell's grid, because the strip is not always there: a grid row
- * that has to collapse when it is empty is the same shape of mistake that left the dock on a
- * zero-height track at 800×600. Floating costs nothing when there is nothing to float.
+ * Positioned within the stage rather than a row of the shell's grid, because the strip is not
+ * always there: a grid row that has to collapse when it is empty is the same shape of mistake that
+ * left the dock on a zero-height track at 800×600. When it is there, the room starts below it
+ * (`--strip-h`) rather than under it — it used to float over the room's ceiling band, and the room
+ * no longer leaves one.
  *
- * The container takes no pointer events so it cannot steal a click meant for the room behind it;
- * the tabs themselves take them back.
+ * It scrolls sideways when the tabs outrun it — at phone width they always do — and the far edge
+ * fades so the tab it cuts reads as "more this way" rather than as a tab that was clipped. The
+ * padding is what the near edge's fade covers, so a strip scrolled to its start fades nothing.
  */
 .session-tabs {
   position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 40;
+  height: var(--strip-h);
   display: flex;
-  gap: 4px;
-  max-width: calc(100% - 20px);
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
-  pointer-events: none;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
 }
 .session-tabs::-webkit-scrollbar {
   display: none;
 }
+/*
+ * The fades are sticky ends of the scroller rather than a mask over it: a mask fades the band's own
+ * background too, and what shows through is the stage's dark letterbox. Each sits at its natural
+ * place — before the first tab, after the last — when the strip is scrolled to that end, so a strip
+ * that fits fades nothing.
+ */
+.session-tabs::before,
+.session-tabs::after {
+  content: '';
+  position: sticky;
+  z-index: 1;
+  flex: none;
+  align-self: stretch;
+  pointer-events: none;
+}
+.session-tabs::before {
+  left: 0;
+  width: 14px;
+  margin: 0 -4px 0 -10px;
+  background: linear-gradient(to right, var(--panel) 30%, transparent);
+}
+.session-tabs::after {
+  right: 0;
+  width: 34px;
+  margin-right: -10px;
+  background: linear-gradient(to left, var(--panel) 30%, transparent);
+}
 .session-tab {
-  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 6px;
   flex: none;
-  padding: 4px 9px;
+  padding: 4px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--panel);
+  background: var(--panel-2);
   color: var(--ink-2);
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.04em;
   cursor: pointer;
-  /* Over the room's letterbox, which is dark in both themes: a hairline of the panel's own colour
-     is what makes the edge read, and a drop shadow is not. */
-  box-shadow: 0 0 0 1px var(--panel);
+  transition:
+    background 0.16s var(--ease),
+    border-color 0.16s var(--ease),
+    color 0.16s var(--ease);
 }
 .session-tab:hover {
   border-color: var(--ink-3);
+  color: var(--ink);
 }
 .session-tab.on {
   color: var(--ink);
   border-color: var(--accent-2);
+  background: var(--accent-wash);
 }
 .session-tab b {
   font-weight: 600;
@@ -683,24 +740,23 @@ details.monologue summary:focus-visible,
  * bug back.
  */
 .session-tab .slug {
-  max-width: 124px;
+  max-width: 168px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink-3);
 }
-/* With the roster column up, the strip centres on the room beside it rather than on the stage. */
-.stage.has-rail .session-tabs {
-  left: calc(var(--rail-w) + (100% - var(--rail-w)) / 2);
-  max-width: calc(100% - var(--rail-w) - 20px);
-}
-/* The working-agent count is the reason the tab exists, so it is the loudest thing on it. */
+/*
+ * The working-agent count is the reason the tab exists, so it is the loudest thing on it. On
+ * `--accent` rather than `--accent-2`: the lighter teal carried the panel colour at 3.4:1 by day.
+ */
 .session-tab .n {
-  min-width: 14px;
+  min-width: 15px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--accent-2);
+  background: var(--accent);
   color: var(--panel);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -708,14 +764,15 @@ details.monologue summary:focus-visible,
 /* =============================================================== rail ==== */
 
 /*
- * The roster, as a column down the stage's left edge.
+ * The roster, as a column down the stage's left edge — or, when the stage is taller than the room
+ * at full width, as a strip under it (`.roster-below`, below).
  *
  * It used to float over the room's bottom-left corner as a card, and the room was inset past it.
  * Two things were wrong with that at once: on a busy session the card grew to the top of the stage
  * and covered a third of the office, and on a quiet one it covered a corner while the inset left a
  * dead band of letterbox above it, the full width of the card. A column is what the inset was
- * already treating it as. `useRailInset` measures the same box either way, so the room starts
- * exactly where the column ends; below 900px the column is gone and the room has the whole stage.
+ * already treating it as, and the room starts exactly where the column ends; below 900px the column
+ * is gone and the room has the whole stage.
  */
 .rail {
   position: absolute;
@@ -732,9 +789,12 @@ details.monologue summary:focus-visible,
   font-family: var(--font-mono);
   font-size: 10.5px;
 }
+.stage.has-tabs > .rail {
+  top: var(--strip-h);
+}
 .rail-hd {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   font-size: 9.5px;
   letter-spacing: 0.16em;
@@ -744,11 +804,113 @@ details.monologue summary:focus-visible,
 .rail-hd .spacer {
   margin-left: auto;
 }
+.rail-hd .rail-sub {
+  letter-spacing: 0.04em;
+}
+.rail-hd .rail-sub::after {
+  content: ' ·';
+}
+.rail-hd .rail-n {
+  color: var(--ink-2);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
 .rail-list {
   overflow-y: auto;
   display: grid;
   gap: 2px;
   min-height: 0;
+}
+
+/*
+ * The roster as a strip under the room.
+ *
+ * Column-major on purpose: the list is a tree in depth-first order, and reading down a column and
+ * on to the next keeps each parent above its children the way the column layout does. Rows are
+ * as many as the strip's height holds (`auto-fill` against the strip's definite height), so a strip
+ * that grows as the room widens simply gains rows; past its width it scrolls sideways.
+ */
+.stage.roster-below > .rail {
+  top: auto;
+  right: 0;
+  width: auto;
+  height: var(--roster-h);
+  flex-direction: row;
+  gap: 12px;
+  padding: 9px 10px 9px 14px;
+  border-width: 1px 0 0;
+}
+.stage.roster-below .rail-hd {
+  flex: none;
+  width: 70px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 3px 0 0;
+}
+.stage.roster-below .rail-hd .spacer {
+  display: none;
+}
+.stage.roster-below .rail-hd .rail-n {
+  order: 1;
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+.stage.roster-below .rail-hd .rail-sub {
+  order: 2;
+  font-size: 9.5px;
+}
+.stage.roster-below .rail-hd .rail-sub::after {
+  content: none;
+}
+.stage.roster-below .rail-list {
+  flex: 1;
+  min-width: 0;
+  /* Definite, so `auto-fill` has a height to count rows against. */
+  height: 100%;
+  padding-right: 24px;
+  /* The column the strip's width cuts through fades out, so it reads as "scroll for more". */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 26px);
+  mask-image: linear-gradient(to left, transparent, #000 26px);
+  grid-auto-flow: column;
+  grid-template-rows: repeat(auto-fill, 40px);
+  grid-auto-columns: minmax(176px, 1fr);
+  align-content: start;
+  gap: 4px 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* No bar: it would take a row's worth of height from a strip sized in rows. The fade says there
+     is more, the wheel scrolls it sideways (`Rail`), and tabbing to a chip brings it into view. */
+  scrollbar-width: none;
+}
+.stage.roster-below .rail-list::-webkit-scrollbar {
+  display: none;
+}
+.stage.roster-below .tokbar {
+  width: 24px;
+}
+.stage.roster-below .arow {
+  height: 40px;
+  border-color: var(--line-soft);
+  background: var(--panel);
+}
+.stage.roster-below .arow:hover {
+  background: var(--panel-2);
+}
+.stage.roster-below .arow.on {
+  background: var(--accent-wash);
+  border-color: var(--accent-2);
+}
+/* The tree's depth, as a rule down a child's left edge: an indent in a grid of equal cells reads
+   as a misaligned cell, not as a child. */
+.stage.roster-below .arow[data-depth] {
+  padding-left: 8px;
+}
+.stage.roster-below .arow:not([data-depth='0']) {
+  box-shadow: inset 2px 0 0 var(--line);
 }
 .arow {
   display: grid;
@@ -1480,7 +1642,7 @@ details.monologue[open] summary::before {
   top: calc(10px + var(--strip-h));
   z-index: 40;
   width: 262px;
-  max-height: calc(100% - 20px - var(--strip-h));
+  max-height: calc(100% - 20px - var(--strip-h) - var(--roster-h));
   overflow-y: auto;
   padding: 10px 12px 12px;
   font-family: var(--font-mono);

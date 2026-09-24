@@ -443,16 +443,19 @@ test('the camera answers the keyboard', async ({ page }) => {
   // a working camera.
   const table = '.fixture-table';
 
-  await expect(zoomLabel).toHaveText(/^1\.0/);
+  // At rest the camera frames the session's room rather than sitting at a fixed zoom, and the
+  // readout says so instead of printing whatever zoom that frame takes on this stage.
+  await expect(zoomLabel).toHaveText('fit');
   await room.focus();
 
   // `=` rather than `+`, which is the same case in the room's handler and needs no shift.
   await page.keyboard.press('=');
   await page.keyboard.press('=');
   await page.keyboard.press('=');
-  // 1.25³ = 1.95. The readout is the camera's *target*, written the instant the key is pressed,
+  // 1.25³ = 1.95 times the resting zoom, which for this two-desk room on a 1600×900 window is a
+  // shade over 1. The readout is the camera's *target*, written the instant the key is pressed,
   // while the camera itself is still easing toward it.
-  await expect(zoomLabel).toHaveText(/^2\.0/);
+  await expect(zoomLabel).toHaveText(/^2\.[0-2]×$/);
 
   const home = await settledX(page, table);
 
@@ -466,6 +469,11 @@ test('the camera answers the keyboard', async ({ page }) => {
   for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
   const back = await settledX(page, table);
   expect(Math.abs(back - home), `the pan did not reverse: ${home} → ${panned} → ${back}`).toBeLessThanOrEqual(2);
+
+  // Home hands the camera back to the room's own frame — it was documented in the Help sheet for a
+  // release before the room had a handler for it.
+  await page.keyboard.press('Home');
+  await expect(zoomLabel).toHaveText('fit');
 });
 
 test('scrubbing the timeline and resuming live round-trips', async ({ page }) => {
