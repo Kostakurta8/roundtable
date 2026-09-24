@@ -92,6 +92,26 @@ const DRAG_SLOP = 4;
 const SAY_ANNOUNCE_MS = 900;
 
 /**
+ * How long the room's frame has to hold still before a page load shows it.
+ *
+ * The first frames of a page are drawn before anything has arrived: an empty session's room, on a
+ * stage the session tabs, the roster and its strip have not yet taken their share of. The backlog
+ * then lands over the next hundred milliseconds or so, and each of those arrivals grows the room or
+ * shrinks the stage, so the camera eased from the empty room's close-up out to the real frame across
+ * the whole first second — at 1024×700 the whiteboard went from 141px wide to 110px between 250ms
+ * and 900ms, a zoom-out nobody asked for on every load. The canvas now stays blank until the frame
+ * has stopped moving for this long with somebody in the room, and appears already on it. Every
+ * change measured on a load came within 60ms of the one before it.
+ */
+const SETTLE_QUIET_MS = 180;
+
+/**
+ * The longest a load, or a switch to another session, waits for the frame to settle: long enough
+ * for a slow socket, short enough that an empty session is not a blank stage for long.
+ */
+const SETTLE_CAP_MS = 900;
+
+/**
  * Where the hover card sits relative to the pointer: below and to the right, the way a tooltip
  * does, far enough off the cursor that the sprite being pointed at stays in view.
  */
@@ -630,8 +650,18 @@ export const PixelOffice = memo(function PixelOffice({
    * the floor and clearing the selection hand it back.
    */
   const framed = useRef(true);
-  /** Jump to the frame on the next tick instead of easing in: a first paint, or a different room. */
+  /**
+   * Cut to the frame instead of easing, until it holds still: a first paint, or a different room.
+   * An ease from one session's frame to another's is a camera move through a room that is not
+   * there, and so is an ease out of the frame a load draws before its backlog has arrived.
+   */
   const snap = useRef(true);
+  /**
+   * Repaints now rather than at the next tick, for a viewer who asked for reduced motion. That loop
+   * steps every half second, so without this a zoom, a drag or a hover answered up to half a second
+   * late — a drag at two frames a second. `null` while the ordinary loop is running every frame.
+   */
+  const redraw = useRef<(() => void) | null>(null);
   /**
    * The most pod desks this room has drawn — the scene's own high-water rule, mirrored from the
    * same actor list the scene is handed, because the frame has to be exactly as wide as that room.
@@ -765,6 +795,9 @@ export const PixelOffice = memo(function PixelOffice({
     const el = wrap.current;
     const canvas = view.current;
     if (!el || !canvas) return;
+    // First thing, before `measure` reads a rect: reading one flushes styles, and a canvas styled
+    // visible there and hidden here fades out — the empty room it was meant never to show.
+    el.dataset.framing = 'arriving';
 
     buffer.current ??= (() => {
       const c = document.createElement('canvas');
@@ -820,6 +853,19 @@ export const PixelOffice = memo(function PixelOffice({
 
     const still =
       typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /**
+     * The first frame's arrival (`SETTLE_QUIET_MS`). `hidden` holds the canvas back on a page load
+     * until the frame has settled with somebody in it; `cutting` makes the camera jump to the frame
+     * rather than ease, for as long as it is still moving — on a load and after a session switch.
+     * `seen` is the frame and stage last compared, and `quietFrom` when either last changed.
+     * Presentation only: none of it reaches an engine or the scene.
+     */
+    let hidden = true;
+    let cutting = true;
+    let cutFrom = 0;
+    let quietFrom = 0;
+    const seen = { x: -1, y: -1, z: -1, w: -1, h: -1 };
 
     // The seating revision the DOM layer was last told about. A counter rather than a comparison
     // of two id lists, because this runs sixty times a second and must allocate nothing at all on
@@ -994,6 +1040,35 @@ export const PixelOffice = memo(function PixelOffice({
         colsTo.current?.(cols);
       }
       const rest = homeCam(cols, g);
+
+      if (snap.current) {
+        snap.current = false;
+        cutting = true;
+        cutFrom = clock;
+        quietFrom = clock;
+      }
+      if (cutting && w > 1 && h > 1) {
+        if (rest.x !== seen.x || rest.y !== seen.y || rest.z !== seen.z || w !== seen.w || h !== seen.h) {
+          seen.x = rest.x;
+          seen.y = rest.y;
+          seen.z = rest.z;
+          seen.w = w;
+          seen.h = h;
+          quietFrom = clock;
+        }
+        const quiet = clock - quietFrom >= SETTLE_QUIET_MS;
+        if (hidden) {
+          // Somebody has to be in the room: before the backlog lands the frame is perfectly still,
+          // and it is the empty room's frame. The cap is for a session that has nobody in it yet.
+          if ((quiet && actors.length > 0) || clock - cutFrom >= SETTLE_CAP_MS) {
+            hidden = false;
+            cutting = false;
+            el.dataset.framing = 'settled';
+          }
+        } else if (quiet || clock - cutFrom >= SETTLE_CAP_MS) {
+          cutting = false;
+        }
+      }
       if (Math.abs(rest.z - homeZSaid) > 0.02) {
         homeZSaid = rest.z;
         setHomeZ(rest.z);
@@ -1031,11 +1106,9 @@ export const PixelOffice = memo(function PixelOffice({
           want.y = box.y + box.h / 2;
         }
       }
-      if (snap.current && w > 1 && h > 1) {
-        cam.current = { ...want };
-        snap.current = false;
-      }
-      const k = Math.min(1, dt / 220);
+      // Easing is the only camera motion, so a viewer who asked for none gets the cut every time —
+      // including the `present(0)` a resize or `redraw` calls, which would otherwise not move at all.
+      const k = cutting || still ? 1 : Math.min(1, dt / 220);
       const c = cam.current;
       c.x += (want.x - c.x) * k;
       c.y += (want.y - c.y) * k;
@@ -1199,29 +1272,52 @@ export const PixelOffice = memo(function PixelOffice({
       }
     };
 
-    if (still) {
-      const id = setInterval(() => paint(SETTLE_TICK_MS), SETTLE_TICK_MS);
-      paint(0);
-      return () => {
-        ro.disconnect();
-        clearInterval(id);
-      };
-    }
-
+    // Reduced motion steps the room in whole walks (`SETTLE_TICK_MS`) — but not while the canvas is
+    // still held back for the first frame: nobody can see those frames glide, and a half-second tick
+    // would keep the stage blank for a second on every load. It changes over on the reveal.
     let raf = 0;
     let prev = 0;
+    let stepper: ReturnType<typeof setInterval> | undefined;
     const frame = (now: number): void => {
       raf = requestAnimationFrame(frame);
       const dt = prev === 0 ? 0 : Math.min(MAX_FRAME_MS, now - prev);
       prev = now;
       paint(dt);
+      if (still && !hidden) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+        stepper = setInterval(() => paint(SETTLE_TICK_MS), SETTLE_TICK_MS);
+      }
     };
     raf = requestAnimationFrame(frame);
+
+    let redrawAsked = 0;
+    redraw.current = still
+      ? () => {
+          // One repaint per frame however many inputs asked for it; `paint(0)` moves no simulation.
+          if (redrawAsked === 0) {
+            redrawAsked = requestAnimationFrame(() => {
+              redrawAsked = 0;
+              paint(0);
+            });
+          }
+        }
+      : null;
+
     return () => {
       ro.disconnect();
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(redrawAsked);
+      if (stepper !== undefined) clearInterval(stepper);
+      redraw.current = null;
     };
   }, [sim]);
+
+  // Under reduced motion, anything that changes what the camera or the hover card shows asks for a
+  // repaint rather than waiting out the step. A no-op otherwise: the loop draws every frame.
+  useEffect(() => {
+    redraw.current?.();
+  }, [hover, follow, selected, framedUi, zoom, insetLeft, night, replayAt, cast]);
 
   // ----------------------------------------------------------------- controls
 
@@ -1236,6 +1332,7 @@ export const PixelOffice = memo(function PixelOffice({
       camWant.current = cl;
       setZoom(cl.z);
       if (autopilot === false) setFollow(false);
+      redraw.current?.();
     },
     [unframe],
   );
@@ -1318,6 +1415,8 @@ export const PixelOffice = memo(function PixelOffice({
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const r = wrap.current?.getBoundingClientRect();
     if (r) pointer.current = { x: e.clientX - r.left, y: e.clientY - r.top };
+    // The hover card follows the cursor, and a drag moves the room: both are drawn by the loop.
+    redraw.current?.();
     const d = drag.current;
     if (!d.on || e.pointerId !== d.id) return;
     const dx = e.clientX - d.x;
