@@ -369,6 +369,24 @@ describe('the keyboard', () => {
     key(first, 'Tab', { shiftKey: true });
     expect(document.activeElement).toBe(stops[stops.length - 1]);
   });
+
+  it('keeps Escape and Tab working after a click on something that cannot take focus', () => {
+    const el = dialog();
+    const box = el.querySelector<HTMLElement>('[role="dialog"]')!;
+    // What a browser does with a click on the preview or the privacy note: focus goes to the nearest
+    // focusable ancestor. Before the sheet was one, that was `<body>`, beyond its key handling.
+    act(() => {
+      el.querySelector('.share-note')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      box.focus();
+    });
+    expect(document.activeElement).toBe(box);
+    expect(box.tabIndex).toBe(-1); // focusable, but never one of the Tab stops
+    key(box, 'Tab');
+    expect(document.activeElement).toBe(el.querySelector('button[aria-label="close"]'));
+    act(() => box.focus());
+    key(box, 'Escape');
+    expect(closed).toBe(1);
+  });
 });
 
 describe('the card', () => {

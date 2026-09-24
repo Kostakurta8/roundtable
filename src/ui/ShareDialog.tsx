@@ -456,7 +456,10 @@ export function ShareDialog({
       if (nodes.length === 0) return;
       const from = nodes.indexOf(document.activeElement as HTMLElement);
       const step = e.shiftKey ? -1 : 1;
-      nodes[(Math.max(0, from) + step + nodes.length) % nodes.length].focus();
+      // From the sheet itself — where a click on its text leaves focus — the first press of Tab is
+      // the first stop, and Shift+Tab the last, as they would be arriving from outside it.
+      const to = from === -1 ? (e.shiftKey ? nodes.length - 1 : 0) : (from + step + nodes.length) % nodes.length;
+      nodes[to].focus();
     }
   };
 
@@ -479,6 +482,9 @@ export function ShareDialog({
     // Closed on `click`, not `pointerdown`, for the reason the palette and the help give: an
     // overlay that unmounts on the down-stroke hands the up-stroke's click to the room underneath.
     <div className="overlay share-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      {/* Focusable itself, though never a Tab stop: a click on the picture or the notes has to leave
+          focus somewhere inside the sheet, or it lands on `<body>` — out of reach of the Escape
+          and Tab handling below, with the page behind the modal next in line for the keyboard. */}
       <div
         ref={dialog}
         className="share"
@@ -486,6 +492,7 @@ export function ShareDialog({
         aria-modal="true"
         aria-labelledby="share-title"
         aria-describedby="share-privacy"
+        tabIndex={-1}
         onKeyDown={onKeyDown}
       >
         <header className="share-hd">
