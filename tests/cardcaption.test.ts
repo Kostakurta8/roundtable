@@ -31,7 +31,7 @@ describe('the card caption', () => {
   it('is the poster’s own session when a hub is feeding the page', () => {
     expect(isRecorded()).toBe(false);
     expect(cardCaption(STATS)).toMatch(/^My Claude Code session in numbers: 24 subagents \(8 at once\), 14\.83M tokens, 9m 26s/);
-    expect(cardCaption(STATS)).toContain('npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz');
+    expect(cardCaption(STATS)).toContain('npx https://github.com/Kostakurta8/roundtable/releases/latest/download/roundtable.tgz --card');
   });
 
   it('is nobody’s over a recording, and links the page it came from', () => {

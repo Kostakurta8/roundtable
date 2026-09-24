@@ -63,6 +63,20 @@ export const costText = (s: Pick<CardStats, 'cost' | 'costPartial'>): string =>
   `${s.costPartial ? '≥' : ''}${money(s.cost)}`;
 
 /**
+ * The card in one line of words — `24 subagents (8 at once), 14.83M tokens, 9m 26s` — for the
+ * caption the dialog offers and the summary `--card` prints. Counts only, never a word from a
+ * transcript, so it is as safe to post as a bare card whether or not the text was hidden.
+ */
+export function cardFacts(s: CardStats): string {
+  const parts: string[] = [];
+  if (s.spawned > 0) {
+    parts.push(`${s.spawned} ${s.spawned === 1 ? 'subagent' : 'subagents'}${s.peak > 1 ? ` (${s.peak} at once)` : ''}`);
+  }
+  parts.push(`${tokText(s)} tokens`, duration(s.durationMs));
+  return parts.join(', ');
+}
+
+/**
  * The store's fold of the events, in the order they are given — which for the dialog is the order
  * the page received them, the order its own store folded them in.
  *

@@ -30,7 +30,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Ev } from '../../shared/events';
-import { costText, tokText, type CardStats } from '../clip/card';
+import { cardFacts, costText, type CardStats } from '../clip/card';
 import { CLIP_DEFAULTS, type ClipProgress } from '../clip/render';
 import type { ClipInfo, ClipReply, ClipRequest } from '../clip/worker';
 import { isRecorded } from '../ws';
@@ -59,20 +59,6 @@ export const DEMO_CAPTION =
 export const caption = (): string => (isRecorded() ? DEMO_CAPTION : CAPTION);
 
 /**
- * What a card's caption says about the session: counts, never a word from a transcript, so the line
- * is as safe to post as the card beside it whether or not the text is hidden. Spelled by the same
- * formatters the card and the top bar use, so the post and the picture agree to the digit.
- */
-export function cardFacts(s: CardStats): string {
-  const parts: string[] = [];
-  if (s.spawned > 0) {
-    parts.push(`${s.spawned} ${s.spawned === 1 ? 'subagent' : 'subagents'}${s.peak > 1 ? ` (${s.peak} at once)` : ''}`);
-  }
-  parts.push(`${tokText(s)} tokens`, duration(s.durationMs));
-  return parts.join(', ');
-}
-
-/**
  * The card's caption. Like the clip's, it never calls a staged session the poster's own: in the
  * hosted demo it says whose it is — nobody's — and points at the page rather than at a command.
  */
@@ -80,7 +66,7 @@ export function cardCaption(s: CardStats | null): string {
   const facts = s ? `: ${cardFacts(s)}` : '';
   return isRecorded()
     ? `A Claude Code session in numbers${facts} — a staged replay from Roundtable 👀 Watch it in your browser: ${DEMO_URL}`
-    : `My Claude Code session in numbers${facts} 👀 — card rendered with Roundtable: ${NPX}`;
+    : `My Claude Code session in numbers${facts} 👀 — card rendered with Roundtable: ${NPX} --card`;
 }
 
 const LENGTHS = [10, 20, 40] as const;
@@ -692,14 +678,8 @@ export function ShareDialog({
           {missing > 0 && held > 0 && (
             <p className="share-note">
               This page holds only the latest {held.toLocaleString('en-US')} events of the session, so the {what}{' '}
-              {format === 'gif' ? 'starts partway through' : 'counts from partway through'}.{' '}
-              {format === 'gif' ? (
-                <>
-                  <code>roundtable --gif</code> in a terminal reads all of it.
-                </>
-              ) : (
-                'Its numbers can be lower than the top bar’s.'
-              )}
+              {format === 'gif' ? 'starts partway through' : 'counts from partway through, and can come in under the top bar'}.{' '}
+              <code>roundtable {format === 'gif' ? '--gif' : '--card'}</code> in a terminal reads all of it.
             </p>
           )}
         </div>
