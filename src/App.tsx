@@ -19,6 +19,7 @@ import { OfflineNote } from './ui/OfflineNote';
 import { useTheme } from './theme';
 import { AgentsTab } from './ui/AgentsTab';
 import { boardText, clashingNames, clip, clockSec, hasChosenName, sessionAbout, sessionName, shortId } from './ui/format';
+import { Guide, guideSeen, rememberGuide } from './ui/Guide';
 import { Help } from './ui/Help';
 import { Inspector } from './ui/Inspector';
 import { Palette, type Command } from './ui/Palette';
@@ -242,6 +243,16 @@ export default function App() {
   const [dockOpen, setDockOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  /** The first-visit guide over the room: up until this browser has dismissed it once. */
+  const [guideOpen, setGuideOpen] = useState(() => !guideSeen());
+  const closeGuide = useCallback(() => {
+    setGuideOpen(false);
+    rememberGuide();
+  }, []);
+  const showGuide = useCallback(() => {
+    setGuideOpen(true);
+    setHelpOpen(false);
+  }, []);
   const [seekTs, setSeekTs] = useState<number | null>(null);
   /** The roundtable's filter: only what the agents said to each other. */
   const [crossTalk, setCrossTalk] = useState(false);
@@ -409,6 +420,7 @@ export default function App() {
       { id: 'theme-night', label: 'Theme: night', run: () => theme.set('night') },
       { id: 'theme-auto', label: 'Theme: follow the system', run: () => theme.set('auto') },
       { id: 'help', label: 'Help: what am I looking at', hint: '?', run: () => setHelpOpen(true) },
+      { id: 'guide', label: 'Help: show the room guide again', run: showGuide },
       { id: 'dock', label: dockOpen ? 'Hide the side panel' : 'Show the side panel', hint: 'B', run: () => setDockOpen((v) => !v) },
       ...TABS.map((t) => ({ id: `tab-${t.key}`, label: `Panel: ${t.label.toLowerCase()}`, hint: 'panel', run: () => { setTab(t.key); setDockOpen(true); } })),
       { id: 'clear', label: 'Clear the agent selection', hint: 'Esc', run: () => setSelected(null) },
@@ -434,7 +446,7 @@ export default function App() {
       };
     });
     return [...base, ...agents, ...list];
-  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession]);
+  }, [theme, dockOpen, rows, sessions, seekTs, resumeLive, pickSession, showGuide]);
 
   useKeys({
     // The two overlays are exclusive on purpose: they share a z-index, so opening one over the
@@ -605,6 +617,9 @@ export default function App() {
         {selected && state.agents[selected] && (
           <Inspector state={state} agentId={selected} now={now} onClose={() => setSelected(null)} />
         )}
+        {/* Only over a room that exists: a guide to the people in an office that has no session in
+            it would be explaining pictures nobody can see. */}
+        {guideOpen && sessionId !== null && <Guide onClose={closeGuide} />}
       </main>
 
       <aside className="dock panel" aria-label="session detail">
@@ -692,7 +707,7 @@ export default function App() {
       />
 
       {paletteOpen && <Palette commands={commands} onClose={() => setPaletteOpen(false)} />}
-      {helpOpen && <Help onClose={() => setHelpOpen(false)} />}
+      {helpOpen && <Help onClose={() => setHelpOpen(false)} onGuide={showGuide} />}
     </div>
   );
 }

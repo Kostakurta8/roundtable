@@ -318,6 +318,19 @@ test.afterAll(async () => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 
+// Every test starts in a fresh browser context, which is a first visit — and a first visit gets the
+// room guide over the office's bottom-left corner, on top of whichever marks happen to be there.
+// These tests are about the room, not the guide, so each one arrives as a returning viewer.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('rt.guide', 'seen');
+    } catch {
+      // no storage in this context — the guide will show, and the tests that care will say so
+    }
+  });
+});
+
 /** The state every test starts from: the app up, the socket open, and the backlog fully folded. */
 async function openRoom(page: Page): Promise<void> {
   await page.goto('/');
