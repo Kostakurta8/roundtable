@@ -164,7 +164,9 @@ subagents less mysterious.
 The clip stays on one live session. **[▶ The 52-second trailer](https://github.com/Kostakurta8/roundtable/blob/main/media/roundtable-trailer.mp4)**
 shows what it does not: the timeline rewinding the room to an earlier second, two sessions in tabs,
 and the per-agent token and cost breakdown. No narration; captions are burned in, and
-`media/roundtable-trailer.srt` has them as text.
+`media/roundtable-trailer.srt` has them as text. It was filmed on an earlier version of the
+interface — the room did not yet fill its panel and there was no Share button — so it shows what
+the app does, not quite how it now looks.
 
 Every frame of both clips is the real application driven by real events — only the *content* of the
 transcripts is synthetic, so that no private session appears in either. `scripts/promo/` is the
