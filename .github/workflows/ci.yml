@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The e2e job below is opt-in and runs on this event only.
+  # Every job below runs on this event too — the way to re-run CI on a branch without a push.
   workflow_dispatch:
 
 # A second push to the same branch makes the first run's answer worthless before it arrives.
