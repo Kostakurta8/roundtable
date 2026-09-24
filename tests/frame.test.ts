@@ -144,3 +144,69 @@ describe('where the camera rests', () => {
     expect(headroomOf(b, 72).roomRows).toBe(Math.max(0, b.srcY));
   });
 });
+
+describe('where a phone frame sits across a room it cannot show whole', () => {
+  // 390×844's stage and the full twelve-desk room: the window is some 336 of the 480 columns.
+  const g = geo(378, 330);
+  const scale = PIX.w / SCENE.w;
+  /** One pod desk's columns, about as wide as the scene publishes it plus the frame's margin. */
+  const desk = (slot: number) => {
+    const x = podSeat(slot).x * scale;
+    return { from: x - 26, to: x + 26 };
+  };
+  const windowOf = (c: { x: number; z: number }) => ({ from: c.x - PIX.w / c.z / 2, to: c.x + PIX.w / c.z / 2 });
+  const inside = (w: { from: number; to: number }, s: { from: number; to: number }) =>
+    s.from >= w.from - 0.5 && s.to <= w.to + 0.5;
+
+  it('still centres on the room when nobody is working', () => {
+    const c = homeCam(PIX.w, g);
+    expect(c.x).toBeCloseTo(PIX.w / 2, 6);
+    expect(homeCam(PIX.w, g, [])).toEqual(c);
+  });
+
+  it('goes to the far bank when that is where the work is', () => {
+    // The outer desks of the right bank — slots 3 and 7 — are exactly what the centred frame cut.
+    const keep = [desk(3), desk(7)];
+    const centred = windowOf(homeCam(PIX.w, g));
+    expect(keep.some((s) => inside(centred, s))).toBe(false);
+    const c = homeCam(PIX.w, g, keep, PIX.w / 2);
+    expect(clampCam(c)).toEqual(c);
+    for (const s of keep) expect(inside(windowOf(c), s)).toBe(true);
+    // The zoom and the height are the frame's own; only where it sits across the room changed.
+    expect(c.z).toBe(homeCam(PIX.w, g).z);
+    expect(c.y).toBe(homeCam(PIX.w, g).y);
+  });
+
+  it('shows as many desks as fit when they cannot all, and stays put while that holds', () => {
+    const keep = Array.from({ length: WAYPOINTS.podSeats.length }, (_, i) => desk(i));
+    const count = (x: number, z: number) => keep.filter((s) => inside(windowOf({ x, z }), s)).length;
+    const c = homeCam(PIX.w, g, keep, PIX.w / 2);
+    // The four columns of desks do not all fit, so the frame has to choose: no place across the
+    // room shows more whole desks than the one it chose.
+    const half = PIX.w / c.z / 2;
+    let most = 0;
+    for (let x = half; x <= PIX.w - half; x += 0.5) most = Math.max(most, count(x, c.z));
+    expect(most).toBeLessThan(keep.length);
+    expect(count(c.x, c.z)).toBe(most);
+    // Asked again from where it now is, it stays: a frame that re-aimed every tick would never rest.
+    expect(homeCam(PIX.w, g, keep, c.x).x).toBe(c.x);
+    // From the other side of the room it keeps the equally good place it is already near.
+    const right = homeCam(PIX.w, g, keep, PIX.w);
+    expect(count(right.x, right.z)).toBe(most);
+    expect(right.x).toBeGreaterThan(c.x);
+  });
+
+  it('ignores the desks where the stage shows the whole room anyway', () => {
+    const wide = geo(1022, 575);
+    expect(homeCam(PIX.w, wide, [desk(3)], 0)).toEqual(homeCam(PIX.w, wide));
+  });
+
+  it('never leaves the room the session has', () => {
+    // A small session draws a room narrower than the plan; the window stays inside it however far
+    // toward its edge the desk it is asked to keep sits.
+    const cols = frameCols(4);
+    const c = homeCam(cols, g, [desk(3)], 0);
+    expect(windowOf(c).to).toBeLessThanOrEqual(Math.max(cols, PIX.w / c.z) + 0.5);
+    expect(windowOf(c).from).toBeGreaterThanOrEqual(-0.5);
+  });
+});

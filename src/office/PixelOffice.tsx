@@ -112,6 +112,12 @@ const SETTLE_QUIET_MS = 180;
 const SETTLE_CAP_MS = 900;
 
 /**
+ * Buffer columns kept either side of a desk the phone frame pans to show — the nameplate over it
+ * and a margin, so "on screen" means readable rather than touching the edge.
+ */
+const KEEP_PAD = 4;
+
+/**
  * Where the hover card sits relative to the pointer: below and to the right, the way a tooltip
  * does, far enough off the cursor that the sprite being pointed at stays in view.
  */
@@ -229,7 +235,7 @@ export function clampView(cam: Cam, g: Geo): Cam {
  * what lets the frame follow the room as it grows and the window as it resizes, eased by the same
  * loop that eases every other camera move.
  */
-export function homeCam(cols: number, g: Geo): Cam {
+export function homeCam(cols: number, g: Geo, keep: readonly Span[] = NO_SPANS, near?: number): Cam {
   const usableW = Math.max(g.w * 0.55, g.w - g.insetLeft);
   if (!(usableW > 0) || !(g.h > 0)) return { ...CAM_HOME };
   const widthScale = usableW / PIX.w;
@@ -243,10 +249,61 @@ export function homeCam(cols: number, g: Geo): Cam {
   // short of the wall. Out, because `zFill` is the most the stage's height can hold.
   const rows = Math.ceil(PIX.h / want - 1e-9);
   const z = PIX.h / rows;
-  // Centred on the room the session has, and resting on the floor's bottom edge: when the window
-  // is shorter than the buffer, the rows it leaves out are the ones `headroomBlits` puts back above
-  // it, so the wall is never what gets cropped.
-  return clampCam({ z, x: Math.min(PIX.w, cols) / 2, y: PIX.h - rows / 2 });
+  // Centred on the room the session has — or, where the stage can afford only part of its width,
+  // placed over the people working in it (`panFor`) — and resting on the floor's bottom edge: when
+  // the window is shorter than the buffer, the rows it leaves out are the ones `headroomBlits` puts
+  // back above it, so the wall is never what gets cropped.
+  const room = Math.min(PIX.w, cols);
+  const viewW = PIX.w / z;
+  const x = viewW < room - 0.5 ? panFor(viewW, room, keep, near ?? room / 2) : room / 2;
+  return clampCam({ z, x, y: PIX.h - rows / 2 });
+}
+
+/** A stretch of buffer columns the resting frame should keep on screen if it can: one desk. */
+export type Span = { from: number; to: number };
+
+const NO_SPANS: readonly Span[] = [];
+
+/**
+ * Where a window narrower than the room sits across it: over as many of `keep` as it can show
+ * whole, and of the places that show that many, the one nearest `near` — where it already is.
+ *
+ * On a phone the frame crops the room's sides to keep its people readable (`READABLE_PX`), and it
+ * used to crop them about the room's centre whatever was happening there: at 390×844 a full room's
+ * window ran from column 72 to 408, which is the whole far-right bank of desks gone, and in the
+ * demo's fan-out two of the agents at work were sitting at exactly those desks, off screen for the
+ * rest of the session. `keep` is the desks of everybody not yet finished, so the frame goes to them.
+ * It moves only when it has to: a window that already shows as many as it can stays put, because a
+ * camera that re-centred itself every time somebody finished would be panning the room all session.
+ *
+ * Desks rather than people, because people walk — to report, to the roundtable, to the door — and a
+ * frame that chased every walk would never rest; desks change only when somebody arrives or leaves.
+ * The candidates are the places where the window's edge meets a desk's, which is where the count
+ * can change, plus `near` itself.
+ */
+export function panFor(viewW: number, room: number, keep: readonly Span[], near: number): number {
+  const half = viewW / 2;
+  const hi = Math.max(half, room - half);
+  const at = (x: number): number => Math.min(hi, Math.max(half, x));
+  if (keep.length === 0) return at(room / 2);
+  const shows = (x: number): number => {
+    let n = 0;
+    for (const s of keep) if (s.from >= x - half - 0.5 && s.to <= x + half + 0.5) n += 1;
+    return n;
+  };
+  let best = at(near);
+  let most = shows(best);
+  for (const s of keep) {
+    for (const edge of [s.from + half, s.to - half]) {
+      const x = at(edge);
+      const n = shows(x);
+      if (n > most || (n === most && Math.abs(x - near) < Math.abs(best - near))) {
+        best = x;
+        most = n;
+      }
+    }
+  }
+  return best;
 }
 
 type Sim = {
@@ -866,6 +923,8 @@ export const PixelOffice = memo(function PixelOffice({
     let cutFrom = 0;
     let quietFrom = 0;
     const seen = { x: -1, y: -1, z: -1, w: -1, h: -1 };
+    /** The desks the phone frame keeps on screen, rebuilt each frame into the same array. */
+    const keep: Span[] = [];
 
     // The seating revision the DOM layer was last told about. A counter rather than a comparison
     // of two id lists, because this runs sixty times a second and must allocate nothing at all on
@@ -1039,7 +1098,13 @@ export const PixelOffice = memo(function PixelOffice({
         colsSaid = cols;
         colsTo.current?.(cols);
       }
-      const rest = homeCam(cols, g);
+      keep.length = 0;
+      for (const a of actors) {
+        if (a.done) continue;
+        const d = scene.current!.deskBoxOf(a.id);
+        if (d) keep.push({ from: d.x - KEEP_PAD, to: d.x + d.w + KEEP_PAD });
+      }
+      const rest = homeCam(cols, g, keep, camWant.current.x);
 
       if (snap.current) {
         snap.current = false;
